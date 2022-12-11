@@ -8,6 +8,7 @@ def test_mtz_loader():
     loader = MTZLoader("conventional.mtz")
     ds = loader.get_dataset()
 
+@pytest.mark.xfail
 def test_stills_loader():
     loader = StillsLoader(
         [
