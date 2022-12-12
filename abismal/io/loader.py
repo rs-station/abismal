@@ -1,28 +1,27 @@
 #!/usr/bin/env cctbx.python
-from glob import glob
-from os.path import exists,abspath
 import numpy as np
 import argparse
 import reciprocalspaceship as rs
 import pandas as pd
 import gemmi
-import re
 import tensorflow as tf
 
 
 class DataLoader():
     data_labels = (
         "HKL",
+        "Resolution",
         "Wavelength",
         "Metadata",
         "I",
         "SigI",
-    )
+    ) #To support laue add wavelength and resolution here
     def __init__(self, metadata_length):
         self.signature=(
             (
                 tf.RaggedTensorSpec((None, None, 3), tf.int32, 1, tf.int32), #HKL 
-                #tf.TensorSpec((None, 1), tf.float32), 
+                tf.RaggedTensorSpec((None, None, 1), tf.float32, 1, tf.int32), #dHKL
+                tf.RaggedTensorSpec((None, None, 1), tf.float32, 1, tf.int32), #wavelength
                 tf.RaggedTensorSpec((None, None, metadata_length), tf.float32, 1, tf.int32), #metadata
                 tf.RaggedTensorSpec((None, None, 1), tf.float32, 1, tf.int32), #I
                 tf.RaggedTensorSpec((None, None, 1), tf.float32, 1, tf.int32), #SigI
@@ -31,17 +30,18 @@ class DataLoader():
             )
         )
 
-class get_first_key_of_type(ds, dtype):
+def get_first_key_of_type(ds, dtype):
     idx = ds.dtypes == dtype
     if idx.sum() == 0:
         raise ValueError(f"Dataset has no key of type {dtype}")
-    key = ds.dtypes[][0]
+    key = ds.dtypes[idx].keys()[0]
     return key
 
 class MTZLoader(DataLoader):
     def __init__(
             self, 
             mtz_file, 
+            wavelength=1.,
             dmin=None,
             metadata_keys=None, 
             cell=None, 
@@ -59,6 +59,8 @@ class MTZLoader(DataLoader):
 
         super().__init__(len(self.metadata_keys))
 
+        self.wavelength = wavelength
+        self.mtz_file = mtz_file
         self.dmin = dmin
         self.cell = cell
         self.spacegroup = spacegroup
@@ -68,7 +70,7 @@ class MTZLoader(DataLoader):
         self.sigma_key = sigma_key
 
     def get_dataset(self):
-        ds = rs.read_mtz(mtz_file)
+        ds = rs.read_mtz(self.mtz_file)
 
         if self.cell is None:
             self.cell = ds.cell
@@ -84,17 +86,27 @@ class MTZLoader(DataLoader):
             self.batch_key = get_first_key_of_type(ds, 'B')
         if self.intensity_key is None:
             self.intensity_key = get_first_key_of_type(ds, 'J')
-        if self.intensity_key is None:
-            self.intensity_key = get_first_key_of_type(ds, 'Q')
+        if self.sigma_key is None:
+            self.sigma_key = get_first_key_of_type(ds, 'Q')
+
 
         ds.compute_dHKL(True)
-        ds['row_id'] = ds.groupby(self.batch_key).ngroup()
+        ds['rowids'] = ds.groupby(self.batch_key).ngroup().to_numpy("int32")
+        ds.sort_values("rowids", inplace=True)
+        rowids = ds.rowids.to_numpy("int32")
 
         I = tf.RaggedTensor.from_value_rowids(ds[self.intensity_key].to_numpy("float32")[:,None], rowids)
+        d = tf.RaggedTensor.from_value_rowids(ds['dHKL'].to_numpy("float32")[:,None], rowids)
         SigI = tf.RaggedTensor.from_value_rowids(ds[self.sigma_key].to_numpy("float32")[:,None], rowids)
         Metadata = tf.RaggedTensor.from_value_rowids(ds[self.metadata_keys].to_numpy("float32"), rowids)
+        HKL = tf.RaggedTensor.from_value_rowids(ds.get_hkls(), rowids)
+        wavelength = tf.ones_like(I) * self.wavelength
 
-        return data
+        tfds = tf.data.Dataset.from_tensor_slices(
+            ((HKL, d, wavelength, Metadata, I, SigI), (I,)),
+        )
+
+        return tfds
 
     def data_gen(self):
         ds = self.ds[self.ds.dHKL >= self.dmin]
@@ -152,12 +164,6 @@ class StillsLoader(DataLoader):
 
         self.mean = None
         self.std  = None
-
-    def get_dataset(self):
-        self.mean = self.std = None
-        data = tf.data.Dataset.from_generator(lambda: self.data_gen(), output_signature=self.signature)
-        #This is deprecated but the new version, tf.data.DataSet.ragged_batch is 100% not available yet bwaaa
-        return data.apply(tf.data.experimental.dense_to_ragged_batch(1)) 
 
     @staticmethod
     def get_average_cell(elist_list):
@@ -218,7 +224,7 @@ class StillsLoader(DataLoader):
         ds = tf.data.Dataset.from_tensor_slices(ragged)
         return ds
 
-    def to_dataset(self):
+    def get_dataset(self):
         """
         Convert dials monochromatic stills files to a tf.data.Dataset.
         """
@@ -242,6 +248,7 @@ class StillsLoader(DataLoader):
         table.compute_d(elist)
         table["A_matrix"] = flex.mat3_double( [C.get_A() for C in elist.crystals()] ).select(idx)
         table["s0_vec"] = flex.vec3_double( [e.beam.get_s0() for e in elist] ).select(idx)
+        table["wavelength"] = flex.double( [e.beam.get_wavelength() for e in elist] ).select(idx)
 
         h = table["miller_index"].as_vec3_double()
         Q = table["A_matrix"] * h
@@ -250,6 +257,7 @@ class StillsLoader(DataLoader):
 
         hkl = np.array(h, dtype='int32')
         d = np.array(table['d'], dtype='float32')
+        wavelength = np.array(table['wavelength'], dtype='float32')
         dQ = np.array(Q - Qobs, dtype='float32')
         xy = np.array(Svec, dtype='float32')[:,:2]
         batch = table['id'].as_numpy_array()
@@ -261,6 +269,8 @@ class StillsLoader(DataLoader):
         SigI  = np.array(np.sqrt(table['intensity.sum.variance']), dtype='float32')
 
         hkl = hkl[idx]
+        d = d[idx, None]
+        wavelength = wavelength[idx, None]
         dQ = dQ[idx]
         xy = xy[idx]
         batch = batch[idx]
@@ -277,6 +287,8 @@ class StillsLoader(DataLoader):
         SigI = SigI / self.std[1]
 
         hkl = tf.RaggedTensor.from_value_rowids(hkl, batch)
+        d = tf.RaggedTensor.from_value_rowids(d, batch)
+        wavelength = tf.RaggedTensor.from_value_rowids(wavelength, batch)
         metadata = tf.RaggedTensor.from_value_rowids(
             metadata,
             batch,
@@ -284,7 +296,7 @@ class StillsLoader(DataLoader):
         I = tf.RaggedTensor.from_value_rowids(I, batch)
         SigI = tf.RaggedTensor.from_value_rowids(SigI, batch)
 
-        data = ((hkl, metadata, I, SigI), (I,))
+        data = ((hkl, d, wavelength, metadata, I, SigI), (I,))
 
         return data
 

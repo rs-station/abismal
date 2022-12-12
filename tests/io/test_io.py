@@ -8,7 +8,15 @@ def test_mtz_loader():
     loader = MTZLoader("conventional.mtz")
     ds = loader.get_dataset()
 
-@pytest.mark.xfail
+    #Test unbatched iteration
+    for i in ds:
+        break
+
+    #Test batched iteration
+    for i in ds.batch(2):
+        break
+
+#@pytest.mark.xfail
 def test_stills_loader():
     loader = StillsLoader(
         [
@@ -23,4 +31,12 @@ def test_stills_loader():
         ],
     )
     ds = loader.get_dataset()
+
+    #Test unbatched iteration
+    for i in ds:
+        break
+
+    #Test batched iteration
+    for i in ds.batch(2):
+        break
 
