@@ -16,7 +16,7 @@ def test_mtz_loader():
     for i in ds.batch(2):
         break
 
-#@pytest.mark.xfail
+@pytest.mark.xfail
 def test_stills_loader():
     loader = StillsLoader(
         [
