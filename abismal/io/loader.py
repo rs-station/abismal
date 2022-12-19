@@ -9,6 +9,7 @@ import tensorflow as tf
 
 class DataLoader():
     data_labels = (
+        "ASU",
         "HKL",
         "Resolution",
         "Wavelength",
@@ -19,6 +20,7 @@ class DataLoader():
     def __init__(self, metadata_length):
         self.signature=(
             (
+                tf.RaggedTensorSpec((None, None, 1), tf.int32, 1, tf.int32), #ASU ID
                 tf.RaggedTensorSpec((None, None, 3), tf.int32, 1, tf.int32), #HKL 
                 tf.RaggedTensorSpec((None, None, 1), tf.float32, 1, tf.int32), #dHKL
                 tf.RaggedTensorSpec((None, None, 1), tf.float32, 1, tf.int32), #wavelength
@@ -49,6 +51,7 @@ class MTZLoader(DataLoader):
             batch_key=None, 
             intensity_key=None,
             sigma_key=None,
+            asu_id=0,
         ):
         self.metadata_keys = metadata_keys
         if self.metadata_keys is None:
@@ -64,6 +67,7 @@ class MTZLoader(DataLoader):
         self.dmin = dmin
         self.cell = cell
         self.spacegroup = spacegroup
+        self.asu_id = asu_id
 
         self.batch_key = batch_key
         self.intensity_key = intensity_key
@@ -90,7 +94,10 @@ class MTZLoader(DataLoader):
             self.sigma_key = get_first_key_of_type(ds, 'Q')
 
 
-        ds.compute_dHKL(True)
+        ds.compute_dHKL(True).label_absences(True)
+        ds = ds[~ds.ABSENT]
+        if self.dmin is not None:
+            ds = ds[ds.dHKL >= self.dmin]
         ds['rowids'] = ds.groupby(self.batch_key).ngroup().to_numpy("int32")
         ds.sort_values("rowids", inplace=True)
         rowids = ds.rowids.to_numpy("int32")
@@ -101,60 +108,24 @@ class MTZLoader(DataLoader):
         Metadata = tf.RaggedTensor.from_value_rowids(ds[self.metadata_keys].to_numpy("float32"), rowids)
         HKL = tf.RaggedTensor.from_value_rowids(ds.get_hkls(), rowids)
         wavelength = tf.ones_like(I) * self.wavelength
+        ASU = tf.ones_like(I, dtype='int32') * self.asu_id
 
         tfds = tf.data.Dataset.from_tensor_slices(
-            ((HKL, d, wavelength, Metadata, I, SigI), (I,)),
+            ((ASU, HKL, d, wavelength, Metadata, I, SigI), (I,)),
         )
 
         return tfds
 
-    def data_gen(self):
-        ds = self.ds[self.ds.dHKL >= self.dmin]
-        batch_key = self.batch_key
-        intensity_key = self.intensity_key
-        sigma_key = self.sigma_key
-        metadata_keys = self.metadata_keys
-        max_reflections_per_image = self.max_reflections_per_image
-        min_reflections_per_image = self.min_reflections_per_image
-
-        max_reflections_per_image = ds.groupby("BATCH").size().max()
-        ds.loc[:,['Hobs', 'Kobs', 'Lobs']] = ds.get_hkls()
-
-        #Standardize the metadata
-        ds[metadata_keys] = (ds[metadata_keys] - ds[metadata_keys].mean()) / ds[metadata_keys].std()
-
-        for batch,im in ds.groupby(batch_key):
-            if len(im) > max_reflections_per_image:
-                im = im.iloc[:max_reflections_per_image]
-            metadata = im[metadata_keys].to_numpy('float32') 
-            iobs = im[intensity_key].to_numpy('float32')[:,None]
-            sigiobs = im[sigma_key].to_numpy('float32')[:,None]
-            hkl = im.get_hkls().astype('int32')
-
-            #Pad to the same length
-            n = max_reflections_per_image - len(im)
-            mask = tf.ones((len(im), 1), dtype='float32')
-            mask = tf.pad(mask, [[0, n], [0, 0]])
-            hkl = tf.pad(hkl, [[0, n], [0, 0]])
-            metadata = tf.pad(metadata, [[0, n], [0, 0]])
-            iobs = tf.pad(iobs, [[0, n], [0, 0]])
-            sigiobs = tf.pad(sigiobs, [[0, n], [0, 0]], constant_values=1.)
-            mask = mask
-
-            inputs  = (hkl, metadata, iobs, sigiobs, mask)
-            targets = (iobs,)
-            yield inputs, targets
-
 class StillsLoader(DataLoader):
     """ DIALS stills loader """
-    def __init__(self, expt_files, refl_files, spacegroup=None, cell=None, dmin=None):
+    def __init__(self, expt_files, refl_files, spacegroup=None, cell=None, dmin=None, asu_id=0):
         super().__init__(5)
         from dxtbx.model.experiment_list import ExperimentListFactory  #defer defer defer defer
         self.expt_files = expt_files
         self.refl_files = refl_files
         self.dmin = dmin
+        self.asu_id = asu_id
 
-        # Bwaaaaahhh listlist
         elist_list = [ExperimentListFactory.from_json_file(expt_file, check_format=False) for expt_file in self.expt_files]
         self.cell,self.spacegroup = cell,spacegroup 
         if self.cell is None:
@@ -295,8 +266,9 @@ class StillsLoader(DataLoader):
         )
         I = tf.RaggedTensor.from_value_rowids(I, batch)
         SigI = tf.RaggedTensor.from_value_rowids(SigI, batch)
+        asu = tf.ones_like(I, dtype='int32') * self.asu_id
 
-        data = ((hkl, d, wavelength, metadata, I, SigI), (I,))
+        data = ((asu, hkl, d, wavelength, metadata, I, SigI), (I,))
 
         return data
 
