@@ -66,7 +66,8 @@ def test_reciprocal_asu(anomalous):
     assert tf.reduce_all(expected == test)
 
 @pytest.mark.parametrize('anomalous', [False, True])
-def test_reciprocal_asu_collection(anomalous):
+@pytest.mark.parametrize('eager', [False, True])
+def test_reciprocal_asu_collection(anomalous, eager):
     sg = gemmi.SpaceGroup(19)
     cell = gemmi.UnitCell(10., 20., 30., 90., 90., 90.)
 
@@ -96,6 +97,10 @@ def test_reciprocal_asu_collection(anomalous):
 
     miller_ids[asu_ids == 0] = miller_id_1[idx1]
     miller_ids[asu_ids == 1] = miller_id_2[idx2]
+
+    gather_func = rac.gather
+    if not eager:
+        gather_func = tf.function(gather_func)
 
     #Test floats
     test = rac.gather(
