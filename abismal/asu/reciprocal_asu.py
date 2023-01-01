@@ -28,6 +28,12 @@ class ReciprocalASUCollection(object):
                 )
         return out
 
+    def __iter__(self):
+        return self.reciprocal_asus.__iter__()
+
+    def __next__(self):
+        return self.reciprocal_asus.__next__()
+
 class ReciprocalASU(object):
     @cellify
     @spacegroupify
@@ -63,21 +69,10 @@ class ReciprocalASU(object):
         self.anomalous = anomalous
         self.cell = cell
         self.spacegroup = spacegroup
-        go = spacegroup.operations()
-        self.hmax = np.array(cell.get_hkl_limits(dmin))
         self.dmin = dmin
-        h,k,l = self.hmax
+        go = self.spacegroup.operations()
 
-        self.grid_size = tf.convert_to_tensor((2*h+1, 2*k+1, 2*l+1), dtype=tf.int32)
-        H = np.mgrid[-h:h+1:1,-k:k+1:1,-l:l+1:1].reshape((3, -1)).T
-
-        #Apply resolution cutoff and remove absences
-        d = cell.calculate_d_array(H)
-        H = H[d >= dmin]
-        H = H[~is_absent(H, spacegroup)]
-
-        #Remove 0, 0, 0
-        H = H[np.any(H != 0, axis=1)]
+        H = self.get_reciprocal_cell()
 
         Hasu,Isym = hkl_to_asu(H, spacegroup)
         if anomalous:
@@ -92,12 +87,34 @@ class ReciprocalASU(object):
         #This 3d grid contains the unique miller id for each reflection
         #-1 means that you shouldn't observe this miller index in the
         #data set
+        h,k,l = self.hmax
         self.miller_id = -np.ones((2*h+1, 2*k+1, 2*l+1), dtype=np.int32)
         self.miller_id[H[:,0], H[:,1], H[:,2]] = np.arange(self.asu_size)[inv]
 
         self.dHKL = cell.calculate_d_array(self.Hunique).astype(np.float32)
         self.epsilon = go.epsilon_factor_array(self.Hunique).astype(np.float32)
         self.centric = go.centric_flag_array(self.Hunique).astype(bool)
+
+    def get_reciprocal_cell(self):
+        """ Generate the full reciprocal cell respecting systematic absences """
+        go = self.spacegroup.operations()
+        self.hmax = np.array(self.cell.get_hkl_limits(self.dmin))
+
+        h,k,l = self.hmax
+
+        self.grid_size = tf.convert_to_tensor((2*h+1, 2*k+1, 2*l+1), dtype=tf.int32)
+        H = np.mgrid[-h:h+1:1,-k:k+1:1,-l:l+1:1].reshape((3, -1)).T
+
+        #Apply resolution cutoff and remove absences
+        d = self.cell.calculate_d_array(H)
+        H = H[d >= self.dmin]
+        H = H[~is_absent(H, self.spacegroup)]
+
+        #Remove 0, 0, 0
+        H = H[np.any(H != 0, axis=1)]
+
+        return H
+
 
     def _ensure_in_range(self, H):
         """ Cast any out of bounds indices to [0,0,0] """
@@ -132,5 +149,7 @@ class ReciprocalASU(object):
         H : tf.Tensor
             A potentially ragged tensor of miller indices
         """
-        return tf.gather(tensor, self._miller_ids(H))
+        idx = self._miller_ids(H)
+        safe = tf.maximum(idx, 0)
+        return tf.gather(tensor, safe)
 

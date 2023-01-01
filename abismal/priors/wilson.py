@@ -34,9 +34,9 @@ class WilsonPrior:
             The Σ value for the wilson distribution. The represents the average intensity stratified by a measure
             like resolution. 
         """
-        self.epsilon = np.array(epsilon, dtype=np.float32)
-        self.centric = np.array(centric, dtype=np.bool)
-        self.sigma = np.array(sigma, dtype=np.float32)
+        self.epsilon = np.array(epsilon, dtype="float32")
+        self.centric = np.array(centric, dtype="bool")
+        self.sigma = np.array(sigma, dtype="float32")
         self.p_centric = Centric(self.epsilon, self.sigma)
         self.p_acentric = Acentric(self.epsilon, self.sigma)
 

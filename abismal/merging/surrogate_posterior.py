@@ -6,10 +6,7 @@ from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 from tensorflow import keras as tfk
-from reciprocal_asu import ReciprocalASU
-from abismal_zero.layers import *
-from abismal_zero.blocks import *
-from abismal_zero.priors import WilsonPrior
+from abismal.priors import WilsonPrior
 
 class WilsonBase(tfk.models.Model):
     def __init__(self, rasu, **kwargs):
@@ -141,4 +138,26 @@ class WilsonPosterior(WilsonBase):
             self._register_seen(hkl)
 
         return I
+
+class PosteriorCollection(tfk.models.Model):
+    """ A collection of Wilson Posteriors """
+    def __init__(self, *posteriors):
+        super().__init__()
+        self.posteriors = posteriors
+
+    def call(self, asu_id, hkl, **kwargs):
+        out = None
+        for i, wp in enumerate(self.posteriors):
+            vals = wp(hkl)
+            if out is None:
+                out = vals
+            else:
+                aidx = asu_id == i
+                out = tf.where(
+                    aidx, 
+                    vals,
+                    out,
+                )
+
+        return out
 
