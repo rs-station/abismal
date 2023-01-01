@@ -22,13 +22,13 @@ def test_wilson_posterior_collection(anomalous):
     wp_2 = WilsonPosterior(rasu_2, 1.)
 
     n = 100
-    asu_id = np.random.choice(2, size=n)
+    asu_id = np.random.choice(2, size=n)[...,None]
     image_id = np.sort(np.random.choice(3, size=n))
 
     H1 = rasu_1.get_reciprocal_cell()
     H2 = rasu_2.get_reciprocal_cell()
     hkl = np.where(
-        (asu_id == 0)[:,None],
+        (asu_id == 0),
         H1[np.random.choice(len(H1), size=n)],
         H2[np.random.choice(len(H2), size=n)],
     )
