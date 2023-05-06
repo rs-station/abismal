@@ -1,4 +1,4 @@
-#!/usr/bin/env cctbx.python
+#/usr/bin/env cctbx.python
 import numpy as np
 import argparse
 import reciprocalspaceship as rs

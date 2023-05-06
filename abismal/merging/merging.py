@@ -8,8 +8,6 @@ from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 from tensorflow import keras as tfk
 from IPython import embed
-from abismal_zero.layers import *
-from abismal_zero.blocks import *
 
 
 def spearman_cc(yobs, ypred):
@@ -25,7 +23,7 @@ def spearman_cc(yobs, ypred):
 
 
 class VariationalMergingModel(tfk.models.Model):
-    def __init__(self, scale_model, surrogate_posterior, studentt_dof=None, sigiobs_model=None, mc_samples=1, eps=1e-6, use_global_scale=True):
+    def __init__(self, scale_model, surrogate_posterior, studentt_dof=None, sigiobs_model=None, mc_samples=1, eps=1e-6):
         super().__init__()
         self.eps = eps
         self.dof = studentt_dof
@@ -33,16 +31,6 @@ class VariationalMergingModel(tfk.models.Model):
         self.surrogate_posterior = surrogate_posterior
         self.sigiobs_model = sigiobs_model
         self.mc_samples = mc_samples
-        if use_global_scale:
-            self.global_scale = tfu.TransformedVariable(
-                1., 
-                tfb.Chain([
-                    tfb.Shift(eps), 
-                    tfb.Softplus()
-                ]),
-            )
-        else:
-            self.global_scale = 1.
 
     def call(self, inputs, mc_samples=None, **kwargs):
         if mc_samples is None:
@@ -58,10 +46,9 @@ class VariationalMergingModel(tfk.models.Model):
             sigiobs,
         ) = inputs
 
-        ipred = self.surrogate_posterior(hkl, mc_samples=mc_samples)
+        iscale = self.surrogate_posterior.stddev(asu_id, hkl)
+        iloc   = self.surrogate_posterior.mean(asu_id, hkl)
 
-        iscale = self.surrogate_posterior.stddev(hkl)
-        iloc   = self.surrogate_posterior.mean(hkl)
         imodel = tf.concat((
             iloc[...,None],
             iscale[...,None],
@@ -74,7 +61,14 @@ class VariationalMergingModel(tfk.models.Model):
             imodel,
         ), mc_samples=mc_samples, **kwargs)
 
-        ipred = self.global_scale * ipred * scale
+        q = self.surrogate_posterior(asu_id.flat_values, hkl.flat_values)
+
+        ipred = q.sample(self.mc_samples)
+        ipred = ipred * tf.squeeze(scale.flat_values, axis=-1)
+        ipred = tf.RaggedTensor.from_row_splits(
+            tf.transpose(ipred),
+            iobs.row_splits,
+        )
 
         if self.sigiobs_model is not None:
             sigiobs_pred = self.sigiobs_model(sigiobs, ipred)
@@ -105,7 +99,7 @@ class VariationalMergingModel(tfk.models.Model):
         return ipred
 
     #For production with super nan avoiding powers
-    def train_step(self, data):
+    def traXXin_step(self, data):
         # Unpack the data. Its structure depends on your model and
         # on what you pass to `fit()`.
         x, y = data
