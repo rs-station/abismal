@@ -8,7 +8,7 @@ from tensorflow_probability import bijectors as tfb
 from tensorflow import keras as tfk
 
 
-class ResNetDense(tfk.layers.Layer):
+class FeedForward(tfk.layers.Layer):
     """
     This is a ResNet version 2 style layer
     """
@@ -44,7 +44,7 @@ class ResNetDense(tfk.layers.Layer):
         """
         super().__init__()
         self.hidden_units = hidden_units
-        self.kernel_initializer = tfk.initializers.get(kernel_initializer)
+        self.kernel_initializer = kernel_initializer
 
         if dropout is not None:
             self.dropout = tf.keras.layers.Dropout(dropout)
