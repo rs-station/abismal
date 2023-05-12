@@ -6,7 +6,6 @@ from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 from tensorflow import keras as tfk
-from abismal.priors import WilsonPrior
 
 class WilsonBase(tfk.models.Model):
     def __init__(self, rasu, **kwargs):
