@@ -1,0 +1,1 @@
+from .surrogate_posterior import WilsonBase,PosteriorCollectionBase

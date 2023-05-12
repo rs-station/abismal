@@ -1,2 +1,1 @@
-from .surrogate_posterior import WilsonPosterior,PosteriorCollection
 from .merging import VariationalMergingModel
