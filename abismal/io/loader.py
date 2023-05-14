@@ -272,3 +272,140 @@ class StillsLoader(DataLoader):
 
         return data
 
+class StreamLoader(DataLoader):
+    def __init__(self, stream_file, spacegroup=None, cell=None, dmin=None, asu_id=0):
+        super().__init__(5)
+
+        if cell is None:
+            self.get_average_cell(stream_file)
+
+    @staticmethod
+    def to_crystals(stream_file):
+        return StreamLoader.to_blocks(stream_file, 'crystal')
+
+
+    @staticmethod
+    def get_cell(stream_file):
+        geo = next(StreamLoader.to_blocks(stream_file, 'geometry'))
+        for line in geo:
+            if line.startswith("photon_energy"):
+                eV = float(line.split()[2])
+                lam = rs.utils.ev2angstroms(eV)
+                return lam
+
+    @staticmethod
+    def get_wavelength(stream_file):
+        geo = next(StreamLoader.to_blocks(stream_file, 'geometry'))
+        for line in geo:
+            if line.startswith("photon_energy"):
+                eV = float(line.split()[2])
+                lam = rs.utils.ev2angstroms(eV)
+                return lam
+
+    @staticmethod
+    def online_mean_variance(iterator):
+        def update(count, mean, m2, value):
+            count = count + 1
+            delta = value - mean
+            mean += delta / count
+            delta2 = value - mean
+            m2 += delta * delta2
+            return count, mean, m2
+
+        count, mean, m2 = 0, 0, 0
+        for value in iterator:
+            count, mean, m2 = update(count, mean, m2, value)
+
+        variance = m2 / count
+        return mean, variance
+
+    @staticmethod
+    def get_average_cell(stream_file):
+        def cell_iter(stream_file):
+            for crystal in StreamLoader.to_crystals(stream_file):
+                for line in crystal:
+                    if line.startswith("Cell parameters"):
+                        cell = line.split()
+                        cell = np.array([
+                            cell[2],
+                            cell[3],
+                            cell[4],
+                            cell[6],
+                            cell[7],
+                            cell[8],
+                        ], dtype='float32')
+                        cell[:3] = 10.*cell[:3]
+                        yield cell
+                        break
+
+        mean, variance = StreamLoader.online_mean_variance(cell_iter(stream_file))
+        return mean
+
+    @staticmethod
+    def get_average_cell(stream_file):
+        def cell_iter(stream_file):
+            for crystal in StreamLoader.to_crystals(stream_file):
+                for line in crystal:
+                    if line.startswith("Cell parameters"):
+                        cell = line.split()
+                        cell = np.array([
+                            cell[2],
+                            cell[3],
+                            cell[4],
+                            cell[6],
+                            cell[7],
+                            cell[8],
+                        ], dtype='float32')
+                        cell[:3] = 10.*cell[:3]
+                        yield cell
+                        break
+
+        mean, variance = StreamLoader.online_mean_variance(cell_iter(stream_file))
+        return mean
+
+    @staticmethod
+    def to_blocks(stream_file, block_name):
+        """
+        block_name : 'geometry', 'chunk', 'cell', 'peaks', 'crystal', or 'reflections'
+        """
+        # See crystFEL API reference here: https://www.desy.de/~twhite/crystfel/reference/stream_8h.html
+        block_markers = {
+            "geometry" : ("----- Begin geometry file -----", "----- End geometry file -----"),
+            "chunk" : ("----- Begin chunk -----", "----- End chunk -----"),
+            "cell" : ("----- Begin unit cell -----", "----- End unit cell -----"),
+            "peaks" : ("Peaks from peak search", "End of peak list"),
+            "crystal" : ("--- Begin crystal", "--- End crystal"),
+            "reflections" : ("Reflections measured after indexing", "End of reflections"),
+        }
+        block_begin_marker, block_end_marker = block_markers[block_name]
+
+        block = []
+        in_block = False
+        for line in open(stream_file):
+            if line.startswith(block_end_marker):
+                in_block = False
+                yield block
+                block = []
+            if in_block:
+                block.append(line)
+            if line.startswith(block_begin_marker):
+                in_block = True
+
+if __name__=='__main__':
+    stream_file = '/mnt/raid/data/xtal/20210615_Neutze_collab/indexing_dark_before_merging_intensities.stream'
+    test = np.random.random((1_000, 6))
+    mean, variance = StreamLoader.online_mean_variance(test)
+    assert np.all(np.isclose(mean, test.mean(0)))
+    assert np.all(np.isclose(variance, np.square(test.std(0))))
+
+    for crystal in StreamLoader.to_blocks(stream_file, 'crystal'):
+        break
+
+    assert len(crystal) > 0
+
+    cell = StreamLoader.get_average_cell(stream_file)
+
+    geo = StreamLoader.to_blocks(stream_file, 'geometry')
+    print(''.join(next(geo)))
+
+    print(StreamLoader.get_wavelength(stream_file))

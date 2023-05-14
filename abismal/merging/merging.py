@@ -23,7 +23,7 @@ def spearman_cc(yobs, ypred):
 
 
 class VariationalMergingModel(tfk.models.Model):
-    def __init__(self, scale_model, surrogate_posterior, studentt_dof=None, sigiobs_model=None, mc_samples=1, eps=1e-6):
+    def __init__(self, scale_model, surrogate_posterior, studentt_dof=None, sigiobs_model=None, mc_samples=1, eps=1e-6, clamp=None):
         super().__init__()
         self.eps = eps
         self.dof = studentt_dof
@@ -31,6 +31,7 @@ class VariationalMergingModel(tfk.models.Model):
         self.surrogate_posterior = surrogate_posterior
         self.sigiobs_model = sigiobs_model
         self.mc_samples = mc_samples
+        self.clamp = clamp
 
     def call(self, inputs, mc_samples=None, **kwargs):
         if mc_samples is None:
@@ -46,13 +47,41 @@ class VariationalMergingModel(tfk.models.Model):
             sigiobs,
         ) = inputs
 
+
+        q = self.surrogate_posterior(asu_id.flat_values, hkl.flat_values)
+        if self.surrogate_posterior.parameterization == 'structure_factor':
+            floc   = self.surrogate_posterior.mean(asu_id, hkl)
+            fscale = self.surrogate_posterior.stddev(asu_id, hkl)
+            iloc  = tf.square(floc) + tf.square(fscale)
+            iscale= tf.abs(2. * floc * fscale)
+            imodel = (
+                iloc[...,None],
+                iscale[...,None],
+                floc[...,None],
+                fscale[...,None],
+            )
+            ipred = q.sample_intensities(self.mc_samples)
+        elif self.surrogate_posterior.parameterization == 'intensity':
+            iloc   = self.surrogate_posterior.mean(asu_id, hkl)
+            iscale = self.surrogate_posterior.stddev(asu_id, hkl)
+            imodel = (
+                iloc[...,None],
+                iscale[...,None],
+            )
+            ipred = q.sample(self.mc_samples)
+        else:
+            raise AttributeError(
+                "Surrogate posteriors must have attribute 'parameterization' with value "
+                "of 'intensity' or 'structure_factor'                                   "
+            )
+        ipred = tf.RaggedTensor.from_row_splits(
+            tf.transpose(ipred),
+            iobs.row_splits,
+        )
+
         iscale = self.surrogate_posterior.stddev(asu_id, hkl)
         iloc   = self.surrogate_posterior.mean(asu_id, hkl)
-
-        imodel = tf.concat((
-            iloc[...,None],
-            iscale[...,None],
-        ),  axis=-1)
+        imodel = tf.concat(imodel, axis=-1)
 
         scale = self.scale_model((
             metadata, 
@@ -61,14 +90,7 @@ class VariationalMergingModel(tfk.models.Model):
             imodel,
         ), mc_samples=mc_samples, **kwargs)
 
-        q = self.surrogate_posterior(asu_id.flat_values, hkl.flat_values)
-
-        ipred = q.sample(self.mc_samples)
-        ipred = ipred * tf.squeeze(scale.flat_values, axis=-1)
-        ipred = tf.RaggedTensor.from_row_splits(
-            tf.transpose(ipred),
-            iobs.row_splits,
-        )
+        ipred = ipred * scale
 
         if self.sigiobs_model is not None:
             sigiobs_pred = self.sigiobs_model(sigiobs, ipred)
@@ -82,10 +104,11 @@ class VariationalMergingModel(tfk.models.Model):
         else:
             ll = tfd.StudentT(self.dof, 0, sigiobs_pred.flat_values).log_prob(R.flat_values)
 
-        # Clampy clamp clamp
-        ll = tf.maximum(ll, -1e4)
+        # Clamp
+        if self.clamp is not None:
+            ll = tf.maximum(ll, -1e4)
 
-        # This is the mean factoring the mask and any mc samples
+        # This is the mean across mc samples and observations
         ll = tf.reduce_mean(ll) 
 
         self.add_metric(-ll, name='NLL')

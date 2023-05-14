@@ -11,6 +11,8 @@ from abismal.surrogate_posterior import WilsonBase,PosteriorCollectionBase
 
 
 class PosteriorCollection(PosteriorCollectionBase):
+    parameterization = 'structure_factor'
+
     def call(self, asu_id, hkl, training=None):
         loc = self._wp_method_helper(
             asu_id,
@@ -42,7 +44,9 @@ def WilsonPrior(centric, multiplicity, sigma=1.):
     return RiceWoolfson(loc, scale, centric)
 
 class WilsonPosterior(WilsonBase):
-    def __init__(self, rasu, kl_weight, scale_factor=1e-2, eps=1e-12, **kwargs):
+    parameterization = 'structure_factor'
+
+    def __init__(self, rasu, kl_weight, scale_factor=1e-1, eps=1e-12, **kwargs):
         super().__init__(rasu, **kwargs)
         self.prior = WilsonPrior(
             rasu.centric,
@@ -53,7 +57,7 @@ class WilsonPosterior(WilsonBase):
 
         self.kl_weight = kl_weight
         self.loc = tfu.TransformedVariable(
-            5. * tf.ones_like(rasu.centric, dtype='float32'),
+            tf.ones_like(rasu.centric, dtype='float32'),
             tfb.Chain([
                 tfb.Shift(eps), 
                 #tfb.Softplus(),
@@ -87,15 +91,16 @@ class WilsonPosterior(WilsonBase):
         q = self.flat_distribution
         F = q.mean()      
         SIGF = q.stddev()
-        #This is an approximation based on uncertainty propagation
+        #This is exact
         I = SIGF*SIGF + F*F
+        #This is an approximation based on uncertainty propagation
         SIGI = np.abs(2*F*SIGF)
         out = rs.DataSet({
             'H' : rs.DataSeries(h, dtype='H'),
             'K' : rs.DataSeries(k, dtype='H'),
             'L' : rs.DataSeries(l, dtype='H'),
-            'F' : rs.DataSeries(I, dtype='J'),
-            'SIGF' : rs.DataSeries(SIGI, dtype='Q'),
+            'F' : rs.DataSeries(F, dtype='F'),
+            'SIGF' : rs.DataSeries(SIGF, dtype='Q'),
             'I' : rs.DataSeries(I, dtype='J'),
             'SIGI' : rs.DataSeries(SIGI, dtype='Q'),
             },
@@ -103,6 +108,25 @@ class WilsonPosterior(WilsonBase):
             cell=self.rasu.cell,
             spacegroup=self.rasu.spacegroup,
         )
+        return out
+
+    def to_dataset(self, seen=True):
+        """
+        Parameters
+        ----------
+        seen : bool (optional)
+            Only include reflections seen during training. Defaults to True. 
+        """
+        out = self._to_dataset()
+        if seen:
+            out = out[self.seen.numpy()]
+        out = out.set_index(['H', 'K', 'L'])
+
+        if self.rasu.anomalous:
+            out = out.unstack_anomalous()
+            out = out[[
+                'F(+)', 'SIGF(+)', 'F(-)', 'SIGF(-)', 'I(+)', 'SIGI(+)', 'I(-)', 'SIGI(-)'
+                ]]
         return out
 
     def call(self, hkl, mc_samples=1, training=None):

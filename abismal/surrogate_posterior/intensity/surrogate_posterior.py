@@ -10,6 +10,8 @@ from abismal.surrogate_posterior import WilsonBase,PosteriorCollectionBase
 
 
 class PosteriorCollection(PosteriorCollectionBase):
+    parameterization = 'intensity'
+
     def call(self, asu_id, hkl, training=None):
         conc = self._wp_method_helper(
             asu_id,
@@ -36,6 +38,8 @@ def WilsonPrior(centric, epsilon, sigma=1.):
     return tfd.Gamma(concentration, rate)
 
 class WilsonPosterior(WilsonBase):
+    parameterization = 'intensity'
+
     def __init__(self, rasu, kl_weight, scale_factor=1e-2, eps=1e-12, **kwargs):
         super().__init__(rasu, **kwargs)
         self.prior = WilsonPrior(

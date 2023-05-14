@@ -70,6 +70,7 @@ class WilsonBase(tfk.models.Model):
 
 class PosteriorCollectionBase(tfk.models.Model):
     """ A collection of Wilson Posteriors """
+    parameterization = None #Derived classes must be either 'structure_factor' or 'intensity'
     def __init__(self, *posteriors):
         super().__init__()
         self.posteriors = posteriors
