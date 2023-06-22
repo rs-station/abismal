@@ -1,4 +1,3 @@
-from factory.distributions import FoldedNormal, Rice
 import tensorflow as tf
 from tensorflow_probability.python.internal import special_math
 from tensorflow_probability import distributions as tfd
@@ -12,6 +11,8 @@ from tensorflow_probability.python.internal import reparameterization
 from tensorflow_probability.python.distributions import kullback_leibler
 from tensorflow_probability.python.internal import parameter_properties
 from tensorflow_probability.python.bijectors import exp as exp_bijector
+from abismal.distributions.rice import Rice
+from abismal.distributions.folded_normal import FoldedNormal
 
 class RiceWoolfson(distribution.AutoCompositeTensorDistribution):
     def __init__(self,
