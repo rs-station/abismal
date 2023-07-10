@@ -8,7 +8,7 @@ from tensorflow_probability import bijectors as tfb
 from tensorflow import keras as tfk
 
 class WilsonBase(tfk.models.Model):
-    def __init__(self, rasu, **kwargs):
+    def __init__(self, rasu, kl_weight=1., **kwargs):
         super().__init__(**kwargs)
         self.rasu = rasu
         self.seen = self.add_weight(
@@ -18,6 +18,7 @@ class WilsonBase(tfk.models.Model):
             trainable=False,
             name="hkl_tracker",
         )
+        self.kl_weight = kl_weight
 
     def _to_dataset(self):
         raise NotImplementedError("Subclasses must implement _to_dataset")
@@ -58,13 +59,12 @@ class WilsonBase(tfk.models.Model):
         stddev = self.rasu.gather(q.stddev(), hkl)
         return stddev
 
-    def kl_div(self, hkl=None, training=None):
+    def kl_div(self, hkl=None, training=None, mc_samples=1):
         q,p = self.flat_distribution, self.prior
         kl_div = q.kl_divergence(p)
         kl_div = tf.reduce_mean(kl_div)
-        if training:
-            self.add_metric(kl_div, name='KL')
-            self.add_loss(self.kl_weight * kl_div)
+        self.add_metric(kl_div, name='KL')
+        self.add_loss(self.kl_weight * kl_div)
         return kl_div
 
 

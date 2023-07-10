@@ -6,14 +6,20 @@ from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 from tensorflow import keras as tfk
-from abismal.distributions import RiceWoolfson
+from abismal.distributions import RiceWoolfson,FoldedNormal
 from abismal.surrogate_posterior import WilsonBase,PosteriorCollectionBase
 
+
+def WilsonPrior(centric, multiplicity, sigma=1.):
+    scale = tf.where(centric, tf.sqrt(multiplicity), tf.sqrt(0.5 * multiplicity))
+    loc = tf.zeros_like(multiplicity)
+    return RiceWoolfson(loc, scale, centric)
 
 class PosteriorCollection(PosteriorCollectionBase):
     parameterization = 'structure_factor'
 
-    def call(self, asu_id, hkl, training=None):
+    def call(self, asu_id, hkl, training=None, mc_samples=1):
+        asu_id = tf.squeeze(asu_id, axis=-1)
         loc = self._wp_method_helper(
             asu_id,
             hkl,
@@ -29,25 +35,33 @@ class PosteriorCollection(PosteriorCollectionBase):
             hkl,
             lambda h,wp: wp.rasu.gather(wp.rasu.centric, h),
         )
-        for i,wp in enumerate(self.posteriors):
-            _hkl = hkl[tf.squeeze(asu_id, axis=-1) == i] #srsly? y squeeze?
-            if training:
-                wp._register_seen(_hkl)
-                wp.kl_div(_hkl, training=training)
-
+        multiplicity = self._wp_method_helper(
+            asu_id,
+            hkl,
+            lambda h,wp: wp.rasu.gather(wp.rasu.epsilon, h),
+        )
         q = RiceWoolfson(loc, scale, centric)
-        return q
+        p = WilsonPrior(centric, multiplicity)
 
-def WilsonPrior(centric, multiplicity, sigma=1.):
-    scale = tf.where(centric, tf.sqrt(multiplicity), tf.sqrt(0.5 * multiplicity))
-    loc = tf.zeros_like(multiplicity)
-    return RiceWoolfson(loc, scale, centric)
+        if training:
+            for i,wp in enumerate(self.posteriors):
+                mask = asu_id == i
+                _hkl = hkl[mask] 
+                if tf.math.reduce_any(mask):
+                    wp._register_seen(_hkl)
+
+        kl_weight = self.posteriors[0].kl_weight
+        kl_div = q.kl_divergence(p)
+        kl_div = tf.reduce_mean(kl_div)
+        self.add_metric(kl_div, name='KL')
+        self.add_loss(kl_weight * kl_div)
+
+        return q
 
 class WilsonPosterior(WilsonBase):
     parameterization = 'structure_factor'
-
     def __init__(self, rasu, kl_weight, scale_factor=1e-1, eps=1e-12, **kwargs):
-        super().__init__(rasu, **kwargs)
+        super().__init__(rasu, kl_weight=kl_weight, **kwargs)
         self.prior = WilsonPrior(
             rasu.centric,
             rasu.epsilon,
@@ -55,7 +69,6 @@ class WilsonPosterior(WilsonBase):
 
         self.rasu = rasu
 
-        self.kl_weight = kl_weight
         self.loc = tfu.TransformedVariable(
             tf.ones_like(rasu.centric, dtype='float32'),
             tfb.Chain([
@@ -130,12 +143,12 @@ class WilsonPosterior(WilsonBase):
         return out
 
     def call(self, hkl, mc_samples=1, training=None):
+        q,p = self.flat_distribution, self.prior
+        kl_div = q.kl_divergence(p)
+        kl_div = tf.reduce_mean(kl_div)
+        self.add_metric(kl_div, name='KL_{}')
+        self.add_loss(self.kl_weight * kl_div)
         if training:
-            q,p = self.flat_distribution, self.prior
-            kl_div = q.kl_divergence(p)
-            kl_div = tf.reduce_mean(kl_div)
-            self.add_metric(kl_div, name='KL')
-            self.add_loss(self.kl_weight * kl_div)
             self._register_seen(hkl)
 
         q = self.distribution(hkl)

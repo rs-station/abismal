@@ -25,8 +25,9 @@ _cell_constraints = {
 
 class StreamLoader(DataLoader):
     @cellify
-    def __init__(self, stream_file, cell=None, dmin=None, asu_id=0):
+    def __init__(self, stream_file, cell=None, dmin=None, asu_id=0, min_refls=0, spacegroup=None):
         super().__init__()
+        self.min_refls = min_refls
         self.cell = cell
         self.lattice_type = self.get_lattice_type(stream_file)
         if self.cell is None:
@@ -41,6 +42,7 @@ class StreamLoader(DataLoader):
         self.metadata_std   = None
         self.intensity_std  = None
         self.dmin = dmin
+        self.spacegroup = spacegroup
 
     def get_metadata_dims(self):
         for x,y in self.get_dataset():
@@ -111,7 +113,8 @@ class StreamLoader(DataLoader):
         self.metadata_std = None
 
         tfds = self.get_dataset()
-        for (_,_,_,_,metadata,_,_),(intensity,) in tfds.batch(n):
+        #for (_,_,_,_,metadata,_,_),(intensity,) in tfds.batch(n):
+        for (_,_,_,_,metadata,_,_),(intensity,) in tfds.ragged_batch(n):
             break
 
         self.intensity_std  = tf.math.reduce_std(intensity.flat_values, axis=0)
@@ -169,7 +172,9 @@ class StreamLoader(DataLoader):
             if line.startswith(block_begin_marker):
                 in_block = True
 
-    def crystal_to_data(self, crystal):
+    @staticmethod
+    def _crystal_to_data(crystal, cell, wavelength, dmin=None, intensity_std=None, metadata_mean=None, metadata_std=None, asu_id=0, spacegroup=None):
+        inverse_wavelength = 1. / wavelength
         astar = bstar = cstar = None
         in_refls = False
         crystal_iter = iter(crystal)
@@ -200,10 +205,15 @@ class StreamLoader(DataLoader):
         hkl = refls[:,:3]
 
         #Reflection resolution based on consensus cell
-        d = self.cell.calculate_d_array(hkl).astype('float32')
+        d = cell.calculate_d_array(hkl).astype('float32')
         #Apply dmin
-        if self.dmin is not None:
-            idx = d >= self.dmin
+        if dmin is not None:
+            idx = d >= dmin
+            refls = refls[idx]
+            d = d[idx]
+            hkl = hkl[idx]
+        if spacegroup is not None:
+            idx = ~rs.utils.is_absent(hkl, spacegroup)
             refls = refls[idx]
             d = d[idx]
             hkl = hkl[idx]
@@ -211,20 +221,20 @@ class StreamLoader(DataLoader):
         A = np.array([astar, bstar, cstar]).T
         # calculate ewald offset and s1
 
-        s0 = np.array([0, 0, self.inverse_wavelength]).T
+        s0 = np.array([0, 0, inverse_wavelength]).T
         q = hkl @ A.T # == (A @ hkl.T).T
         s1 = q + s0
         s1x, s1y, s1z = s1.T
         s1_norm = np.sqrt(s1x * s1x + s1y * s1y + s1z * s1z)
 
         # project calculated s1 onto the ewald sphere
-        s1_obs = self.inverse_wavelength * s1 / s1_norm[:,None]
+        s1_obs = inverse_wavelength * s1 / s1_norm[:,None]
 
         # Compute the ewald offset vector
         eov = s1_obs - s1
 
         # Compute scalar ewald offset
-        eo = s1_norm - self.inverse_wavelength
+        eo = s1_norm - inverse_wavelength
 
         # Compute angular ewald offset
         eo_sign = np.sign(eo)
@@ -234,65 +244,106 @@ class StreamLoader(DataLoader):
         I = refls[:,3]
         SigI = refls[:,4]
         bg = refls[:,5]
-        if self.intensity_std is not None:
-            I = I / self.intensity_std
-            SigI = SigI / self.intensity_std
+        if intensity_std is not None:
+            I = I / intensity_std
+            SigI = SigI / intensity_std
 
-        xy = refls[:,7:9]
         panel = refls[:,9,None]
-        metadata = np.concatenate((eov, eo[...,None], ao[...,None], s1, hkl), axis=-1).astype('float32')
-        if self.metadata_mean is not None:
-            metadata = metadata - self.metadata_mean
-        if self.metadata_std is not None:
-            metadata = metadata / self.metadata_std
+        inv_d2 = np.reciprocal(np.square(d))
+        xydet = refls[:,7:9]
+        metadata = (s1[:,:2], eov, eo[...,None], ao[...,None], xydet, inv_d2[...,None])
+        metadata = np.concatenate(metadata, axis=-1).astype('float32')
+        if metadata_mean is not None:
+            metadata = metadata - metadata_mean
+        if metadata_std is not None:
+            metadata = metadata / metadata_std
 
         rowids = np.zeros_like(I, dtype='int32')
-        d = tf.RaggedTensor.from_value_rowids(d, rowids)[...,None]
-        I = tf.RaggedTensor.from_value_rowids(I, rowids)[...,None]
-        SigI = tf.RaggedTensor.from_value_rowids(SigI, rowids)[...,None]
-        hkl = tf.RaggedTensor.from_value_rowids(hkl.astype('int32'), rowids)
+        d = tf.convert_to_tensor(d[None,:,None])
+        I = tf.convert_to_tensor(I[None,:,None])
+        SigI = tf.convert_to_tensor(SigI[None,:,None])
+        hkl = tf.convert_to_tensor(hkl[None,:,:])
+        metadata = tf.convert_to_tensor(metadata[None,:,:])
 
-        metadata = tf.RaggedTensor.from_value_rowids(metadata, rowids)
-
-        asu = tf.ones_like(I, dtype='int32') * self.asu_id
-        wavelength = tf.ones_like(I, dtype='float32') * self.wavelength
+        asu = tf.ones_like(I, dtype='int32') * asu_id
+        wavelength = tf.ones_like(I, dtype='float32') * wavelength
 
         data = ((asu, hkl, d, wavelength, metadata, I, SigI), (I,))
         return data
 
+    def crystal_to_data(self, crystal):
+        return StreamLoader._crystal_to_data(
+            crystal, self.cell, self.wavelength, self.dmin, 
+            self.intensity_std, self.metadata_mean, self.metadata_std,
+            self.asu_id, self.spacegroup
+        )
+
     def get_dataset(self):
         """
-        Convert dials monochromatic stills files to a tf.data.Dataset.
+        Convert CrystFEL .stream files to a tf.data.Dataset.
         """
         def data_gen():
             for lines in self.to_crystals(self.stream_file):
-                yield self.crystal_to_data(lines)
+                #try:
+                datum = self.crystal_to_data(lines)
+                #size = datum[0][0].values.shape[0]
+                size = datum[0][0].shape[1]
+                if size >= self.min_refls:
+                    yield datum
+                #except:
+                #    print(f"Warning: encountered bad crystal block in {self.stream_file}")
 
         if self.signature is None:
             for datum in data_gen():
-                self.signature = tf.nest.map_structure(tf.RaggedTensorSpec.from_value, datum)
+                self.signature = StreamLoader.get_signature_from_datum(datum)
                 break
 
         return tf.data.Dataset.from_generator(data_gen, output_signature=self.signature).unbatch()
 
     @staticmethod
+    def get_interleaved_crystals(*loaders):
+        crystal_generators = [loader.to_crystals(loader.stream_file) for loader in loaders]
+        finished = [False] * len(loaders)
+        while not all(finished):
+            for i,(loader,crystal_generator) in enumerate(zip(loaders, crystal_generators)):
+                lines = None
+                try: 
+                    lines = next(crystal_generator)
+                except StopIteration:
+                    finished[i] = True
+                if lines is not None:
+                    yield (
+                        lines, loader.cell, loader.wavelength, loader.dmin, 
+                        loader.intensity_std, loader.metadata_mean, loader.metadata_std,
+                        loader.asu_id, loader.spacegroup
+                    )
+
+    @staticmethod
+    def get_signature_from_datum(datum):
+        """Work out the proper signature for creating a dataset from an example"""
+        def to_ragged_spec(tensor):
+            spec = tf.TensorSpec.from_tensor(tensor)
+            shape,dtype = spec.shape,spec.dtype
+            new = tf.TensorSpec(
+                shape = (shape[0], None, shape[2]),
+                dtype=dtype,
+            )
+            return new
+        signature = tf.nest.map_structure(to_ragged_spec, datum)
+        return signature
+
+    @staticmethod
     def get_interleaved_dataset(*loaders):
         def data_gen():
-            crystal_generators = [loader.to_crystals(loader.stream_file) for loader in loaders]
-            finished = [False] * len(loaders)
-            while not all(finished):
-                for i,(loader,crystal_generator) in enumerate(zip(loaders, crystal_generators)):
-                    try: 
-                        lines = next(crystal_generator)
-                        yield loader.crystal_to_data(lines)
-                    except StopIteration:
-                        finished[i] = True
+            crystal_iter = StreamLoader.get_interleaved_crystals(*loaders)
+            for args in crystal_iter:
+                yield StreamLoader._crystal_to_data(*args)
 
-        if loaders[0].signature is None:
-            for datum in data_gen():
-                self.signature = tf.nest.map_structure(tf.RaggedTensorSpec.from_value, datum)
+        for datum in data_gen():
+            signature = StreamLoader.get_signature_from_datum(datum)
+            break
 
-        return tf.data.Dataset.from_generator(data_gen, output_signature=loaders[0].signature).unbatch()
+        return tf.data.Dataset.from_generator(data_gen, output_signature=signature).unbatch()
 
 if __name__=='__main__':
     stream_file = '/mnt/raid/data/xtal/20210615_Neutze_collab/indexing_dark_before_merging_intensities.stream'

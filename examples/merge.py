@@ -45,7 +45,7 @@ gpu_id = 1
 set_gpu(gpu_id)
 
 # Data Parameters
-outdir = "results/less_kl"
+outdir = "results/test"
 if os.path.exists(outdir):
     answer = input(f"""Permission to overwrite output directory {outdir} (y/N)""") + ' '
     if answer[0].lower()=='y':
@@ -59,7 +59,7 @@ weights_file = None # f"results/merge/weights.tf"
 test_size = 5_000 #test set image count
 mc_samples=50 
 epochs=100
-batch_size=1
+batch_size=100
 shuffle_buffer_size=100_000
 dmin = 1.8
 anomalous = True
@@ -74,7 +74,6 @@ studentt_dof = None
 
 # kullback leibler divergences / regularizers 
 kl_weight = 1e-8
-scale_kl_weight = 10.
 dropout=None
 
 # Optimizer settings
@@ -127,7 +126,6 @@ scale_model = ImageScaler(
     layer_norm=False,
     activation=activation,
     kernel_initializer=kernel_initializer,
-    kl_weight=scale_kl_weight,
     eps=epsilon,
     scale_posterior=scale_posterior,
 )

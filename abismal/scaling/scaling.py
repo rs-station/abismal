@@ -32,6 +32,32 @@ class DeltaFunctionLayer(tfk.layers.Layer):
         q = DeltaDist(theta)
         return q
 
+class NormalLayer(tfk.layers.Layer):
+    def __init__(
+            self, 
+            kl_weight=1.,
+            prior=None,
+            eps=1e-12,
+            kernel_initializer='glorot_normal',
+        ):
+        super().__init__()
+        self.kl_weight=kl_weight
+        self.prior=prior
+        self.dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
+        self.eps = eps
+
+    def call(self, data, training=None, **kwargs):
+        theta = self.dense(data)
+        loc, scale = tf.unstack(theta, axis=-1)
+        scale = tf.math.exp(scale) + self.eps
+        q = tfd.Normal(loc, scale)
+        if self.prior is not None:
+            kl_div=q.kl_divergence(self.prior)
+            kl_div = tf.reduce_mean(kl_div)
+            self.add_loss(self.kl_weight * kl_div)
+            self.add_metric(kl_div, name='KL_Σ')
+        return q
+
 
 
 class FoldedNormalLayer(tfk.layers.Layer):
@@ -53,12 +79,11 @@ class FoldedNormalLayer(tfk.layers.Layer):
         theta = tf.math.exp(theta) + self.eps
         loc, scale = tf.unstack(theta, axis=-1)
         q = FoldedNormal(loc, scale)
-        if training:
-            if self.prior is not None:
-                kl_div=q.kl_divergence(self.prior)
-                kl_div = tf.reduce_mean(kl_div)
-                self.add_loss(kl_div)
-                self.add_metric(kl_div, name='KL_Σ')
+        if self.prior is not None:
+            kl_div=q.kl_divergence(self.prior)
+            kl_div = tf.reduce_mean(kl_div)
+            self.add_loss(self.kl_weight * kl_div)
+            self.add_metric(kl_div, name='KL_Σ')
         return q
 
 class ImageScaler(tfk.layers.Layer):
@@ -66,29 +91,36 @@ class ImageScaler(tfk.layers.Layer):
             self, 
             mlp_width, 
             mlp_depth, 
-            dropout=0.0, 
+            ff_dropout=None, 
+            cc_dropout=None, 
             hidden_units=None,
             layer_norm=False,
             activation="ReLU",
             kernel_initializer='glorot_normal',
             stop_f_grad=True,
+            imodel=True,
             scale_posterior=None,
             kl_weight=1.,
             eps=1e-12,
+            image_dims=None,
             **kwargs, 
         ):
         super().__init__(**kwargs)
 
+        self.image_dims = image_dims
 
         if hidden_units is None:
             hidden_units = 2 * image_mpl_width
 
         self.input_image   = tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer)
-        self.input_scale  = tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer)
+        if self.image_dims is None:
+            self.input_scale  = tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer)
+        else:
+            self.input_scale  = tfk.layers.Dense(mlp_width - self.image_dims, kernel_initializer=kernel_initializer)
 
-        self.image_network = tfk.models.Sequential([
+        layers = [
                 FeedForward(
-                    dropout=dropout,
+                    dropout=ff_dropout,
                     hidden_units=hidden_units,
                     activation=activation,
                     kernel_initializer=kernel_initializer,
@@ -97,18 +129,28 @@ class ImageScaler(tfk.layers.Layer):
             ] + [
                 ConvexCombination(
                     kernel_initializer=kernel_initializer,
-                    dropout=dropout
+                    dropout=cc_dropout,
                 )
-        ])
+        ]
+        if self.image_dims is not None:
+                layers.append(
+                    tfk.layers.Dense(image_dims, kernel_initializer=kernel_initializer)
+                )
 
+        self.image_network = tfk.models.Sequential(layers)
         self.scale_network = tfk.models.Sequential([
             FeedForward(
+                dropout=ff_dropout,
                 hidden_units=hidden_units, 
                 normalize=layer_norm, 
                 kernel_initializer=kernel_initializer, 
                 activation=activation, 
                 ) for i in range(mlp_depth)
         ]) 
+        self.positional_encoding = tfk.models.Sequential([
+            Normalization(),
+            PositionalEncoding(4, active_dims=[0, 1])
+        ])
 
         if scale_posterior is None:
             prior = FoldedNormal(0., np.sqrt(np.pi/2).astype('float32'))
@@ -122,21 +164,30 @@ class ImageScaler(tfk.layers.Layer):
             self.scale_posterior = scale_posterior
 
         self.stop_f_grad = stop_f_grad
+        self.imodel = True
 
     def call(self, inputs, mc_samples=1, training=None, **kwargs):
         metadata, iobs, sigiobs, imodel = inputs
+        metadata = self.positional_encoding(metadata)
         
         if self.stop_f_grad:
             imodel = tf.stop_gradient(imodel)
 
         scale = metadata
-        image = tf.concat((metadata, iobs, sigiobs, imodel), axis=-1)
+        if self.imodel:
+            image = tf.concat((metadata, iobs, sigiobs, imodel), axis=-1)
+        else:
+            image = tf.concat((metadata, iobs, sigiobs), axis=-1)
 
         image = self.input_image(image)
         scale = self.input_scale(scale)
 
-        image = self.image_network(image)
-        scale = scale + image
+        image = self.image_network(image) 
+        if self.image_dims is not None:
+            image = image * tf.ones_like(scale[...,:1])
+            scale = tf.concat((scale, image), axis=-1)
+        else:
+            scale = scale + image
 
         scale = self.scale_network(scale)
         q = self.scale_posterior(scale.flat_values, training=training)

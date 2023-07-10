@@ -9,6 +9,44 @@ from tensorflow_probability import bijectors as tfb
 from tensorflow import keras as tfk
 from IPython import embed
 
+def weighted_pearsonr(x, y, w):
+    """
+    Calculate a [weighted Pearson correlation coefficient](https://en.wikipedia.org/wiki/Pearson_correlation_coefficient#Weighted_correlation_coefficient).
+
+    Note
+    ----
+    x, y, and w may have arbitrarily shaped leading dimensions. The correlation coefficient will always be computed pairwise along the last axis.
+
+    Parameters
+    ----------
+    x : np.array(float)
+        An array of observations.
+    y : np.array(float)
+        An array of observations the same shape as x.
+    w : np.array(float)
+        An array of weights the same shape as x. These needn't be normalized.
+
+    Returns
+    -------
+    r : float
+        The Pearson correlation coefficient along the last dimension. This has shape {x,y,w}.shape[:-1].
+    """
+    z = tf.math.reciprocal(
+        tf.reduce_sum(w, axis=-1, keepdims=True)
+    )
+
+    mx = z * tf.reduce_sum(w * x, axis=-1, keepdims=True)
+    my = z * tf.reduce_sum(w * y, axis=-1, keepdims=True)
+
+    dx = x - mx
+    dy = y - my
+
+    cxy = z * tf.reduce_sum(w * dx * dy, axis=-1)
+    cx  = z * tf.reduce_sum(w * dx * dx, axis=-1)
+    cy  = z * tf.reduce_sum(w * dy * dy, axis=-1)
+
+    r = cxy / tf.sqrt(cx * cy)
+    return r
 
 def spearman_cc(yobs, ypred):
     from scipy.stats import spearmanr
@@ -23,7 +61,9 @@ def spearman_cc(yobs, ypred):
 
 
 class VariationalMergingModel(tfk.models.Model):
-    def __init__(self, scale_model, surrogate_posterior, studentt_dof=None, sigiobs_model=None, mc_samples=1, eps=1e-6, clamp=None):
+    def __init__(self, scale_model, surrogate_posterior, studentt_dof=None, 
+            sigiobs_model=None, mc_samples=1, eps=1e-6, clamp=None, rescale=True,
+            ):
         super().__init__()
         self.eps = eps
         self.dof = studentt_dof
@@ -32,10 +72,10 @@ class VariationalMergingModel(tfk.models.Model):
         self.sigiobs_model = sigiobs_model
         self.mc_samples = mc_samples
         self.clamp = clamp
+        self.rescale = rescale
 
     def call(self, inputs, mc_samples=None, **kwargs):
-        if mc_samples is None:
-            mc_samples = self.mc_samples
+        if mc_samples is None: mc_samples = self.mc_samples
 
         (
             asu_id,
@@ -47,28 +87,34 @@ class VariationalMergingModel(tfk.models.Model):
             sigiobs,
         ) = inputs
 
+        rescale_factor = 1.
+        if self.rescale:
+            rescale_factor = tf.math.reduce_std(iobs, axis=-2, keepdims=True)
 
-        q = self.surrogate_posterior(asu_id.flat_values, hkl.flat_values)
+        ipred = self.surrogate_posterior(asu_id.flat_values, hkl.flat_values, mc_samples=self.mc_samples)
+
         if self.surrogate_posterior.parameterization == 'structure_factor':
-            floc   = self.surrogate_posterior.mean(asu_id, hkl)
-            fscale = self.surrogate_posterior.stddev(asu_id, hkl)
+            aid = tf.squeeze(asu_id, axis=-1)
+            floc   = tf.ragged.map_flat_values(self.surrogate_posterior.mean, aid, hkl)
+            fscale = tf.ragged.map_flat_values(self.surrogate_posterior.stddev, aid, hkl)
             iloc  = tf.square(floc) + tf.square(fscale)
             iscale= tf.abs(2. * floc * fscale)
             imodel = (
-                iloc[...,None],
-                iscale[...,None],
-                floc[...,None],
-                fscale[...,None],
+                rescale_factor * iloc[...,None],
+                rescale_factor * iscale[...,None],
+                #rescale_factor * floc[...,None],
+                #rescale_factor * fscale[...,None],
             )
-            ipred = q.sample_intensities(self.mc_samples)
         elif self.surrogate_posterior.parameterization == 'intensity':
-            iloc   = self.surrogate_posterior.mean(asu_id, hkl)
-            iscale = self.surrogate_posterior.stddev(asu_id, hkl)
+            aid = tf.squeeze(asu_id, axis=-1)
+            #iloc   = self.surrogate_posterior.mean(aid, hkl)
+            #iscale = self.surrogate_posterior.stddev(aid, hkl)
+            iloc   = tf.ragged.map_flat_values(self.surrogate_posterior.mean, aid, hkl)
+            iscale = tf.ragged.map_flat_values(self.surrogate_posterior.stddev, aid, hkl)
             imodel = (
-                iloc[...,None],
-                iscale[...,None],
+                rescale_factor * iloc[...,None],
+                rescale_factor * iscale[...,None],
             )
-            ipred = q.sample(self.mc_samples)
         else:
             raise AttributeError(
                 "Surrogate posteriors must have attribute 'parameterization' with value "
@@ -79,16 +125,13 @@ class VariationalMergingModel(tfk.models.Model):
             iobs.row_splits,
         )
 
-        iscale = self.surrogate_posterior.stddev(asu_id, hkl)
-        iloc   = self.surrogate_posterior.mean(asu_id, hkl)
         imodel = tf.concat(imodel, axis=-1)
-
         scale = self.scale_model((
             metadata, 
-            iobs,
-            sigiobs,
+            rescale_factor * iobs,
+            rescale_factor * sigiobs,
             imodel,
-        ), mc_samples=mc_samples, **kwargs)
+        ), mc_samples=mc_samples, **kwargs) / rescale_factor
 
         ipred = ipred * scale
 
@@ -116,7 +159,11 @@ class VariationalMergingModel(tfk.models.Model):
 
         # This is the mean ipred across the posterior mc samples
         ipred = tf.reduce_mean(ipred, axis=-1)
-        cc = tf.numpy_function(spearman_cc, [iobs.flat_values, ipred.flat_values], Tout=tf.float64)
+        #cc = tf.numpy_function(spearman_cc, [iobs.flat_values, ipred.flat_values], Tout=tf.float64)
+        x = tf.squeeze(iobs.flat_values, axis=-1)
+        y = ipred.flat_values
+        w = tf.squeeze(tf.math.reciprocal(tf.square(sigiobs.flat_values)), axis=-1)
+        cc = weighted_pearsonr(x, y, w)
         self.add_metric(cc, name='CCpred')
 
         return ipred

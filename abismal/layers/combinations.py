@@ -29,7 +29,7 @@ class ConvexCombination(tfk.layers.Layer):
         return encoded
 
 class ConvexCombinations(tfk.layers.Layer):
-    def __init__(self, npoints, kernel_initializer='glorot_normal', dropout=None):
+    def __init__(self, heads, kernel_initializer='glorot_normal', dropout=None):
         super().__init__()
         if dropout is not None:
             self.dropout = tfk.layers.Dropout(dropout)
@@ -37,13 +37,21 @@ class ConvexCombinations(tfk.layers.Layer):
             self.dropout = None
         self.softmax = tfk.layers.Softmax(axis=-1)
         self.einsum = None
-        self.npoints = npoints
+        self.heads = heads
         self.kernel_initializer = kernel_initializer
 
     def build(self, shape, **kwargs):
-        self.einsum = tfk.layers.EinsumDense("...a,bac->...bc", kernel_initializer=self.kernel_initializer, output_shape=(self.npoints, 1), bias_axes='c')
+        self.einsum = tfk.layers.EinsumDense(
+            "...a,ba->...b", 
+            kernel_initializer=self.kernel_initializer, 
+            output_shape=(self.heads,),
+            bias_axes=None,#'b'
+        )
 
     def call(self, data, mask=None, **kwargs):
+        score = tf.ragged.map_flat_values(self.einsum, data)
+        from IPython import embed
+        embed(colors='linux')
         score = self.einsum(data)[...,0]
         if mask is None:
             mask = tf.ones_like(score)
@@ -57,3 +65,13 @@ class ConvexCombinations(tfk.layers.Layer):
         points = tf.einsum("...ab,...ac->...bc", score, data)
         return points
 
+if __name__=='__main__':
+    from pylab import *
+    heads=8
+    dropout = 0.1
+    n = ConvexCombinations(heads, dropout=dropout)
+    images,refls = 3,10
+    data = np.random.random((images * refls, 5)).astype('float32')
+    rows = np.sort(np.random.choice(images, size=len(data)))
+    ragged = tf.RaggedTensor.from_value_rowids(data, rows)
+    n(ragged)

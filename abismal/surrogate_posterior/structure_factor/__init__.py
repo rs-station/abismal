@@ -1,1 +1,2 @@
 from .surrogate_posterior import WilsonPosterior,PosteriorCollection
+from .folded_normal import FoldedNormalPosterior,FoldedNormalPosteriorCollection
