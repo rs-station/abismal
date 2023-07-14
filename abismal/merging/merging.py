@@ -92,6 +92,8 @@ class VariationalMergingModel(tfk.models.Model):
             rescale_factor = tf.math.reduce_std(iobs, axis=-2, keepdims=True)
 
         ipred = self.surrogate_posterior(asu_id.flat_values, hkl.flat_values, mc_samples=self.mc_samples)
+        #q = self.surrogate_posterior(asu_id.flat_values, hkl.flat_values)
+        #ipred = q.sample(mc_samples)
 
         if self.surrogate_posterior.parameterization == 'structure_factor':
             aid = tf.squeeze(asu_id, axis=-1)
@@ -127,6 +129,7 @@ class VariationalMergingModel(tfk.models.Model):
 
         imodel = tf.concat(imodel, axis=-1)
         scale = self.scale_model((
+            hkl,
             metadata, 
             rescale_factor * iobs,
             rescale_factor * sigiobs,

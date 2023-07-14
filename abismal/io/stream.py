@@ -251,7 +251,8 @@ class StreamLoader(DataLoader):
         panel = refls[:,9,None]
         inv_d2 = np.reciprocal(np.square(d))
         xydet = refls[:,7:9]
-        metadata = (s1[:,:2], eov, eo[...,None], ao[...,None], xydet, inv_d2[...,None])
+        #metadata = (s1[:,:2], eov, eo[...,None], ao[...,None], xydet, inv_d2[...,None])
+        metadata = (xydet,)
         metadata = np.concatenate(metadata, axis=-1).astype('float32')
         if metadata_mean is not None:
             metadata = metadata - metadata_mean

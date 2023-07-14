@@ -45,7 +45,7 @@ class PositionalEncoding(tfk.layers.Layer):
         self.active_dims = active_dims
 
     def call(self, Q):
-        d = Q.shape[-1]
+        d = tf.shape(Q)[-1]
         active_dims = self.active_dims if self.active_dims is not None else range(d)
         to_encode = tf.gather(Q, active_dims, axis=-1)
         cos = [tf.math.cos(to_encode*np.pi*2**f) for f in range(self.L)]

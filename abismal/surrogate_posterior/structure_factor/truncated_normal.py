@@ -53,8 +53,8 @@ class TruncatedNormalPosteriorCollection(PosteriorCollectionBase):
                     wp._register_seen(_hkl)
             index_offset = index_offset + wp.rasu.asu_size
 
-        bads = tf.reduce_sum(tf.where(refl_ids == -1, 1., 0.))
-        self.add_metric(bads, name='Missing')
+        #bads = tf.reduce_sum(tf.where(refl_ids == -1, 1., 0.))
+        #self.add_metric(bads, name='Missing')
         high = wp.high
         low = tf.where(centric, 0., wp.low)
         q = TruncatedNormal(loc, scale, low, high)

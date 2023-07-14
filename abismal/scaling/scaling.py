@@ -32,6 +32,32 @@ class DeltaFunctionLayer(tfk.layers.Layer):
         q = DeltaDist(theta)
         return q
 
+class LogNormalLayer(tfk.layers.Layer):
+    def __init__(
+            self, 
+            kl_weight=1.,
+            prior=None,
+            eps=1e-12,
+            kernel_initializer='glorot_normal',
+        ):
+        super().__init__()
+        self.kl_weight=kl_weight
+        self.prior=prior
+        self.dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
+        self.eps = eps
+
+    def call(self, data, training=None, **kwargs):
+        theta = self.dense(data)
+        loc, scale = tf.unstack(theta, axis=-1)
+        scale = tf.math.exp(scale) + self.eps
+        q = tfd.LogNormal(loc, scale)
+        if self.prior is not None:
+            kl_div=q.kl_divergence(self.prior)
+            kl_div = tf.reduce_mean(kl_div)
+            self.add_loss(self.kl_weight * kl_div)
+            self.add_metric(kl_div, name='KL_Σ')
+        return q
+
 class NormalLayer(tfk.layers.Layer):
     def __init__(
             self, 
@@ -58,7 +84,43 @@ class NormalLayer(tfk.layers.Layer):
             self.add_metric(kl_div, name='KL_Σ')
         return q
 
+class TruncatedNormalLayer(tfk.layers.Layer):
+    def __init__(
+            self, 
+            kl_weight=1.,
+            prior=None,
+            eps=1e-12,
+            kernel_initializer='glorot_normal',
+            low=0.,
+            high=1e32
+        ):
+        super().__init__()
+        self.low = low
+        self.high = high
+        self.kl_weight=kl_weight
+        self.prior=prior
+        self.dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
+        self.eps = eps
 
+    def call(self, data, training=None, mc_samples=None, **kwargs):
+        theta = self.dense(data)
+        theta = tf.math.exp(theta) + self.eps
+        loc, scale = tf.unstack(theta, axis=-1)
+        q = tfd.TruncatedNormal(loc, scale, self.low, self.high)
+        if mc_samples is not None:
+            z = q.sample(mc_samples)
+        else:
+            z = q
+
+        if self.prior is not None:
+            if mc_samples is not None:
+                kl_div = q.log_prob(z) - self.prior.log_prob(z)
+            else:
+                kl_div=q.kl_divergence(self.prior)
+            kl_div = tf.reduce_mean(kl_div)
+            self.add_loss(self.kl_weight * kl_div)
+            self.add_metric(kl_div, name='KL_Σ')
+        return z
 
 class FoldedNormalLayer(tfk.layers.Layer):
     def __init__(
@@ -147,9 +209,14 @@ class ImageScaler(tfk.layers.Layer):
                 activation=activation, 
                 ) for i in range(mlp_depth)
         ]) 
-        self.positional_encoding = tfk.models.Sequential([
+        L = 5
+        self.xy_positional_encoding = tfk.models.Sequential([
             Normalization(),
-            PositionalEncoding(4, active_dims=[0, 1])
+            PositionalEncoding(L)
+        ])
+        self.hkl_positional_encoding = tfk.models.Sequential([
+            Normalization(),
+            PositionalEncoding(L)
         ])
 
         if scale_posterior is None:
@@ -167,17 +234,20 @@ class ImageScaler(tfk.layers.Layer):
         self.imodel = True
 
     def call(self, inputs, mc_samples=1, training=None, **kwargs):
-        metadata, iobs, sigiobs, imodel = inputs
-        metadata = self.positional_encoding(metadata)
-        
+        hkl, xy, iobs, sigiobs, imodel = inputs
+        hkl = tf.cast(hkl, dtype=tf.float32)
+
+        xy = tf.ragged.map_flat_values(self.xy_positional_encoding, xy)
+        hkl = tf.ragged.map_flat_values(self.hkl_positional_encoding, hkl)
+
         if self.stop_f_grad:
             imodel = tf.stop_gradient(imodel)
 
-        scale = metadata
+        scale = xy
         if self.imodel:
-            image = tf.concat((metadata, iobs, sigiobs, imodel), axis=-1)
+            image = tf.concat((hkl, xy, iobs, sigiobs, imodel), axis=-1)
         else:
-            image = tf.concat((metadata, iobs, sigiobs), axis=-1)
+            image = tf.concat((hkl, xy, iobs, sigiobs), axis=-1)
 
         image = self.input_image(image)
         scale = self.input_scale(scale)
@@ -191,7 +261,8 @@ class ImageScaler(tfk.layers.Layer):
 
         scale = self.scale_network(scale)
         q = self.scale_posterior(scale.flat_values, training=training)
+        #z = self.scale_posterior(scale.flat_values, training=training, mc_samples=mc_samples)
         z = q.sample(mc_samples)
-        z = tf.RaggedTensor.from_row_splits(tf.transpose(z), metadata.row_splits)
+        z = tf.RaggedTensor.from_row_splits(tf.transpose(z), xy.row_splits)
         return z
 
