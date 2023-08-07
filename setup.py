@@ -22,7 +22,7 @@ setup(
     long_description=LONG_DESCRIPTION,
     description='Stochastic merging for diffraction data.',
     project_urls=PROJECT_URLS,
-    python_requires=">=3.7,<3.11",
+    python_requires=">=3.7,<3.12",
     url="https://github.com/rs-station/abismal",
     install_requires=[
         "reciprocalspaceship>=0.9.16",

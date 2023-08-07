@@ -13,6 +13,10 @@ from abismal.surrogate_posterior import WilsonBase,PosteriorCollectionBase
 class PosteriorCollection(PosteriorCollectionBase):
     parameterization = 'structure_factor'
 
+    def register_kl(self, training=None):
+        for wp in self.posteriors:
+            wp.register_kl(training=training)
+
     def call(self, asu_id, hkl, training=None):
         loc = self._wp_method_helper(
             asu_id,
@@ -33,7 +37,6 @@ class PosteriorCollection(PosteriorCollectionBase):
             _hkl = hkl[tf.squeeze(asu_id, axis=-1) == i] #srsly? y squeeze?
             if training:
                 wp._register_seen(_hkl)
-                wp.kl_div(_hkl, training=training)
 
         q = RiceWoolfson(loc, scale, centric)
         return q
@@ -129,13 +132,17 @@ class WilsonPosterior(WilsonBase):
                 ]]
         return out
 
-    def call(self, hkl, mc_samples=1, training=None):
+    def register_kl(self, training=None):
         if training:
             q,p = self.flat_distribution, self.prior
             kl_div = q.kl_divergence(p)
             kl_div = tf.reduce_mean(kl_div)
             self.add_metric(kl_div, name='KL')
             self.add_loss(self.kl_weight * kl_div)
+
+    def call(self, hkl, mc_samples=1, training=None):
+        self.register_kl(training=training)
+        if training:
             self._register_seen(hkl)
 
         q = self.distribution(hkl)

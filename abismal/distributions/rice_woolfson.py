@@ -1,4 +1,4 @@
-from factory.distributions import FoldedNormal, Rice
+from abismal.distributions import FoldedNormal, Rice
 import tensorflow as tf
 from tensorflow_probability.python.internal import special_math
 from tensorflow_probability import distributions as tfd
