@@ -136,21 +136,20 @@ class StreamLoader():
     @staticmethod
     def get_average_cell(stream_file):
         def cell_iter(stream_file):
-            for crystal in StreamLoader.to_crystals(stream_file):
-                for line in crystal:
-                    if line.startswith("Cell parameters"):
-                        cell = line.split()
-                        cell = np.array([
-                            cell[2],
-                            cell[3],
-                            cell[4],
-                            cell[6],
-                            cell[7],
-                            cell[8],
-                        ], dtype='float32')
-                        cell[:3] = 10.*cell[:3]
-                        yield cell
-                        break
+            for line in StreamLoader.stream_to_lines(stream_file):
+                if line.startswith("Cell parameters"):
+                    cell = line.split()
+                    cell = np.array([
+                        cell[2],
+                        cell[3],
+                        cell[4],
+                        cell[6],
+                        cell[7],
+                        cell[8],
+                    ], dtype='float32')
+                    cell[:3] = 10.*cell[:3]
+                    yield cell
+                    break
 
         mean, variance = StreamLoader.online_mean_variance(cell_iter(stream_file))
         return mean
