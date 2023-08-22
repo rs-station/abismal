@@ -95,10 +95,11 @@ class ImageScaler(tfk.layers.Layer):
                     normalize=layer_norm,
                 ) for i in range(mlp_depth)
             ] + [
-                ConvexCombination(
-                    kernel_initializer=kernel_initializer,
-                    dropout=dropout
-                )
+                Average(axis=-2, keepdims=True)
+                #ConvexCombination(
+                #    kernel_initializer=kernel_initializer,
+                #    dropout=dropout
+                #)
         ])
 
         self.scale_network = tfk.models.Sequential([

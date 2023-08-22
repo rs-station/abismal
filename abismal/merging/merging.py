@@ -10,6 +10,44 @@ from tensorflow_probability import bijectors as tfb
 from tensorflow import keras as tfk
 from IPython import embed
 
+def weighted_pearsonr(x, y, w):
+    """
+    Calculate a [weighted Pearson correlation coefficient](https://en.wikipedia.org/wiki/Pearson_correlation_coefficient#Weighted_correlation_coefficient).
+
+    Note
+    ----
+    x, y, and w may have arbitrarily shaped leading dimensions. The correlation coefficient will always be computed pairwise along the last axis.
+
+    Parameters
+    ----------
+    x : np.array(float)
+        An array of observations.
+    y : np.array(float)
+        An array of observations the same shape as x.
+    w : np.array(float)
+        An array of weights the same shape as x. These needn't be normalized.
+
+    Returns
+    -------
+    r : float
+        The Pearson correlation coefficient along the last dimension. This has shape {x,y,w}.shape[:-1].
+    """
+    z = tf.math.reciprocal(
+        tf.reduce_sum(w, axis=-1, keepdims=True)
+    )
+
+    mx = z * tf.reduce_sum(w * x, axis=-1, keepdims=True)
+    my = z * tf.reduce_sum(w * y, axis=-1, keepdims=True)
+
+    dx = x - mx
+    dy = y - my
+
+    cxy = z * tf.reduce_sum(w * dx * dy, axis=-1)
+    cx  = z * tf.reduce_sum(w * dx * dx, axis=-1)
+    cy  = z * tf.reduce_sum(w * dy * dy, axis=-1)
+
+    r = cxy / tf.sqrt(cx * cy)
+    return r
 
 def spearman_cc(yobs, ypred):
     from scipy.stats import spearmanr
@@ -93,6 +131,7 @@ class VariationalMergingModel(tfk.models.Model):
                     iscale[...,None],
                     floc[...,None],
                     fscale[...,None],
+                    tf.cast(hkl, tf.float32),
                 )
                 _ipred = q.sample_intensities(self.mc_samples)
             elif self.surrogate_posterior.parameterization == 'intensity':
@@ -101,6 +140,7 @@ class VariationalMergingModel(tfk.models.Model):
                 imodel = (
                     iloc[...,None],
                     iscale[...,None],
+                    tf.cast(hkl, tf.float32),
                 )
                 _ipred = q.sample(self.mc_samples)
             else:
@@ -165,7 +205,11 @@ class VariationalMergingModel(tfk.models.Model):
 
         # This is the mean ipred across the posterior mc samples
         ipred = tf.reduce_mean(ipred, axis=-1)
-        cc = tf.numpy_function(spearman_cc, [iobs.flat_values, ipred.flat_values], Tout=tf.float64)
+        x = tf.squeeze(iobs.flat_values, axis=-1)
+        y = ipred.flat_values
+        w = tf.squeeze(tf.math.reciprocal(tf.square(sigiobs.flat_values)), axis=-1)
+        cc = weighted_pearsonr(x, y, w)
+
         self.add_metric(cc, name='CCpred')
 
         return ipred

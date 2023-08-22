@@ -288,7 +288,7 @@ class StreamLoader():
         d = tf.convert_to_tensor(d[None,:,None])
         I = tf.convert_to_tensor(I[None,:,None])
         SigI = tf.convert_to_tensor(SigI[None,:,None])
-        hkl = tf.convert_to_tensor(hkl[None,:,:])
+        hkl = tf.convert_to_tensor(hkl[None,:,:], dtype=tf.float32)
         metadata = tf.convert_to_tensor(metadata[None,:,:])
 
         asu = tf.ones_like(I, dtype='int32') * asu_id
