@@ -248,6 +248,7 @@ class StillsLoader(DataLoader):
         I = I[idx, None]
         SigI = SigI[idx, None]
         metadata = np.concatenate((xy, dQ), axis=-1)
+        #metadata = xy
 
         if self.mean is None:
             self.mean = (metadata.mean(0), I.mean(0), SigI.mean(0))

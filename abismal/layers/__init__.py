@@ -1,3 +1,3 @@
 from .skip import FeedForward
-from .combinations import ConvexCombination,ConvexCombinations
-from .transformer import Transformer
+from .combinations import ConvexCombination,ConvexCombinations,Average
+from .transformer import TransformerAverage

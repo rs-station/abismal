@@ -117,12 +117,12 @@ class VariationalMergingModel(tfk.models.Model):
             iloc   = self.surrogate_posterior.mean(asu_id, _hkl)
             imodel = tf.concat(imodel, axis=-1)
 
-            scale = self.scale_model((
-                metadata, 
-                iobs,
-                sigiobs,
+            scale = self.scale_model(
+                inputs, 
                 imodel,
-            ), mc_samples=mc_samples, **kwargs)
+                mc_samples=mc_samples, 
+                **kwargs
+            )
 
             _ipred = _ipred * scale
 

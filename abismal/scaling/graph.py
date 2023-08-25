@@ -1,4 +1,16 @@
- 
+import numpy as np
+import reciprocalspaceship as rs
+import tensorflow as tf
+from tensorflow_probability import distributions as tfd
+from tensorflow_probability import layers  as tfl
+from tensorflow_probability import util as tfu
+from tensorflow_probability import bijectors as tfb
+from tensorflow import keras as tfk
+from IPython import embed
+
+from abismal.layers import *
+from abismal.distributions import FoldedNormal
+
 class GraphImageScaler(tfk.layers.Layer):
     def __init__(self, 
         mlp_width, 
@@ -10,6 +22,9 @@ class GraphImageScaler(tfk.layers.Layer):
         kernel_initializer='glorot_normal',
         stop_f_grad=True,
         num_heads=8,
+        eps=1e-12,
+        kl_weight=1.,
+        scale_posterior=None,
         **kwargs, 
         ):
         super().__init__(**kwargs)
@@ -21,31 +36,15 @@ class GraphImageScaler(tfk.layers.Layer):
         self.input_image   = tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer)
         self.input_scale  = tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer)
 
-        self.image_network = tfk.models.Sequential(
-            [
-                #Need a non-linearity between the input layer and transformer block
-                FeedForward(
-                    hidden_units=hidden_units, 
-                    normalize=layer_norm, 
-                    kernel_initializer=kernel_initializer, 
-                    activation=activation, 
-                    ),
-
-            ] + [
-                Transformer(
-                    num_heads=num_heads, key_dim=hidden_units,
-                    dropout=dropout,
-                    hidden_units=hidden_units,
-                    activation=activation,
-                    kernel_initializer=kernel_initializer,
-                    normalize=layer_norm,
-                ) for i in range(mlp_depth)
-            ] + [
-                ConvexCombination(
-                    kernel_initializer=kernel_initializer,
-                    dropout=dropout
-                )
-        ])
+        self.image_network = TransformerAverage(
+            mlp_depth,
+            num_heads=num_heads, key_dim=hidden_units,
+            dropout=dropout,
+            hidden_units=hidden_units,
+            activation=activation,
+            kernel_initializer=kernel_initializer,
+            normalize=layer_norm,
+        )
 
         self.scale_network = tfk.models.Sequential([
                 FeedForward(
@@ -58,20 +57,20 @@ class GraphImageScaler(tfk.layers.Layer):
                 tfk.layers.Dense(1, kernel_initializer=kernel_initializer),
         ])
 
+        if scale_posterior is None:
+            prior = FoldedNormal(0., np.sqrt(np.pi/2).astype('float32'))
+            self.scale_posterior = FoldedNormalLayer(
+                kl_weight=kl_weight,
+                prior=prior,
+                kernel_initializer=kernel_initializer,
+                eps=eps,
+            )
+        else:
+            self.scale_posterior = scale_posterior
+
         self.stop_f_grad = stop_f_grad
 
-    @staticmethod
-    def ragged_to_dense(tensor):
-        """ Convert a ragged tensor to dense with an attention mask """
-        mask = tf.ones_like(tensor[...,0])
-        mask_1d = mask.to_tensor()
-        mask = tf.einsum("...a,...b->...ab", mask_1d, mask_1d)
-        mask = mask + (1. - mask_1d[...,None])
-        mask = tf.cast(mask, 'bool')
-        return mask
-
-
-    def call(self, inputs, mc_samples=1, **kwargs):
+    def call(self, inputs, mc_samples=1, training=None, **kwargs):
         metadata, iobs, sigiobs, imodel = inputs
         
         if self.stop_f_grad:
@@ -86,8 +85,9 @@ class GraphImageScaler(tfk.layers.Layer):
         image = self.image_network(image)
         scale = scale + image
 
-        z = self.scale_network(scale)
-        #z = tf.RaggedTensor.from_row_splits(tf.transpose(z), params.row_splits)
-        #z = tf.exp(z)
+        scale = self.scale_network(scale)
+        q = self.scale_posterior(scale.flat_values, training=training)
+        z = q.sample(mc_samples)
+        z = tf.RaggedTensor.from_row_splits(tf.transpose(z), metadata.row_splits)
         return z
 

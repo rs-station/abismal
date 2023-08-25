@@ -5,6 +5,7 @@ from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
+from tensorflow_probability import stats as tfs
 from tensorflow import keras as tfk
 from IPython import embed
 
@@ -61,6 +62,51 @@ class FoldedNormalLayer(tfk.layers.Layer):
                 self.add_metric(kl_div, name='KL_Σ')
         return q
 
+class OnlineMoments(tfk.layers.Layer):
+    def __init__(self, axis=-1):
+        self.axis = axis
+        self.freeze = False
+
+    def build(self, shape):
+        shape = shape[self.axis]
+        self.mean = self.add_weight(
+            shape=(),
+            initializer='zeros',
+            dtype=tf.float32,
+            trainable=False,
+            name='mean',
+        )
+        self.var = self.add_weight(
+            shape=(),
+            initializer='zeros',
+            dtype=tf.float32,
+            trainable=False,
+            name='variance',
+        )
+        self.count = self.add_weight(
+            shape=(),
+            initializer='zeros',
+            dtype=tf.int32,
+            trainable=False,
+            name='count',
+        )
+        self.count = 0
+
+    def call(self, data):
+        if training:
+            self.count += 1
+            if not self.freeze:
+                tfs.assign_moving_mean_variance(
+                    data,
+                    self.mean,
+                    self.var,
+                    axis=-1
+                )
+        return 
+
+
+
+
 class ImageScaler(tfk.layers.Layer):
     def __init__(
             self, 
@@ -75,10 +121,14 @@ class ImageScaler(tfk.layers.Layer):
             scale_posterior=None,
             kl_weight=1.,
             eps=1e-12,
+            num_image_samples=96,
+            hkl_divisor=1.,
             **kwargs, 
         ):
         super().__init__(**kwargs)
 
+        self.num_image_samples = num_image_samples
+        self.hkl_divisor = hkl_divisor
 
         if hidden_units is None:
             hidden_units = 2 * image_mpl_width
@@ -95,10 +145,7 @@ class ImageScaler(tfk.layers.Layer):
                     normalize=layer_norm,
                 ) for i in range(mlp_depth)
             ] + [
-                ConvexCombination(
-                    kernel_initializer=kernel_initializer,
-                    dropout=dropout
-                )
+                Average(axis=-2),
         ])
 
         self.scale_network = tfk.models.Sequential([
@@ -123,14 +170,46 @@ class ImageScaler(tfk.layers.Layer):
 
         self.stop_f_grad = stop_f_grad
 
-    def call(self, inputs, mc_samples=1, training=None, **kwargs):
-        metadata, iobs, sigiobs, imodel = inputs
-        
+    @staticmethod
+    def sample_ragged_dim(ragged, length):
+        """
+        Randomly subsample "length" entries from ragged with replacement.
+        """
+        logits = tf.where(
+            tf.ones_like(ragged[...,0], dtype='bool').to_tensor(),
+            1.,
+            -np.inf,
+        )
+        idx2 = tf.random.categorical(
+            logits,
+            length,
+            dtype='int32',
+        )
+        batch_shape = tfk.backend.shape(idx2)[0]
+        idx1 = tf.range(batch_shape)[:,None] * tf.ones_like(idx2)
+        idx = tf.stack((idx1, idx2), axis=-1)
+        out = tf.gather_nd(ragged, idx)
+        return out
+
+    def call(self, inputs, imodel, mc_samples=1, training=None, **kwargs):
+        (
+            asu_id,
+            hkl,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = inputs
+
+        hkl_float = tf.cast(hkl, dtype='float32') / self.hkl_divisor
+
         if self.stop_f_grad:
             imodel = tf.stop_gradient(imodel)
 
         scale = metadata
-        image = tf.concat((metadata, iobs, sigiobs, imodel), axis=-1)
+        image = tf.concat((hkl_float, metadata, iobs, sigiobs, imodel), axis=-1)
+        image = ImageScaler.sample_ragged_dim(image, self.num_image_samples)
 
         image = self.input_image(image)
         scale = self.input_scale(scale)
