@@ -12,6 +12,10 @@ from abismal.surrogate_posterior import WilsonBase,PosteriorCollectionBase
 class PosteriorCollection(PosteriorCollectionBase):
     parameterization = 'intensity'
 
+    def register_kl(self, training=None):
+        for wp in self.posteriors:
+            wp.register_kl(training=training)
+
     def call(self, asu_id, hkl, training=None):
         conc = self._wp_method_helper(
             asu_id,
@@ -63,8 +67,8 @@ class WilsonPosterior(WilsonBase):
         self.concentration = tfu.TransformedVariable(
             2. * tf.ones_like(rasu.centric, dtype='float32'),
             tfb.Chain([
-                #tfb.Shift(1. + eps), 
-                tfb.Shift(eps), 
+                tfb.Shift(1. + eps), 
+                #tfb.Shift(eps), 
                 #tfb.Softplus(),
                 tfb.Exp(),
             ]),
@@ -96,6 +100,14 @@ class WilsonPosterior(WilsonBase):
             spacegroup=self.rasu.spacegroup,
         )
         return out
+
+    def register_kl(self, training=None):
+        if training:
+            q,p = self.flat_distribution, self.prior
+            kl_div = q.kl_divergence(p)
+            kl_div = tf.reduce_mean(kl_div)
+            self.add_metric(kl_div, name='KL')
+            self.add_loss(self.kl_weight * kl_div)
 
     def call(self, hkl, mc_samples=1, training=None):
         if training:
