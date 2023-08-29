@@ -44,7 +44,7 @@ def WilsonPrior(centric, epsilon, sigma=1.):
 class WilsonPosterior(WilsonBase):
     parameterization = 'intensity'
 
-    def __init__(self, rasu, kl_weight, scale_factor=1e-2, eps=1e-12, **kwargs):
+    def __init__(self, rasu, kl_weight, scale_factor=1e-2, eps=1e-12, concentration_min=0., **kwargs):
         super().__init__(rasu, **kwargs)
         self.prior = WilsonPrior(
             rasu.centric,
@@ -67,7 +67,7 @@ class WilsonPosterior(WilsonBase):
         self.concentration = tfu.TransformedVariable(
             2. * tf.ones_like(rasu.centric, dtype='float32'),
             tfb.Chain([
-                tfb.Shift(1. + eps), 
+                tfb.Shift(concentration_min + eps), 
                 #tfb.Shift(eps), 
                 #tfb.Softplus(),
                 tfb.Exp(),
