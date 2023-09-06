@@ -118,8 +118,12 @@ class MTZLoader(DataLoader):
 
 class StillsLoader(DataLoader):
     """ DIALS stills loader """
-    def __init__(self, expt_files, refl_files, spacegroup=None, cell=None, dmin=None, asu_id=0):
-        super().__init__(5)
+    def __init__(self, expt_files, refl_files, spacegroup=None, cell=None, dmin=None, asu_id=0, include_eo=True):
+        self.include_eo = include_eo
+        if include_eo:
+            super().__init__(5)
+        else:
+            super().__init__(2)
         from dxtbx.model.experiment_list import ExperimentListFactory  #defer defer defer defer
         self.expt_files = expt_files
         self.refl_files = refl_files
@@ -247,8 +251,10 @@ class StillsLoader(DataLoader):
         batch = batch[idx]
         I = I[idx, None]
         SigI = SigI[idx, None]
-        metadata = np.concatenate((xy, dQ), axis=-1)
-        #metadata = xy
+        if self.include_eo:
+            metadata = np.concatenate((xy, dQ), axis=-1)
+        else:
+            metadata = xy
 
         if self.mean is None:
             self.mean = (metadata.mean(0), I.mean(0), SigI.mean(0))
