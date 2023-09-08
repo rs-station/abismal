@@ -44,7 +44,7 @@ class Op(tfk.layers.Layer):
         return hkl
 
 class VariationalMergingModel(tfk.models.Model):
-    def __init__(self, scale_model, surrogate_posterior, studentt_dof=None, sigiobs_model=None, mc_samples=1, eps=1e-6, clamp=None, reindexing_ops=None):
+    def __init__(self, scale_model, surrogate_posterior, studentt_dof=None, sigiobs_model=None, mc_samples=1, eps=1e-6, reindexing_ops=None):
         super().__init__()
         self.eps = eps
         self.dof = studentt_dof
@@ -52,7 +52,6 @@ class VariationalMergingModel(tfk.models.Model):
         self.surrogate_posterior = surrogate_posterior
         self.sigiobs_model = sigiobs_model
         self.mc_samples = mc_samples
-        self.clamp = clamp
         if reindexing_ops is None:
             reindexing_ops = ["x,y,z"]
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
@@ -75,51 +74,64 @@ class VariationalMergingModel(tfk.models.Model):
         ) = inputs
 
         training = kwargs.get('training', None)
-        self.surrogate_posterior.register_kl(training=training)
         ll = None
         ipred = None
+
+        q = self.surrogate_posterior.flat_distribution()
+        ipred = q.sample(mc_samples)
+        kl_div = self.surrogate_posterior.register_kl(ipred, asu_id, hkl, training)
+        #if not tf.math.is_finite(kl_div):
+        #    from IPython import embed
+        #    embed(colors='linux')
+
+        if self.surrogate_posterior.parameterization == 'structure_factor':
+            ipred = tf.square(ipred)
+            floc = q.mean()[...,None]
+            fscale = q.stddev()[...,None]
+            # Exact
+            iloc = floc * floc + fscale * fscale
+            # 1st order
+            iscale = 2 * floc * fscale
+            imodel = (
+                floc,
+                fscale,
+                iloc,
+                iscale,
+            )
+        else:
+            iloc = q.mean()[...,None]
+            iscale = q.stddev()[...,None]
+            imodel = (
+                iloc,
+                iscale,
+            )
+        imodel = tf.concat(imodel, axis=-1)
+
+        if training:
+            self.surrogate_posterior.register_seen(asu_id, hkl)
+
+        ipred = tf.transpose(ipred)
+
         for op in self.reindexing_ops:
             # Choose the best indexing solution for each image
             _hkl = tf.ragged.map_flat_values(op, hkl)
 
-            q = self.surrogate_posterior(asu_id.flat_values, _hkl.flat_values)
-            if self.surrogate_posterior.parameterization == 'structure_factor':
-                floc   = self.surrogate_posterior.mean(asu_id, _hkl)
-                fscale = self.surrogate_posterior.stddev(asu_id, _hkl)
-                iloc  = tf.square(floc) + tf.square(fscale)
-                iscale= tf.abs(2. * floc * fscale)
-                imodel = (
-                    iloc[...,None],
-                    iscale[...,None],
-                    floc[...,None],
-                    fscale[...,None],
-                )
-                _ipred = q.sample_intensities(self.mc_samples)
-            elif self.surrogate_posterior.parameterization == 'intensity':
-                iloc   = self.surrogate_posterior.mean(asu_id, _hkl)
-                iscale = self.surrogate_posterior.stddev(asu_id, _hkl)
-                imodel = (
-                    iloc[...,None],
-                    iscale[...,None],
-                )
-                _ipred = q.sample(self.mc_samples)
-            else:
-                raise AttributeError(
-                    "Surrogate posteriors must have attribute 'parameterization' with value "
-                    "of 'intensity' or 'structure_factor'                                   "
-                )
-            _ipred = tf.RaggedTensor.from_row_splits(
-                tf.transpose(_ipred),
-                iobs.row_splits,
-            )
+            _ipred = self.surrogate_posterior.rac.gather(ipred, asu_id, _hkl)
+            _imodel = self.surrogate_posterior.rac.gather(imodel, asu_id, _hkl)
 
-            iscale = self.surrogate_posterior.stddev(asu_id, _hkl)
-            iloc   = self.surrogate_posterior.mean(asu_id, _hkl)
-            imodel = tf.concat(imodel, axis=-1)
+            _inputs = (
+                asu_id,
+                _hkl,
+                resolution,
+                wavelength,
+                metadata,
+                iobs,
+                sigiobs,
+            ) 
 
             scale = self.scale_model(
-                inputs, 
-                imodel,
+                _inputs, 
+                _imodel,
                 mc_samples=mc_samples, 
                 **kwargs
             )
@@ -144,10 +156,6 @@ class VariationalMergingModel(tfk.models.Model):
             )
             _ll = tf.reduce_mean(_ll, [-1, -2], keepdims=True)
 
-            # Clamp
-            if self.clamp is not None:
-                _ll = tf.maximum(_ll, -1e4)
-
             if ll is None:
                 ipred = _ipred
                 ll = _ll
@@ -159,6 +167,9 @@ class VariationalMergingModel(tfk.models.Model):
 
         # This is the mean across mc samples and observations
         ll = tf.reduce_mean(ll) 
+        #if not tf.math.is_finite(ll):
+        #    from IPython import embed
+        #    embed(colors='linux')
 
         self.add_metric(-ll, name='NLL')
         self.add_loss(-ll)

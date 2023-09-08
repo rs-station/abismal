@@ -14,9 +14,8 @@ class MtzSaver(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
         self.save_mtz(epoch)
 
-    def save_mtz(self, epoch):
-        for asu_id,posterior in enumerate(self.model.surrogate_posterior.posteriors):
-            out = posterior.to_dataset(seen=True)
-            out.write_mtz(f"{self.output_directory}/asu_{asu_id}_epoch_{epoch+1}.mtz")
+    def save_mtz(self, epoch, seen=True):
+        for asu_id,data in enumerate(self.model.surrogate_posterior.to_datasets(seen=seen)):
+            data.write_mtz(f"{self.output_directory}/asu_{asu_id}_epoch_{epoch+1}.mtz")
 
 

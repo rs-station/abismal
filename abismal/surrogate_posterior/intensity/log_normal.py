@@ -6,52 +6,39 @@ from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 from tensorflow import keras as tfk
+from abismal.distributions import RiceWoolfson
 from abismal.surrogate_posterior import PosteriorBase
-
-
-def WilsonPrior(centric, epsilon, sigma=1.):
-    concentration = tf.where(centric, 0.5, 1.)
-    rate = tf.where(centric, 0.5 / sigma / epsilon, 1. / sigma / epsilon)
-    return tfd.Gamma(concentration, rate)
+from abismal.surrogate_posterior.intensity.surrogate_posterior import WilsonPrior
 
 class WilsonPosterior(PosteriorBase):
     parameterization = 'intensity'
 
-    def __init__(self, rasu, kl_weight, scale_factor=1e-2, eps=1e-12, concentration_min=1., **kwargs):
-        super().__init__(rasu, **kwargs)
-        self.prior = WilsonPrior(
-            rasu.centric,
-            rasu.epsilon,
-        )
-
-        self.rasu = rasu
-
-        self.kl_weight = kl_weight
-        self.rate = tfu.TransformedVariable(
-            5. * tf.ones_like(rasu.centric, dtype='float32'),
+    def __init__(self, rac, scale_factor=1e-1, epsilon=1e-12, kl_weight=1., **kwargs):
+        super().__init__(rac, epsilon=epsilon, kl_weight=kl_weight, **kwargs)
+        p = self.flat_prior()
+        self.loc = tf.Variable(tf.zeros_like(p.mean()))
+        self.scale = tfu.TransformedVariable(
+            scale_factor * p.stddev(),
             tfb.Chain([
-                tfb.Shift(eps), 
-                #tfb.Softplus(),
+                tfb.Shift(epsilon), 
                 tfb.Exp(),
             ]),
         )
-
-        #Concentration should remain above one to prevent change in curvature
-        self.concentration = tfu.TransformedVariable(
-            2. * tf.ones_like(rasu.centric, dtype='float32'),
-            tfb.Chain([
-                tfb.Shift(concentration_min + eps), 
-                #tfb.Shift(eps), 
-                #tfb.Softplus(),
-                tfb.Exp(),
-            ]),
-        )
+        self.low = self.epsilon * tf.cast(~self.rac.centric, dtype='float32')
 
     def flat_prior(self):
-        return self.prior
+        prior = WilsonPrior(
+            self.rac.centric,
+            self.rac.epsilon,
+        )
+        return prior
 
     def flat_distribution(self):
-        return tfd.Gamma(self.concentration, self.rate)
+        q = tfd.LogNormal(
+            self.loc, 
+            self.scale, 
+        )
+        return q
 
     def to_datasets(self, seen=True):
         h,k,l = self.rac.Hunique.numpy().T
@@ -87,33 +74,14 @@ class WilsonPosterior(PosteriorBase):
                 ]]
             yield out
 
-
     def register_kl(self, ipred=None, asu_id=None, hkl=None, training=None):
+        kl_div = 0.
         if training:
-            q,p = self.flat_distribution(), self.flat_prior()
-            kl_div = q.kl_divergence(p)
+            p = self.flat_prior()
+            q = self.flat_distribution()
+            kl_div = q.log_prob(ipred) - p.log_prob(ipred)
             kl_div = tf.reduce_mean(kl_div)
             self.add_metric(kl_div, name='KL')
             self.add_loss(self.kl_weight * kl_div)
-
-
-if __name__=="__main__":
-    def sqrt_moments(gamma):
-        k = alpha = gamma.concentration
-        beta  = gamma.rate
-        theta = tf.reciprocal(beta)
-
-        """
-        Random wikipedia knowledge:
-        X ~ Gamma(k, θ), then \sqrt{X} follows a generalized gamma distribution with parameters 
-        p = 2, d = 2k, and a = \sqrt{\theta}
-        """
-        p = 2.
-        d = 2. * k
-        a = tf.sqrt(theta)
-        la = tf.math.log(a)
-        log_mean = la + tf.math.lgamma((d + 1) / p) - tf.math.lgamma(d / p)
-        log_std = 2
-
-        return tf.exp(log_mean), tf.exp(log_std)
+        return kl_div
 

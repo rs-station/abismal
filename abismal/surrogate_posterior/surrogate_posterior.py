@@ -7,105 +7,58 @@ from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 from tensorflow import keras as tfk
 
-class WilsonBase(tfk.models.Model):
-    def __init__(self, rasu, **kwargs):
+class PosteriorBase(tfk.models.Model):
+    def __init__(self, rac, epsilon=1e-12, kl_weight=1., **kwargs):
+        """
+        rac : ReciprocalASUCollection
+        """
         super().__init__(**kwargs)
-        self.rasu = rasu
+        self.epsilon = epsilon
+        self.kl_weight = kl_weight
+        self.rac = rac
         self.seen = self.add_weight(
-            shape=self.rasu.asu_size,
+            shape=self.rac.asu_size,
             initializer='zeros',
             dtype='bool',
             trainable=False,
             name="hkl_tracker",
         )
 
-    def _to_dataset(self):
-        raise NotImplementedError("Subclasses must implement _to_dataset")
-
-    def _register_seen(self, hkl):
-        unique,_ = tf.unique(tf.reshape(self.rasu._miller_ids(hkl), [-1]))
+    def register_seen(self, asu_id, hkl):
+        unique,_ = tf.unique(tf.reshape(self.rac._miller_ids(asu_id, hkl), [-1]))
         unique = unique[unique!=-1]
-        seen_batch = tf.scatter_nd(unique[:,None], tf.ones_like(unique, dtype='bool'), shape=[self.rasu.asu_size])
+        seen_batch = tf.scatter_nd(
+            unique[:,None], 
+            tf.ones_like(unique, dtype='bool'), 
+            shape=[self.rac.asu_size]
+        )
         self.seen.assign(self.seen | seen_batch)
 
-    @property
     def flat_distribution(self):
-        raise NotImplementedError("Subclasses must implement a flat_distribution property")
+        raise NotImplementedError("Subclasses must implement a flat_distribution method")
 
-    def to_dataset(self, seen=True):
+    def flat_prior(self):
+        raise NotImplementedError("Subclasses must implement a flat_prior method")
+
+    def register_kl(self, ipred=None, asu_id=None, hkl=None, training=None):
+        raise NotImplementedError("Subclasses must implement a register_kl method")
+
+    def to_datasets(self, seen=True):
         """
         Parameters
         ----------
         seen : bool (optional)
             Only include reflections seen during training. Defaults to True. 
         """
-        out = self._to_dataset()
-        if seen:
-            out = out[self.seen.numpy()]
-        out = out.set_index(['H', 'K', 'L'])
+        raise NotImplementedError("Subclasses must implement a to_datasets method")
 
-        if self.rasu.anomalous:
-            out = out.unstack_anomalous()
-        return out
-
-    def mean(self, hkl):
+    def mean(self, asu_id, hkl):
         q = self.flat_distribution
-        mean = self.rasu.gather(q.mean(), hkl)
+        mean = self.rac.gather(q.mean(), asu_id, hkl)
         return mean
 
-    def stddev(self, hkl):
+    def stddev(self, asu_id, hkl):
         q = self.flat_distribution
-        stddev = self.rasu.gather(q.stddev(), hkl)
+        stddev = self.rac.gather(q.stddev(), asu_id, hkl)
         return stddev
-
-    def kl_div(self, hkl=None, training=None):
-        q,p = self.flat_distribution, self.prior
-        kl_div = q.kl_divergence(p)
-        kl_div = tf.reduce_mean(kl_div)
-        if training:
-            self.add_metric(kl_div, name='KL')
-            self.add_loss(self.kl_weight * kl_div)
-        return kl_div
-
-
-class PosteriorCollectionBase(tfk.models.Model):
-    """ A collection of Wilson Posteriors """
-    parameterization = None #Derived classes must be either 'structure_factor' or 'intensity'
-    def __init__(self, *posteriors):
-        super().__init__()
-        self.posteriors = posteriors
-
-    def _wp_method_helper(self, asu_id, hkl, value_func):
-        out = None
-        for i, wp in enumerate(self.posteriors):
-            vals = value_func(hkl, wp)
-            if out is None:
-                out = vals
-            else:
-                aidx = asu_id == i
-                out = tf.where(
-                    aidx, 
-                    vals,
-                    out,
-                )
-        return out
-
-    def mean(self, asu_id, hkl, **kwargs):
-        out = self._wp_method_helper(
-            asu_id,
-            hkl,
-            lambda h,wp: wp.mean(h),
-        )
-        return out
-
-    def stddev(self, asu_id, hkl, **kwargs):
-        out = self._wp_method_helper(
-            asu_id,
-            hkl,
-            lambda h,wp: wp.stddev(h),
-        )
-        return out
-
-    def call(self, asu_id, hkl, training=None):
-        raise NotImplementedError()
 
