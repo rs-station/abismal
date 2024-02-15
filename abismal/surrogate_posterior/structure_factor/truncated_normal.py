@@ -6,200 +6,99 @@ from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 from tensorflow import keras as tfk
-from abismal.distributions import RiceWoolfson,FoldedNormal
+from abismal.distributions import RiceWoolfson
 from abismal.surrogate_posterior import PosteriorBase
-
+from abismal.surrogate_posterior.intensity.surrogate_posterior import WilsonPrior
 
 class TruncatedNormal(tfd.TruncatedNormal):
-    def sample_intensities(self, *args, **kwargs):
-        return tf.square(self.sample(*args, **kwargs))
+    def sample(self, *args, **kwargs):
+        z = super().sample(*args, **kwargs)
+        safe = tf.maximum(z, self.low)
+        return safe
 
-def WilsonPrior(centric, multiplicity, sigma=1.):
-    scale = tf.where(centric, tf.sqrt(multiplicity), tf.sqrt(0.5 * multiplicity))
-    loc = tf.zeros_like(multiplicity)
-    return RiceWoolfson(loc, scale, centric)
+class WilsonPosterior(PosteriorBase):
+    parameterization = 'intensity'
+    high = 1e5
 
-class TruncatedNormalPosteriorCollection(PosteriorCollectionBase):
-    parameterization = 'structure_factor'
-
-    def call(self, asu_id, hkl, training=None, mc_samples=1, epsilon=1e-32):
-        asu_id = tf.squeeze(asu_id, axis=-1)
-
-        refl_ids = -1
-        centric = None
-        multiplicity = None
-        loc = None
-        scale = None
-        index_offset = 0
-        for i,wp in enumerate(self.posteriors):
-            mask = asu_id == i
-
-            if loc is None:
-                loc = wp.loc
-                scale = wp.scale
-                centric = wp.rasu.centric
-                multiplicity = wp.rasu.epsilon
-            else:
-                loc = tf.concat((loc, wp.loc), axis=-1)
-                scale = tf.concat((scale, wp.scale), axis=-1)
-                centric = tf.concat((centric, wp.rasu.centric), axis=-1)
-                multiplicity = tf.concat((multiplicity, wp.rasu.epsilon), axis=-1)
-
-            refl_ids = tf.where(mask, wp.rasu._miller_ids(hkl) + index_offset, refl_ids)
-            _hkl = tf.boolean_mask(hkl, mask)
-
-            if tf.math.reduce_any(mask):
-                if training:
-                    wp._register_seen(_hkl)
-            index_offset = index_offset + wp.rasu.asu_size
-
-        #bads = tf.reduce_sum(tf.where(refl_ids == -1, 1., 0.))
-        #self.add_metric(bads, name='Missing')
-        high = wp.high
-        low = tf.where(centric, 0., wp.low)
-        q = TruncatedNormal(loc, scale, low, high)
-        p = WilsonPrior(centric, multiplicity, 1.)
-        z = q.sample(mc_samples)
-        kl_div = q.log_prob(z) - p.log_prob(z)
-        kl_div = tf.reduce_mean(kl_div)
-        kl_weight = wp.kl_weight
-        self.add_metric(kl_div, name='KL')
-        self.add_loss(kl_weight * kl_div)
-        fpred = tf.gather(z, refl_ids, axis=-1)
-        return tf.square(fpred)
-
-#        from IPython import embed
-#        embed(colors='linux')
-#        centric = tf.concat([wp.rasu.centric for wp in self.posteriors], axis=-1)
-#        multiplicity = tf.concat([wp.rasu.epsilon for wp in self.posteriors], axis=-1)
-#        multiplicity = [wp.rasu.epsilon for wp in self.posteriors]
-#        centric = [wp.rasu.centric for wp in self.posteriors]
-#
-#        centric = self._wp_method_helper(
-#            asu_id,
-#            hkl,
-#            lambda h,wp: wp.rasu.gather(wp.rasu.centric, h),
-#        )
-#        multiplicity = self._wp_method_helper(
-#            asu_id,
-#            hkl,
-#            lambda h,wp: wp.rasu.gather(wp.rasu.epsilon, h),
-#        )
-#        loc = self._wp_method_helper(
-#            asu_id,
-#            hkl,
-#            lambda h,wp: wp.rasu.gather(wp.loc, h),
-#        )
-#        scale = self._wp_method_helper(
-#            asu_id,
-#            hkl,
-#            lambda h,wp: wp.rasu.gather(wp.scale, h),
-#        )
-#
-#        high = wp.high
-#        low = tf.where(centric, 0., wp.low)
-#        q = TruncatedNormal(loc, scale, low, high)
-#        p = WilsonPrior(centric, multiplicity, 1.)
-#
-#        z = q.sample(mc_samples)
-#        kl_div = q.log_prob(z) - p.log_prob(z)
-#        kl_div = tf.reduce_mean(kl_div)
-#        kl_weight = wp.kl_weight
-#        self.add_metric(kl_div, name='KL')
-#        self.add_loss(kl_weight * kl_div)
-#        return tf.square(z)
-
-
-class TruncatedNormalPosterior(WilsonBase):
-    parameterization = 'structure_factor'
-    def __init__(self, rasu, kl_weight, scale_factor=1e-1, eps=1e-12, low=1e-32, high=1e4, **kwargs):
-        super().__init__(rasu, kl_weight=kl_weight, **kwargs)
-        self.prior = WilsonPrior(
-            rasu.centric,
-            rasu.epsilon,
-        )
-
-        self.rasu = rasu
-
+    def __init__(self, rac, scale_factor=1e-1, epsilon=1e-12, kl_weight=1., **kwargs):
+        super().__init__(rac, epsilon=epsilon, kl_weight=kl_weight, **kwargs)
+        self.low = self.epsilon * tf.cast(~self.rac.centric, dtype='float32')
+        p = self.flat_prior()
         self.loc = tfu.TransformedVariable(
-            self.prior.mean(),
+            p.mean(),
             tfb.Chain([
-                tfb.Shift(eps), 
-                #tfb.Softplus(),
+                tfb.Shift(epsilon + self.low), 
                 tfb.Exp(),
             ]),
         )
 
         #Concentration should remain above one to prevent change in curvature
         self.scale = tfu.TransformedVariable(
-            scale_factor * self.prior.stddev(),
+            scale_factor * p.stddev(),
             tfb.Chain([
-                tfb.Shift(eps), 
-                #tfb.Softplus(),
+                tfb.Shift(epsilon + self.low), 
                 tfb.Exp(),
             ]),
         )
-        self.epsilon = eps
-        self.low = low
-        self.high = high
 
-    @property
-    def flat_distribution(self):
-        low = tf.where(self.rasu.centric, 0., self.epsilon)
-        return TruncatedNormal(self.loc, self.scale, low, self.high)
-
-    def params(self, hkl):
-        loc = self.rasu.gather(self.loc, hkl)
-        scale = self.rasu.gather(self.scale, hkl)
-        centric = self.rasu.gather(self.centric, hkl)
-        low = tf.where(self.rasu.centric, 0., self.epsilon)
-        high = self.high
-        return loc, scale, low, high
-
-    def distribution(self, hkl):
-        params = self.params(hkl)
-        return TruncatedNormal(*params)
-
-    def _to_dataset(self):
-        h,k,l = self.rasu.Hunique.T
-        q = self.flat_distribution
-        F = q.mean()      
-        SIGF = q.stddev()
-        #This is exact
-        I = SIGF*SIGF + F*F
-        #This is an approximation based on uncertainty propagation
-        SIGI = np.abs(2*F*SIGF)
-        out = rs.DataSet({
-            'H' : rs.DataSeries(h, dtype='H'),
-            'K' : rs.DataSeries(k, dtype='H'),
-            'L' : rs.DataSeries(l, dtype='H'),
-            'F' : rs.DataSeries(F, dtype='F'),
-            'SIGF' : rs.DataSeries(SIGF, dtype='Q'),
-            'I' : rs.DataSeries(I, dtype='J'),
-            'SIGI' : rs.DataSeries(SIGI, dtype='Q'),
-            },
-            merged=True,
-            cell=self.rasu.cell,
-            spacegroup=self.rasu.spacegroup,
+    def flat_prior(self):
+        prior = WilsonPrior(
+            self.rac.centric,
+            self.rac.epsilon,
         )
-        return out
+        return prior
 
-    def to_dataset(self, seen=True):
-        """
-        Parameters
-        ----------
-        seen : bool (optional)
-            Only include reflections seen during training. Defaults to True. 
-        """
-        out = self._to_dataset()
-        if seen:
-            out = out[self.seen.numpy()]
-        out = out.set_index(['H', 'K', 'L'])
+    def flat_distribution(self):
+        q = TruncatedNormal(
+            self.loc, 
+            self.scale, 
+            self.low,
+            self.high
+        )
+        return q
 
-        if self.rasu.anomalous:
-            out = out.unstack_anomalous()
-            out = out[[
-                'F(+)', 'SIGF(+)', 'F(-)', 'SIGF(-)', 'I(+)', 'SIGI(+)', 'I(-)', 'SIGI(-)'
+    def to_datasets(self, seen=True):
+        h,k,l = self.rac.Hunique.numpy().T
+        q = self.flat_distribution()
+        I = q.mean()      
+        SIGI = q.stddev()
+        asu_id = self.rac.asu_id
+        for i,rasu in enumerate(self.rac):
+            idx = self.rac.asu_id.numpy() == i
+            if seen:
+                idx = idx & self.seen.numpy()
+
+            out = rs.DataSet({
+                'H' : rs.DataSeries(h, dtype='H'),
+                'K' : rs.DataSeries(k, dtype='H'),
+                'L' : rs.DataSeries(l, dtype='H'),
+                'I' : rs.DataSeries(I, dtype='J'),
+                'SIGI' : rs.DataSeries(SIGI, dtype='Q'),
+                },
+                merged=True,
+                cell=rasu.cell,
+                spacegroup=rasu.spacegroup,
+            )[idx]
+
+            out = out.set_index(['H', 'K', 'L'])
+            if rasu.anomalous:
+                out = out.unstack_anomalous()
+                out = out[[
+                    'I(+)',
+                    'SIGI(+)',
+                    'I(-)',
+                    'SIGI(-)',
                 ]]
-        return out
+            yield out
+
+    def register_kl(self, ipred=None, asu_id=None, hkl=None, training=None):
+        kl_div = 0.
+        if training:
+            p = self.flat_prior()
+            q = self.flat_distribution()
+            kl_div = q.log_prob(ipred) - p.log_prob(ipred)
+            kl_div = tf.reduce_mean(kl_div)
+            self.add_metric(kl_div, name='KL')
+            self.add_loss(self.kl_weight * kl_div)
+        return kl_div
 

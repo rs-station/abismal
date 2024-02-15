@@ -18,15 +18,16 @@ class TruncatedNormal(tfd.TruncatedNormal):
 
 class WilsonPosterior(PosteriorBase):
     parameterization = 'intensity'
-    high = 1e32
+    high = 1e5
 
     def __init__(self, rac, scale_factor=1e-1, epsilon=1e-12, kl_weight=1., **kwargs):
         super().__init__(rac, epsilon=epsilon, kl_weight=kl_weight, **kwargs)
+        self.low = self.epsilon * tf.cast(~self.rac.centric, dtype='float32')
         p = self.flat_prior()
         self.loc = tfu.TransformedVariable(
             p.mean(),
             tfb.Chain([
-                tfb.Shift(epsilon), 
+                tfb.Shift(epsilon + self.low), 
                 tfb.Exp(),
             ]),
         )
@@ -35,11 +36,10 @@ class WilsonPosterior(PosteriorBase):
         self.scale = tfu.TransformedVariable(
             scale_factor * p.stddev(),
             tfb.Chain([
-                tfb.Shift(epsilon), 
+                tfb.Shift(epsilon + self.low), 
                 tfb.Exp(),
             ]),
         )
-        self.low = self.epsilon * tf.cast(~self.rac.centric, dtype='float32')
 
     def flat_prior(self):
         prior = WilsonPrior(
