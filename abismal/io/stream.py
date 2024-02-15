@@ -5,7 +5,7 @@ import reciprocalspaceship as rs
 import pandas as pd
 import gemmi
 import tensorflow as tf
-from abismal.io.loader import DataLoader
+from .loader import DataLoader
 from reciprocalspaceship.decorators import spacegroupify,cellify
 from multiprocessing import cpu_count,Pool
 
@@ -124,7 +124,6 @@ class StreamLoader():
         self.metadata_std = None
 
         tfds = self.get_dataset()
-        #for (_,_,_,_,metadata,_,_),(intensity,) in tfds.batch(n):
         for (_,_,_,_,metadata,_,_),(intensity,) in tfds.ragged_batch(n):
             break
 
