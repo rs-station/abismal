@@ -53,11 +53,27 @@ class WilsonPosterior(PosteriorBase):
     def flat_distribution(self):
         return tfd.Gamma(self.concentration, self.rate)
 
+    def sqrt_gamma_mean_std(self, q):
+        """
+        Compute the mean and standard deviation of the square root of a gamma distribution.
+        """
+        alpha = q.concentration
+        beta  = q.rate
+        m = alpha
+        omega = alpha / beta
+        mean = tf.math.exp(
+            tf.math.lgamma(m + 0.5) - tf.math.lgamma(m) + 0.5 * tf.math.log(omega) - 0.5 * tf.math.log(m)
+        )
+        var = omega - mean*mean
+        std = tf.math.sqrt(var)
+        return mean,std
+
     def to_datasets(self, seen=True):
         h,k,l = self.rac.Hunique.numpy().T
         q = self.flat_distribution()
         I = q.mean()      
         SIGI = q.stddev()
+        F,SIGF = self.sqrt_gamma_mean_std(q)
         asu_id = self.rac.asu_id
         for i,rasu in enumerate(self.rac):
             idx = self.rac.asu_id.numpy() == i
@@ -70,6 +86,8 @@ class WilsonPosterior(PosteriorBase):
                 'L' : rs.DataSeries(l, dtype='H'),
                 'I' : rs.DataSeries(I, dtype='J'),
                 'SIGI' : rs.DataSeries(SIGI, dtype='Q'),
+                'F' : rs.DataSeries(F, dtype='F'),
+                'SIGF' : rs.DataSeries(SIGF, dtype='Q'),
                 },
                 merged=True,
                 cell=rasu.cell,
@@ -84,6 +102,10 @@ class WilsonPosterior(PosteriorBase):
                     'SIGI(+)',
                     'I(-)',
                     'SIGI(-)',
+                    'F(+)',
+                    'SIGF(+)',
+                    'F(-)',
+                    'SIGF(-)',
                 ]]
             yield out
 
