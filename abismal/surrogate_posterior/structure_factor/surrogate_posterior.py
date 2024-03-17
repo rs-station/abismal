@@ -8,6 +8,7 @@ from tensorflow_probability import bijectors as tfb
 from tensorflow import keras as tfk
 from abismal.distributions import RiceWoolfson
 from abismal.surrogate_posterior import PosteriorBase
+from abismal.distributions.truncated_normal import TruncatedNormal
 
 
 class Centric(tfd.HalfNormal):
@@ -80,52 +81,23 @@ class WilsonPrior(object):
             self.p_acentric.sample(*args, **kwargs),
         )
 
-class TruncatedNormal(tfd.TruncatedNormal):
+class TrXXuncatedNormal(tfd.TruncatedNormal):
     def sample(self, *args, **kwargs):
         z = super().sample(*args, **kwargs)
         safe = tf.maximum(z, self.low)
         return safe
 
-class WilsonPosterior(PosteriorBase):
+class WilsonBase(PosteriorBase):
     parameterization = 'structure_factor'
-    high = 1e10
-
-    def __init__(self, rac, scale_factor=1e-1, epsilon=1e-32, kl_weight=1., **kwargs):
-        super().__init__(rac, epsilon=epsilon, kl_weight=kl_weight, **kwargs)
-        self.low = self.epsilon * tf.cast(~self.rac.centric, dtype='float32')
-        p = self.flat_prior()
-        self.loc = tfu.TransformedVariable(
-            p.mean(),
-            tfb.Chain([
-                tfb.Shift(self.low + epsilon), 
-                tfb.Exp(),
-            ]),
-        )
-
-        #Concentration should remain above one to prevent change in curvature
-        self.scale = tfu.TransformedVariable(
-            scale_factor * p.stddev(),
-            tfb.Chain([
-                tfb.Shift(self.low + epsilon), 
-                tfb.Exp(),
-            ]),
-        )
+    prior_scale = 1.
 
     def flat_prior(self):
         prior = WilsonPrior(
             self.rac.centric,
             self.rac.epsilon,
+            self.prior_scale,
         )
         return prior
-
-    def flat_distribution(self):
-        q = tfd.TruncatedNormal(
-            self.loc, 
-            self.scale, 
-            self.low,
-            self.high
-        )
-        return q
 
     def to_datasets(self, seen=True):
         h,k,l = self.rac.Hunique.numpy().T
@@ -176,9 +148,126 @@ class WilsonPosterior(PosteriorBase):
         if training:
             p = self.flat_prior()
             q = self.flat_distribution()
-            kl_div = q.log_prob(ipred) - p.log_prob(ipred)
+            q_z = q.log_prob(ipred) 
+            p_z = p.log_prob(ipred)
+            kl_div = q_z - p_z
             kl_div = tf.reduce_mean(kl_div)
             self.add_metric(kl_div, name='KL')
-            self.add_loss(self.kl_weight * kl_div)
+            #self.add_loss(self.kl_weight * kl_div)
+            #self.add_metric(tf.reduce_mean(q_z), name='q_z')
+            #self.add_metric(tf.reduce_mean(p_z), name='p_z')
         return kl_div
+
+
+
+
+class WilsonPosterior(WilsonBase):
+    def __init__(self, rac, scale_factor=1e-1, epsilon=1e-32, kl_weight=1., prior_scale=1., **kwargs):
+        super().__init__(rac, epsilon=epsilon, kl_weight=kl_weight, **kwargs)
+        self.low = self.epsilon * tf.cast(~self.rac.centric, dtype='float32')
+        p = self.flat_prior()
+        self.prior_scale = prior_scale
+        self.loc = tfu.TransformedVariable(
+            p.mean(),
+            tfb.Chain([
+                tfb.Shift(self.low + epsilon), 
+                tfb.Exp(),
+            ]),
+        )
+
+        self.scale = tfu.TransformedVariable(
+            scale_factor * p.stddev(),
+            tfb.Chain([
+                tfb.Shift(self.low + epsilon), 
+                tfb.Exp(),
+            ]),
+        )
+
+    @property
+    def high(self):
+        high = self.loc + 100. * self.scale
+        return high
+
+    def flat_distribution(self):
+        q = TruncatedNormal(
+            self.loc, 
+            self.scale, 
+            self.low,
+        )
+        return q
+
+class NeuralWilsonPosterior(WilsonBase):
+    def __init__(self, rac, mlp, dmodel, epsilon=1e-32, kl_weight=1., kernel_initializer=None, **kwargs):
+        super().__init__(rac, epsilon=epsilon, kl_weight=kl_weight, **kwargs)
+
+        self.input_layer  = tfk.layers.Dense(dmodel, kernel_initializer=kernel_initializer)
+        self.output_layer = tfk.layers.Dense(2)
+        self.mlp = mlp
+
+        self.low = self.epsilon * tf.cast(~self.rac.centric, dtype='float32')
+        p = self.flat_prior()
+
+        self.loc_bijector = tfb.Chain([
+            tfb.Shift(self.low + epsilon),
+            tfb.Exp(),
+        ])
+        self.scale_bijector = tfb.Chain([
+            tfb.Shift(self.low + 1e-4*tf.reduce_mean(p.stddev())),
+            tfb.Exp(),
+        ])
+
+    def flat_distribution(self):
+        loc,scale = self._loc_and_scale()
+        high = loc + 100. * scale
+        #tf.print("MEAN LOC: {}".format(tf.reduce_mean(loc)))
+        #tf.print("MEAN SCALE: {}".format(tf.reduce_mean(scale)))
+        q = TruncatedNormal(
+            loc, 
+            scale, 
+            self.low,
+        )
+        return q
+
+    def _loc_and_scale(self):
+        self.rac.Hunique.numpy()
+        self.rac.asu_id
+
+        aid = tf.cast(self.rac.asu_id[...,None], 'float32')
+        hkl = tf.cast(self.rac.Hunique, 'float32')
+        AHKL = tf.concat((aid, hkl), axis=-1)
+        a = tf.math.reduce_min(AHKL, axis=-2, keepdims=True)
+        b = tf.math.reduce_max(AHKL, axis=-2, keepdims=True)
+        denom = b - a
+        denom = tf.where(denom == 0., 1., denom)
+        p = 2. * (AHKL - a) / denom  - 1.
+
+        num_frequencies = 5
+        d = p.get_shape()[-1]
+        p = tf.repeat(p, num_frequencies, axis=-1)
+
+        L = tf.range(0, num_frequencies, dtype='float32')
+        f = np.pi * 2 ** L
+        f = tf.tile(f, (d,))
+        fp = f * p
+
+        encoded = tf.concat((
+            tf.sin(fp),
+            tf.cos(fp),
+        ), axis=-1)
+
+        loc,scale = tf.unstack(self.output_layer(self.mlp(self.input_layer(encoded))), axis=-1)
+        loc = self.loc_bijector(loc)
+        scale = self.scale_bijector(scale)
+        return loc,scale
+
+    @property
+    def loc(self):
+        loc,_ = self._loc_and_scale()
+        return loc
+
+    @property
+    def scale(self):
+        _,scale = self._loc_and_scale()
+        return scale
+
 

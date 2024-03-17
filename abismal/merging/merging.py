@@ -3,6 +3,7 @@ import reciprocalspaceship as rs
 import tensorflow as tf
 import tensorflow_probability as tfp
 import gemmi
+from abismal.layers import Standardize
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
@@ -79,20 +80,26 @@ class Op(tfk.layers.Layer):
         return hkl
 
 class VariationalMergingModel(tfk.models.Model):
-    def __init__(self, scale_model, surrogate_posterior, studentt_dof=None, sigiobs_model=None, mc_samples=1, eps=1e-6, reindexing_ops=None):
+    def __init__(self, scale_model, surrogate_posterior, studentt_dof=None, mc_samples=1, eps=1e-6, reindexing_ops=None, standardize_max_count=10_000_000):
         super().__init__()
         self.eps = eps
         self.dof = studentt_dof
         self.scale_model = scale_model
         self.surrogate_posterior = surrogate_posterior
-        self.sigiobs_model = sigiobs_model
         self.mc_samples = mc_samples
         if reindexing_ops is None:
             reindexing_ops = ["x,y,z"]
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
-
-    def _likelihood(self):
-        pass
+        self.standardize_intensity = Standardize(center=False, max_counts=standardize_max_count)
+        self.standardize_metadata = Standardize(max_counts=standardize_max_count)
+        #self.standardize_intensity = None
+        #self.standardize_metadata = None
+        #self.gradient_skip_count = self.add_weight(
+        #    shape=(),
+        #    initializer='zeros',
+        #    dtype='int64',
+        #    trainable=False,
+        #)
 
     def call(self, inputs, mc_samples=None, **kwargs):
         if mc_samples is None:
@@ -107,6 +114,11 @@ class VariationalMergingModel(tfk.models.Model):
             iobs,
             sigiobs,
         ) = inputs
+        if self.standardize_intensity is not None:
+            iobs = self.standardize_intensity(iobs)
+            sigiobs = self.standardize_intensity.standardize(sigiobs)
+        if self.standardize_metadata is not None:
+            metadata = self.standardize_metadata(metadata)
 
         training = kwargs.get('training', None)
         ll = None
@@ -114,6 +126,7 @@ class VariationalMergingModel(tfk.models.Model):
 
         q = self.surrogate_posterior.flat_distribution()
         ipred = q.sample(mc_samples)
+
         kl_div = self.surrogate_posterior.register_kl(ipred, asu_id, hkl, training)
         #if not tf.math.is_finite(kl_div):
         #    from IPython import embed
@@ -179,17 +192,12 @@ class VariationalMergingModel(tfk.models.Model):
 
             _ipred = _ipred * scale
 
-            if self.sigiobs_model is not None:
-                sigiobs_pred = self.sigiobs_model(sigiobs, _ipred)
-            else:
-                sigiobs_pred = sigiobs
-
             R = iobs - _ipred
 
             if self.dof is None:
-                _ll = tfd.Normal(0., sigiobs_pred.flat_values).log_prob(R.flat_values)
+                _ll = tfd.Normal(0., sigiobs.flat_values).log_prob(R.flat_values)
             else:
-                _ll = tfd.StudentT(self.dof, 0, sigiobs_pred.flat_values).log_prob(R.flat_values)
+                _ll = tfd.StudentT(self.dof, 0, sigiobs.flat_values).log_prob(R.flat_values)
 
             _ll = tf.RaggedTensor.from_value_rowids(
                 _ll, 
@@ -229,53 +237,37 @@ class VariationalMergingModel(tfk.models.Model):
 
         return ipred_scaled
 
-    #For production with super nan avoiding powers
-    def traXXin_step(self, data):
-        # Unpack the data. Its structure depends on your model and
-        # on what you pass to `fit()`.
-        x, y = data
-
-        with tf.GradientTape() as tape:
-            y_pred = self(x, training=True)  # Forward pass
-            # Compute the loss value
-            # (the loss function is configured in `compile()`)
-            loss = self.compiled_loss(y, y_pred, regularization_losses=self.losses)
-
-        # Compute gradients
-        trainable_vars = self.trainable_variables
-        gradients = tape.gradient(loss, trainable_vars)
-        gradients = [tf.where(tf.math.is_finite(g), g, 0.) for g in gradients]
-
-        # Update weights
-        self.optimizer.apply_gradients(zip(gradients, trainable_vars))
-
-        # Update metrics (includes the metric that tracks the loss)
-        self.compiled_metrics.update_state(y, y_pred)
-
-        # Return a dict mapping metric names to current value
-        metrics = {m.name: m.result() for m in self.metrics}
-        # Record the norm of the gradients
-        grad_norm = tf.sqrt(tf.reduce_sum([tf.reduce_sum(tf.square(g)) for g in gradients]))
-        metrics['grad_norm'] = grad_norm
-        return metrics
-
 
     #For production with super nan avoiding powers
     @tf.function
-    def trXXain_step(self, data):
+    def train_step(self, data):
         # Unpack the data. Its structure depends on your model and
         # on what you pass to `fit()`.
         x, y = data
 
-        with tf.GradientTape() as tape:
+        with tf.GradientTape(persistent=True) as tape:
             y_pred = self(x, training=True)  # Forward pass
             # Compute the loss value
             # (the loss function is configured in `compile()`)
             loss = self.compiled_loss(y, y_pred, regularization_losses=self.losses)
 
         # Compute gradients
-        trainable_vars = self.trainable_variables
-        gradients = tape.gradient(loss, trainable_vars)
+        scale_vars = self.scale_model.trainable_variables
+        grad_scale = tape.gradient(loss, scale_vars)
+        grad_s_norm = tf.sqrt(
+            tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_scale])
+        )
+        q_vars = self.surrogate_posterior.trainable_variables
+        grad_q= tape.gradient(loss, q_vars)
+        grad_q_norm = tf.sqrt(
+            tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_q])
+        )
+
+        #posterior_grad_inflation_factor = 1_000.
+        #gradients = grad_scale + [g*posterior_grad_inflation_factor for g in grad_q]
+        trainable_vars = scale_vars + q_vars
+        gradients = grad_scale + grad_q
+
         is_sane = tf.reduce_all([tf.reduce_all(tf.math.is_finite(g)) for g in gradients])
         #gradients = [tf.where(tf.math.is_finite(g), g, 0.) for g in gradients]
 
@@ -290,6 +282,9 @@ class VariationalMergingModel(tfk.models.Model):
 
         # Return a dict mapping metric names to current value
         metrics = {m.name: m.result() for m in self.metrics}
+        metrics["|∇q|"] = grad_q_norm
+        metrics["|∇s|"] = grad_s_norm
+        #metrics["Skips"] = self.gradient_skip_count
         # Record the norm of the gradients
         #grad_norm = tf.sqrt(tf.reduce_sum([tf.reduce_sum(tf.square(g)) for g in gradients]))
         #metrics['grad_norm'] = grad_norm

@@ -153,6 +153,7 @@ class StillsLoader(DataLoader):
             self.mean = (metadata.mean(0), I.mean(0), SigI.mean(0))
             self.std  = (metadata.std(0), I.std(0), SigI.std(0))
 
+        #TODO: why is this still necessary even with Welford standardization???
         metadata = (metadata - self.mean[0]) / self.std[0]
         I = I / self.std[1]
         SigI = SigI / self.std[1]
