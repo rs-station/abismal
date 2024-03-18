@@ -130,12 +130,8 @@ class FoldedNormal(tfd.TransformedDistribution):
     return tf.convert_to_tensor(np.pi, self.dtype)
 
   def _cdf(self, x):
-    x = tf.convert_to_tensor(x)
     loc,scale = self.loc,self.scale
-    a = (x + loc) / scale
-    b = (x - loc) / scale
-    ir2 = tf.constant(tf.math.reciprocal(tf.sqrt(2.)), dtype=x.dtype)
-    return 0.5 * (tf.math.erf(ir2 * a) - tf.math.erf(ir2 * b))
+    return cdf(x, loc, scale)
 
   def _sample_n(self, shape=(), seed=None):
     loc = self.loc
