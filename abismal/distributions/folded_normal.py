@@ -66,10 +66,8 @@ def stateless_folded_normal(shape, loc, scale, seed=None):
   z = tf.random.stateless_normal(shape, seed, mean=loc, stddev=scale)
   z = tf.abs(z)
   def grad(upstream):
-    dZ, dloc, dscale = tfm.value_and_gradient(cdf(z, loc, scale))
     dloc, dscale = reparameterization_gradient(z, loc, scale)
-    dZi = tf.math.reciprocal(dZ)
-    return None, upstream * dloc * dZi, upstream * dscale * dZi, None
+    return None, upstream * dloc, upstream * dscale, None
   return z, grad
 
 class FoldedNormal(tfd.TransformedDistribution):
