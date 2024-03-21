@@ -30,8 +30,9 @@ class RunningMoments:
         return np.sqrt(self.var)
 
 class Standardize(tfk.layers.Layer):
-    def __init__(self, center=True, max_counts=np.inf):
+    def __init__(self, center=True, max_counts=np.inf, epsilon=1e-6):
         super().__init__()
+        self.epsilon = epsilon
         self.center = center
         self.max_counts = max_counts
 
@@ -74,7 +75,8 @@ class Standardize(tfk.layers.Layer):
 
     @property
     def var(self):
-        return self.m2 / self.count_float
+        m2 = tf.clip_by_value(self.m2, self.epsilon, np.inf)
+        return m2 / self.count_float
 
     def update(self, x):
         k = tf.reduce_sum(tf.ones_like(x)) / self.axis_size
@@ -90,8 +92,8 @@ class Standardize(tfk.layers.Layer):
 
     def standardize(self, data):
         if self.center:
-            return (data - self.mean) / self.var
-        return data / self.var
+            return (data - self.mean) / self.std
+        return data / self.std
 
     def call(self, data, training=True):
         if self.max_counts > self.max_counts:

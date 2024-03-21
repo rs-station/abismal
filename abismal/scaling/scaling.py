@@ -226,8 +226,8 @@ class ImageScaler(tfk.layers.Layer):
                 kl_div = q_z - p_z
 
             kl_div = tf.reduce_mean(kl_div)
-            self.add_loss(kl_div)
-            self.add_metric(self.kl_weight * kl_div, name='KL_Σ')
+            self.add_loss(self.kl_weight * kl_div)
+            self.add_metric(kl_div, name='KL_Σ')
         z = tf.RaggedTensor.from_row_splits(tf.transpose(z), metadata.row_splits)
 
         return z

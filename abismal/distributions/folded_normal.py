@@ -13,15 +13,12 @@ from tensorflow_probability.python.internal import samplers
 from tensorflow_probability import math as tfm
 from tensorflow_probability.python.internal import tensor_util
 
-def reparameterization_gradient(z, loc, scale):
-    #loc = tf.abs(loc)
-
+def sample_gradients(z, loc, scale):
     alpha = (z + loc) / scale
     beta = (z - loc) / scale
 
-    p = tfd.Normal(0., 1.)
-    p_a = tfd.Normal(loc, scale).prob(z)   #log N(z|loc,scale)
-    p_b = tfd.Normal(-loc, scale).prob(z)  #log N(z|-loc,scale)
+    p_a = tfd.Normal(loc, scale).prob(z)   #N(z|loc,scale)
+    p_b = tfd.Normal(-loc, scale).prob(z)  #N(z|-loc,scale)
 
     # This formula is dz = N(z|-loc,scale) + N(z|loc,scale)
     dz = p_a + p_b
@@ -33,20 +30,13 @@ def reparameterization_gradient(z, loc, scale):
     dscale = -alpha * p_b - beta * p_a
     return dz, dloc, dscale
 
-def cdf(x, loc, scale):
-    x = tf.convert_to_tensor(x)
-    a = (x + loc) / scale
-    b = (x - loc) / scale
-    ir2 = tf.constant(tf.math.reciprocal(tf.sqrt(2.)), dtype=x.dtype)
-    return 0.5 * (tf.math.erf(ir2 * a) - tf.math.erf(ir2 * b))
-
 
 @tf.custom_gradient
 def stateless_folded_normal(shape, loc, scale, seed):
     z = tf.random.stateless_normal(shape, seed, mean=loc, stddev=scale)
     z = tf.abs(z)
     def grad(upstream):
-        grads = reparameterization_gradient(z, loc, scale)
+        grads = sample_gradients(z, loc, scale)
         dz,dloc,dscale = grads[0], grads[1], grads[2]
         dloc = tf.reduce_sum(-upstream * dloc / dz, axis=0)
         dscale = tf.reduce_sum(-upstream * dscale / dz, axis=0)
@@ -123,7 +113,11 @@ class FoldedNormal(tfd.Distribution):
 
     def _cdf(self, x):
         loc,scale = self.loc,self.scale
-        return cdf(x, loc, scale)
+        x = tf.convert_to_tensor(x)
+        a = (x + loc) / scale
+        b = (x - loc) / scale
+        ir2 = tf.constant(tf.math.reciprocal(tf.sqrt(2.)), dtype=x.dtype)
+        return 0.5 * (tf.math.erf(ir2 * a) - tf.math.erf(ir2 * b))
 
     def _sample_n(self, n, seed=None):
         seed = samplers.sanitize_seed(seed)

@@ -115,10 +115,10 @@ class VariationalMergingModel(tfk.models.Model):
             sigiobs,
         ) = inputs
         if self.standardize_intensity is not None:
-            iobs = self.standardize_intensity(iobs)
-            sigiobs = self.standardize_intensity.standardize(sigiobs)
+            iobs = tf.ragged.map_flat_values(self.standardize_intensity, iobs)
+            sigiobs = tf.ragged.map_flat_values(self.standardize_intensity.standardize, sigiobs)
         if self.standardize_metadata is not None:
-            metadata = self.standardize_metadata(metadata)
+            metadata = tf.ragged.map_flat_values(self.standardize_metadata, metadata)
 
         training = kwargs.get('training', None)
         ll = None
