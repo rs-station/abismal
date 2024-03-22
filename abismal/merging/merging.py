@@ -80,10 +80,10 @@ class Op(tfk.layers.Layer):
         return hkl
 
 class VariationalMergingModel(tfk.models.Model):
-    def __init__(self, scale_model, surrogate_posterior, studentt_dof=None, mc_samples=1, eps=1e-6, reindexing_ops=None, standardize_max_count=10_000_000):
+    def __init__(self, scale_model, surrogate_posterior, likelihood, mc_samples=1, eps=1e-6, reindexing_ops=None, standardize_max_count=10_000_000):
         super().__init__()
         self.eps = eps
-        self.dof = studentt_dof
+        self.likelihood = likelihood
         self.scale_model = scale_model
         self.surrogate_posterior = surrogate_posterior
         self.mc_samples = mc_samples
@@ -92,14 +92,6 @@ class VariationalMergingModel(tfk.models.Model):
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
         self.standardize_intensity = Standardize(center=False, max_counts=standardize_max_count)
         self.standardize_metadata = Standardize(max_counts=standardize_max_count)
-        #self.standardize_intensity = None
-        #self.standardize_metadata = None
-        #self.gradient_skip_count = self.add_weight(
-        #    shape=(),
-        #    initializer='zeros',
-        #    dtype='int64',
-        #    trainable=False,
-        #)
 
     def call(self, inputs, mc_samples=None, **kwargs):
         if mc_samples is None:
@@ -128,31 +120,9 @@ class VariationalMergingModel(tfk.models.Model):
         ipred = q.sample(mc_samples)
 
         kl_div = self.surrogate_posterior.register_kl(ipred, asu_id, hkl, training)
-        #if not tf.math.is_finite(kl_div):
-        #    from IPython import embed
-        #    embed(colors='linux')
 
         if self.surrogate_posterior.parameterization == 'structure_factor':
             ipred = tf.square(ipred)
-        #    floc = q.mean()[...,None]
-        #    fscale = q.stddev()[...,None]
-        #    # Exact
-        #    iloc = floc * floc + fscale * fscale
-        #    # 1st order
-        #    iscale = 2 * floc * fscale
-        #    imodel = (
-        #        floc,
-        #        fscale,
-        #        iloc,
-        #        iscale,
-        #    )
-        #else:
-        #    iloc = q.mean()[...,None]
-        #    iscale = q.stddev()[...,None]
-        #    imodel = (
-        #        iloc,
-        #        iscale,
-        #    )
 
         imodel = (
             tf.reduce_mean(ipred, axis=0)[...,None],
@@ -192,17 +162,7 @@ class VariationalMergingModel(tfk.models.Model):
 
             _ipred = _ipred * scale
 
-            R = iobs - _ipred
-
-            if self.dof is None:
-                _ll = tfd.Normal(0., sigiobs.flat_values).log_prob(R.flat_values)
-            else:
-                _ll = tfd.StudentT(self.dof, 0, sigiobs.flat_values).log_prob(R.flat_values)
-
-            _ll = tf.RaggedTensor.from_value_rowids(
-                _ll, 
-                _ipred.value_rowids(),
-            )
+            _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
             _ll = tf.reduce_mean(_ll, [-1, -2], keepdims=True)
 
             if ll is None:
@@ -217,10 +177,6 @@ class VariationalMergingModel(tfk.models.Model):
         # This is the mean across mc samples and observations
         ll = tf.reduce_mean(ll) 
 
-
-        #if not tf.math.is_finite(ll):
-        #    from IPython import embed
-        #    embed(colors='linux')
 
         self.add_metric(-ll, name='NLL')
         self.add_loss(-ll)
@@ -263,13 +219,10 @@ class VariationalMergingModel(tfk.models.Model):
             tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_q])
         )
 
-        #posterior_grad_inflation_factor = 1_000.
-        #gradients = grad_scale + [g*posterior_grad_inflation_factor for g in grad_q]
         trainable_vars = scale_vars + q_vars
         gradients = grad_scale + grad_q
 
         is_sane = tf.reduce_all([tf.reduce_all(tf.math.is_finite(g)) for g in gradients])
-        #gradients = [tf.where(tf.math.is_finite(g), g, 0.) for g in gradients]
 
         if is_sane:
             # Update weights
@@ -284,10 +237,6 @@ class VariationalMergingModel(tfk.models.Model):
         metrics = {m.name: m.result() for m in self.metrics}
         metrics["|∇q|"] = grad_q_norm
         metrics["|∇s|"] = grad_s_norm
-        #metrics["Skips"] = self.gradient_skip_count
-        # Record the norm of the gradients
-        #grad_norm = tf.sqrt(tf.reduce_sum([tf.reduce_sum(tf.square(g)) for g in gradients]))
-        #metrics['grad_norm'] = grad_norm
         return metrics
 
 
