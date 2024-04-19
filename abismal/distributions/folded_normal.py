@@ -13,7 +13,27 @@ from tensorflow_probability.python.internal import samplers
 from tensorflow_probability import math as tfm
 from tensorflow_probability.python.internal import tensor_util
 
-def sample_gradients(z, loc, scale):
+def _logspace_sample_gradients(z, loc, scale):
+    alpha_sign,log_alpha = tf.sign(z + loc), tf.math.log(tf.abs(z + loc)) - tf.math.log(scale)
+    beta_sign,log_beta = tf.sign(z - loc), tf.math.log(tf.abs(z - loc)) - tf.math.log(scale)
+
+    log_p_a = tfd.Normal(loc, scale).log_prob(z)   #N(z|loc,scale)
+    log_p_b = tfd.Normal(-loc, scale).log_prob(z)  #N(z|-loc,scale)
+
+    # This formula is dz = N(z|-loc,scale) + N(z|loc,scale)
+    log_dz = tfp.math.log_add_exp(log_p_a, log_p_b)
+
+    # This formula is dloc = N(z|-loc,scale) - N(z|loc,scale)
+    log_dloc,dloc_sign = tfp.math.log_sub_exp(log_p_b, log_p_a, return_sign=True)
+    # dloc = dloc / dz
+    dloc = dloc_sign * tf.exp(log_dloc - log_dz)
+
+    # This formula is -[b * N(z|-loc, scale) + a * N(z|loc, scale)]
+    dscale = -alpha_sign * tf.exp(log_alpha + log_p_b - log_dz) - beta_sign * tf.exp(log_beta + log_p_a - log_dz)
+    return dloc, dscale
+    #return log_dz, dloc, dscale
+
+def _sample_gradients(z, loc, scale):
     alpha = (z + loc) / scale
     beta = (z - loc) / scale
 
@@ -25,10 +45,30 @@ def sample_gradients(z, loc, scale):
 
     # This formula is dloc = N(z|-loc,scale) - N(z|loc,scale)
     dloc = p_b - p_a
+    dloc = dloc / dz
 
     # This formula is -[b * N(z|-loc, scale) + a * N(z|loc, scale)]
     dscale = -alpha * p_b - beta * p_a
-    return dz, dloc, dscale
+    dscale = dscale / dz
+    return dloc, dscale
+
+def sample_gradients(z, loc, scale, logspace=True):
+    if logspace:
+        return _logspace_sample_gradients(z, loc, scale)
+    return _sample_gradients(z, loc, scale)
+
+@tf.custom_gradient
+def stateless_folded_normal(shape, loc, scale, seed):
+    z = tf.random.stateless_normal(shape, seed, mean=loc, stddev=scale)
+    z = tf.abs(z)
+    def grad(upstream):
+        grads = sample_gradients(z, loc, scale)
+        dloc,dscale = grads[0], grads[1]
+        dloc = tf.reduce_sum(-upstream * dloc, axis=0)
+        dscale = tf.reduce_sum(-upstream * dscale, axis=0)
+        return None, dloc, dscale, None
+    return z, grad
+
 
 
 @tf.custom_gradient
