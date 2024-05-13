@@ -1,12 +1,12 @@
 import tensorflow as tf
+import tf_keras as tfk
 from tensorflow_probability import distributions as tfd
 import numpy as np
-from tensorflow import keras as tfk
 from reciprocalspaceship.utils import hkl_to_asu,is_absent
 from inspect import signature
 from reciprocalspaceship.decorators import spacegroupify,cellify
 
-class ReciprocalASUCollection(object):
+class ReciprocalASUCollection(tfk.layers.Layer):
     def __init__(self, *reciprocal_asus):
         self.reciprocal_asus = reciprocal_asus
         asu_ids,dHKL,centric,epsilon = [],[],[],[]
@@ -90,7 +90,7 @@ class ReciprocalASUCollection(object):
     def __len__(self):
         return len(self.reciprocal_asus)
 
-class ReciprocalASU(object):
+class ReciprocalASU(tfk.layers.Layer):
     @cellify
     @spacegroupify
     def __init__(self, cell, spacegroup, dmin, anomalous=True):
