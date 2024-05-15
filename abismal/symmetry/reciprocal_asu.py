@@ -5,6 +5,7 @@ import numpy as np
 from reciprocalspaceship.utils import hkl_to_asu,is_absent
 from inspect import signature
 from reciprocalspaceship.decorators import spacegroupify,cellify
+import gemmi
 
 class ReciprocalASUCollection(tfk.layers.Layer):
     def __init__(self, *reciprocal_asus):
@@ -125,8 +126,8 @@ class ReciprocalASU(tfk.layers.Layer):
         """
         super().__init__()
         self.anomalous = anomalous
-        self.cell = cell
-        self.spacegroup = spacegroup
+        self._cell = cell.parameters
+        self._spacegroup = spacegroup.xhm()
         self.dmin = dmin
         go = self.spacegroup.operations()
 
@@ -154,6 +155,14 @@ class ReciprocalASU(tfk.layers.Layer):
         self.epsilon = go.epsilon_factor_array(self.Hunique).astype(np.float32)
         self.centric = go.centric_flag_array(self.Hunique).astype(bool)
 
+    @property
+    def spacegroup(self):
+        return gemmi.SpaceGroup(self._spacegroup)
+
+    @property
+    def cell(self):
+        return gemmi.UnitCell(self._cell)
+
     def get_reciprocal_cell(self):
         """ Generate the full reciprocal cell respecting systematic absences """
         go = self.spacegroup.operations()
@@ -173,7 +182,6 @@ class ReciprocalASU(tfk.layers.Layer):
         H = H[np.any(H != 0, axis=1)]
 
         return H
-
 
     def _ensure_in_range(self, H):
         """ Cast any out of bounds indices to [0,0,0] """
