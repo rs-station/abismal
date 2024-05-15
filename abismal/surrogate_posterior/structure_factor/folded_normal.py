@@ -36,6 +36,9 @@ class FoldedNormalPosterior(StructureFactorPosteriorBase):
             self.loc, 
             self.scale, 
         )
-        q = tfd.TransformedDistribution(f, self.low)
+        q = tfd.TransformedDistribution(
+            f, 
+            tfb.Shift(self.low),
+        )
         return q
 
