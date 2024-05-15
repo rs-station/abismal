@@ -161,7 +161,7 @@ class ReciprocalASU(tfk.layers.Layer):
 
     @property
     def cell(self):
-        return gemmi.UnitCell(self._cell)
+        return gemmi.UnitCell(*self._cell)
 
     def get_reciprocal_cell(self):
         """ Generate the full reciprocal cell respecting systematic absences """
