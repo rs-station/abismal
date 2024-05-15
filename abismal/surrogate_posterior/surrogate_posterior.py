@@ -107,7 +107,7 @@ class PosteriorBase(tfk.models.Model):
             has_isigi = False
 
         try:
-            F,SIGF = self.get_flat_fsigf(q)
+            F,SIGF = self.get_flat_fsigf()
             has_fsigf = True
             data.update({
                 'F' : rs.DataSeries(F, dtype='F'),
