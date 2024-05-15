@@ -12,28 +12,11 @@ from tensorflow_probability.python.internal import parameter_properties
 from tensorflow_probability.python.internal import samplers
 from tensorflow_probability import math as tfm
 from tensorflow_probability.python.internal import tensor_util
+from tensorflow_probability import math as tfm
+import math
 
-def _logspace_sample_gradients(z, loc, scale):
-    alpha_sign,log_alpha = tf.sign(z + loc), tf.math.log(tf.abs(z + loc)) - tf.math.log(scale)
-    beta_sign,log_beta = tf.sign(z - loc), tf.math.log(tf.abs(z - loc)) - tf.math.log(scale)
 
-    log_p_a = tfd.Normal(loc, scale).log_prob(z)   #N(z|loc,scale)
-    log_p_b = tfd.Normal(-loc, scale).log_prob(z)  #N(z|-loc,scale)
-
-    # This formula is dz = N(z|-loc,scale) + N(z|loc,scale)
-    log_dz = tfp.math.log_add_exp(log_p_a, log_p_b)
-
-    # This formula is dloc = N(z|-loc,scale) - N(z|loc,scale)
-    log_dloc,dloc_sign = tfp.math.log_sub_exp(log_p_b, log_p_a, return_sign=True)
-    # dloc = dloc / dz
-    dloc = dloc_sign * tf.exp(log_dloc - log_dz)
-
-    # This formula is -[b * N(z|-loc, scale) + a * N(z|loc, scale)]
-    dscale = -alpha_sign * tf.exp(log_alpha + log_p_b - log_dz) - beta_sign * tf.exp(log_beta + log_p_a - log_dz)
-    return dloc, dscale
-    #return log_dz, dloc, dscale
-
-def _sample_gradients(z, loc, scale):
+def folded_normal_sample_gradients(z, loc, scale):
     alpha = (z + loc) / scale
     beta = (z - loc) / scale
 
@@ -52,39 +35,20 @@ def _sample_gradients(z, loc, scale):
     dscale = dscale / dz
     return dloc, dscale
 
-def sample_gradients(z, loc, scale, logspace=True):
-    if logspace:
-        return _logspace_sample_gradients(z, loc, scale)
-    return _sample_gradients(z, loc, scale)
-
 @tf.custom_gradient
 def stateless_folded_normal(shape, loc, scale, seed):
     z = tf.random.stateless_normal(shape, seed, mean=loc, stddev=scale)
     z = tf.abs(z)
     def grad(upstream):
-        grads = sample_gradients(z, loc, scale)
-        dloc,dscale = grads[0], grads[1]
+        dloc,dscale = folded_normal_sample_gradients(z, loc, scale)
         dloc = tf.reduce_sum(-upstream * dloc, axis=0)
         dscale = tf.reduce_sum(-upstream * dscale, axis=0)
         return None, dloc, dscale, None
     return z, grad
 
-
-
-@tf.custom_gradient
-def stateless_folded_normal(shape, loc, scale, seed):
-    z = tf.random.stateless_normal(shape, seed, mean=loc, stddev=scale)
-    z = tf.abs(z)
-    def grad(upstream):
-        grads = sample_gradients(z, loc, scale)
-        dz,dloc,dscale = grads[0], grads[1], grads[2]
-        dloc = tf.reduce_sum(-upstream * dloc / dz, axis=0)
-        dscale = tf.reduce_sum(-upstream * dscale / dz, axis=0)
-        return None, dloc, dscale, None
-    return z, grad
-
 class FoldedNormal(tfd.Distribution):
     """The folded normal distribution."""
+    _normal_crossover = 10.
     def __init__(self,
                loc,
                scale,
@@ -173,96 +137,56 @@ class FoldedNormal(tfd.Distribution):
             tfd.Normal(-loc, scale).log_prob(value),
         )
         return result
-        #return tf.where(value < 0, tf.constant(-np.inf, dtype=result.dtype), result)
+
+    @staticmethod
+    def _folded_normal_mean(loc, scale):
+        u,s = loc, scale
+        c = loc / scale
+        return s * tf.sqrt(2/math.pi) * tf.math.exp(-0.5 * c * c) + u * tf.math.erf(c/math.sqrt(2))
 
     def _mean(self):
         u = self.loc
         s = self.scale
-        snr = u/s
-        return s * tf.sqrt(2/self._pi) * tf.math.exp(-0.5 * tf.square(snr)) + u * (1. - 2. * special_math.ndtr(-snr))
+        c = u/s
+
+        idx = tf.abs(c) >= self._normal_crossover
+        s_safe = tf.where(idx, 1., s)
+        u_safe = tf.where(idx, 1., u)
+
+        return tf.where(
+            idx,
+            u,
+            self._folded_normal_mean(u_safe, s_safe)
+        )
 
     def _variance(self):
         u = self.loc
         s = self.scale
-        return tf.square(u) + tf.square(s) - tf.square(self.mean())
+        c = u/s
 
-    def sample_square(self, sample_shape=(), seed=None, name='sample', **kwargs):
-        z = self.distribution.sample(sample_shape, seed, name, **kwargs)
-        return tf.square(z)
+        idx = tf.abs(c) >= 10.
+        s_safe = tf.where(idx, 1., s)
+        u_safe = tf.where(idx, 1., u)
+        m = self._folded_normal_mean(u_safe, s_safe)
 
+        return tf.where(
+            idx, 
+            s*s,
+            u*u + s*s - m*m,
+        )
 
-if __name__=="__main__":
-#    n = 100
-#    loc,scale = np.random.random((2, n)).astype('float32')
-#    loc = tf.Variable(loc)
-#    scale = tf.Variable(scale)
-#    q = FoldedNormal(loc, scale)
-#    p = FoldedNormal(0., 1.)
-#
-#    x = np.linspace(-10., 10., 1000)
-#    u = q.mean()
-#    s = q.stddev()
-#    v = q.variance()
-#
-#    q.log_prob(x[:,None])
-#    q.prob(x[:,None])
-#    q.sample(n)
-#    q.kl_divergence(p)
-#
-    from tensorflow_probability import bijectors as tfb
-    from tensorflow_probability import util as tfu
-    from tensorflow import keras as tfk
+    def moment(self, t):
+        """ Use Scipy to calculate the t-moment of a folded normal """
+        from scipy.stats import foldnorm,norm
+        loc,scale = self.loc.numpy(),self.scale.numpy()
+        c = loc / scale
+        idx = np.abs(c) > self._normal_crossover
+        c_safe = tf.where(idx, c, 0.)
+        scale_safe = tf.where(idx, scale, 1.)
 
-    #loc = tfu.TransformedVariable(1., tfb.Exp())
-    d = ()
-    #loc = tfu.TransformedVariable(tf.ones(d), tfb.Exp())
-    loc = tf.Variable(tf.ones(d))
-    scale = tfu.TransformedVariable(
-        tf.ones(d), 
-        tfb.Chain([
-            tfb.Shift(1e-6),
-            tfb.Exp(),
-        ]),
-    )
-    q =  FoldedNormal(loc, scale)
-    target_q = FoldedNormal(0., 0.1)
-    q.sample(32)
-
-    opt = tfk.optimizers.Adam()
-
-    @tf.function
-    def loss_fn(q, p, n):
-        z = q.sample(n)
-        log_q = q.log_prob(z)
-        log_p = p.log_prob(z)
-
-        kl_div = log_q - log_p
-        loss = tf.reduce_mean(kl_div)
-        return loss
-
-    from tqdm import trange
-    n = 128
-    steps = 2_000
-    bar = trange(steps)
-    losses = []
-    locs = []
-    scales = []
-    for i in bar:
-        with tf.GradientTape() as tape:
-            loss = loss_fn(q, target_q, n)
-        grads = tape.gradient(loss, q.trainable_variables)
-        opt.apply_gradients(zip(grads, q.trainable_variables))
-        loss = float(loss)
-        locs.append(float(q.loc))
-        scales.append(float(tf.convert_to_tensor(q.scale)))
-        _scale = float(tf.convert_to_tensor(q.scale))
-        _loc = float(tf.convert_to_tensor(q.loc))
-        locs.append(_loc)
-        scales.append(_scale)
-        losses.append(loss)
-        bar.set_description(f"loss: {loss:0.2f} loc: {float(_loc):0.2f} scale: {_scale:0.2f}")
-
-    from IPython import embed
-    embed(colors='linux')
-
-
+        result = np.where(
+            idx,
+            foldnorm.moment(t, loc/scale, scale=scale),
+            norm.moment(t, loc=loc, scale=scale),
+        )
+        return result
