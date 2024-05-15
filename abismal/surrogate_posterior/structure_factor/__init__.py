@@ -1,1 +1,1 @@
-from .surrogate_posterior import WilsonPosterior
+from .folded_normal import FoldedNormal

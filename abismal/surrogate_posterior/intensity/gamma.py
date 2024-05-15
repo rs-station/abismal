@@ -13,11 +13,6 @@ import tf_keras as tfk
 class GammaPosterior(IntensityPosteriorBase):
     def __init__(self, rac, kl_weight, scale_factor=1e-2, eps=1e-12, concentration_min=1., **kwargs):
         super().__init__(rac, **kwargs)
-        self.prior = WilsonPrior(
-            rac.centric,
-            rac.epsilon,
-        )
-
         self.rac = rac
 
         self.kl_weight = kl_weight
@@ -39,6 +34,12 @@ class GammaPosterior(IntensityPosteriorBase):
                 #tfb.Softplus(),
                 tfb.Exp(),
             ]),
+        )
+
+    def flat_prior(self):
+        prior = WilsonPrior(
+            self.rac.centric,
+            self.rac.epsilon,
         )
 
     def flat_distribution(self):
