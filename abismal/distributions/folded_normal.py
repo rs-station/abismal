@@ -15,7 +15,6 @@ from tensorflow_probability.python.internal import tensor_util
 from tensorflow_probability import math as tfm
 import math
 
-
 def folded_normal_sample_gradients(z, loc, scale):
     alpha = (z + loc) / scale
     beta = (z - loc) / scale
@@ -90,16 +89,14 @@ class FoldedNormal(tfd.Distribution):
 
     @classmethod
     def _parameter_properties(cls, dtype, num_classes=None):
-        # pylint: disable=g-long-lambda
         return dict(
-            loc=parameter_properties.ParameterProperties(
-                default_constraining_bijector_fn=(
-                    lambda: exp_bijector.Exp())),
+            loc=parameter_properties.ParameterProperties(),
             scale=parameter_properties.ParameterProperties(
                 default_constraining_bijector_fn=(
-                    lambda: exp_bijector.Exp())),
-            )
-        # pylint: enable=g-long-lambda
+                    lambda: softplus_bijector.Softplus(low=dtype_util.eps(dtype))
+                )
+            ),
+        )
 
     @property
     def loc(self):
@@ -111,9 +108,11 @@ class FoldedNormal(tfd.Distribution):
         """Distribution parameter for the pre-transformed standard deviation."""
         return self._scale
 
-    @property
-    def _pi(self):
-        return tf.convert_to_tensor(np.pi, self.dtype)
+    def _event_shape_tensor(self):
+        return tf.constant([], dtype=tf.int32)
+
+    def _event_shape(self):
+        return tf.TensorShape([])
 
     def _cdf(self, x):
         loc,scale = self.loc,self.scale
