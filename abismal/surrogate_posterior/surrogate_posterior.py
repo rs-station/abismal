@@ -156,6 +156,7 @@ class PosteriorBase(tfk.models.Model):
 
 class StructureFactorPosteriorBase(PosteriorBase):
     parameterization = 'structure_factor'
+
     def get_flat_fsigf(self):
         q = self.flat_distribution()
         F = q.mean()      
