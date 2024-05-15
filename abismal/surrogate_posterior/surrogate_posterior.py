@@ -165,8 +165,8 @@ class StructureFactorPosteriorBase(PosteriorBase):
 
     def get_flat_isigi(self):
         """
-        This method is approximate. The intensity is exact. It is calculated based
-        on the definition of variance. 
+        This method is approximate, but the intensity is exact. It is calculated 
+        based on the definition of variance. 
         The uncertainties are based on 1st order uncertainty propagation and are
         therefore less accurate. 
         Subclasses may choose to implement analytical expressions where available.
