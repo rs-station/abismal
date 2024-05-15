@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow import keras as tfk
+import tf_keras as tfk
 
 class ScaleRange(tfk.layers.Layer):
     def __init__(self, minimum=-1, maximum=1, axis=-1):

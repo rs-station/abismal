@@ -3,61 +3,15 @@ import reciprocalspaceship as rs
 import tensorflow as tf
 import tensorflow_probability as tfp
 import gemmi
-from abismal.layers import Standardize
+from abismal.layers.standardization import Standardize
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
-from tensorflow import keras as tfk
+import tf_keras as tfk
 from IPython import embed
 
 
-def spearman_cc(yobs, ypred):
-    from scipy.stats import spearmanr
-    from scipy.special import seterr
-    seterr(all='ignore')
-
-    cc = spearmanr(yobs, ypred)[0]
-
-    if not np.isfinite(cc):
-        cc = 0.
-    return cc
-
-def weighted_pearsonr(x, y, w):
-    """
-    Calculate a [weighted Pearson correlation coefficient](https://en.wikipedia.org/wiki/Pearson_correlation_coefficient#Weighted_correlation_coefficient).
-
-    Note
-    ----
-    x, y, and w may have arbitrarily shaped leading dimensions. The correlation coefficient will always be computed pairwise along the last axis.
-
-    Parameters
-    ----------
-    x : np.array(float)
-        An array of observations.
-    y : np.array(float)
-        An array of observations the same shape as x.
-    w : np.array(float)
-        An array of weights the same shape as x. These needn't be normalized.
-
-    Returns
-    -------
-    r : float
-        The Pearson correlation coefficient along the last dimension. This has shape {x,y,w}.shape[:-1].
-    """
-    z = tf.math.reciprocal(tf.reduce_sum(w, axis=-1))
-    mx = tf.reduce_sum(z * (w * x), axis=-1)
-    my = tf.reduce_sum(z * (w * y), axis=-1)
-
-    dx = x - tf.expand_dims(mx, axis=-1)
-    dy = y - tf.expand_dims(my, axis=-1)
-
-    cxy = z * tf.reduce_sum(w * dx * dy, axis=-1)
-    cx = z * tf.reduce_sum(w * dx * dx, axis=-1)
-    cy = z * tf.reduce_sum(w * dy * dy, axis=-1)
-
-    r = cxy / tf.sqrt(cx * cy)
-    return r
 
 class Op(tfk.layers.Layer):
     def __init__(self, triplet):
@@ -80,7 +34,7 @@ class Op(tfk.layers.Layer):
         return hkl
 
 class VariationalMergingModel(tfk.models.Model):
-    def __init__(self, scale_model, surrogate_posterior, likelihood, mc_samples=1, eps=1e-6, reindexing_ops=None, standardize_max_count=10_000_000):
+    def __init__(self, scale_model, surrogate_posterior, likelihood, mc_samples=1, eps=1e-6, reindexing_ops=None):
         super().__init__()
         self.eps = eps
         self.likelihood = likelihood
@@ -90,8 +44,8 @@ class VariationalMergingModel(tfk.models.Model):
         if reindexing_ops is None:
             reindexing_ops = ["x,y,z"]
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
-        self.standardize_intensity = Standardize(center=False, max_counts=standardize_max_count)
-        self.standardize_metadata = Standardize(max_counts=standardize_max_count)
+        self.standardize_intensity = Standardize(center=False)
+        self.standardize_metadata = Standardize()
 
     def call(self, inputs, mc_samples=None, **kwargs):
         if mc_samples is None:
@@ -173,6 +127,11 @@ class VariationalMergingModel(tfk.models.Model):
                 ipred_scaled = tf.where(idx, _ipred, ipred_scaled)
                 ll = tf.where(idx, _ll, ll)
 
+        self.likelihood.register_metrics(
+            ipred_scaled.flat_values, 
+            iobs.flat_values, 
+            sigiobs.flat_values,
+        )
 
         # This is the mean across mc samples and observations
         ll = tf.reduce_mean(ll) 
@@ -181,18 +140,8 @@ class VariationalMergingModel(tfk.models.Model):
         self.add_metric(-ll, name='NLL')
         self.add_loss(-ll)
 
-        # This is the mean ipred across the posterior mc samples
-        ipred_scaled = tf.reduce_mean(ipred_scaled, axis=-1, keepdims=True)
-        w = tf.math.reciprocal(tf.square(sigiobs))
-        cc = weighted_pearsonr(
-            tf.squeeze(iobs.flat_values, axis=-1),
-            tf.squeeze(ipred_scaled.flat_values, axis=-1),
-            tf.squeeze(w.flat_values, axis=-1),
-        )
-        self.add_metric(cc, name='CCpred')
-
-        return ipred_scaled
-
+        ipred_avg = tf.reduce_mean(ipred_scaled, axis=-1)
+        return ipred_avg
 
     #For production with super nan avoiding powers
     @tf.function
@@ -200,6 +149,9 @@ class VariationalMergingModel(tfk.models.Model):
         # Unpack the data. Its structure depends on your model and
         # on what you pass to `fit()`.
         x, y = data
+
+        # Set up metrics dict
+        metrics = {m.name: m.result() for m in self.metrics}
 
         with tf.GradientTape(persistent=True) as tape:
             y_pred = self(x, training=True)  # Forward pass
@@ -213,30 +165,37 @@ class VariationalMergingModel(tfk.models.Model):
         grad_s_norm = tf.sqrt(
             tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_scale])
         )
+        metrics["|∇s|"] = grad_s_norm
+
         q_vars = self.surrogate_posterior.trainable_variables
         grad_q= tape.gradient(loss, q_vars)
         grad_q_norm = tf.sqrt(
             tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_q])
         )
+        metrics["|∇q|"] = grad_q_norm
 
-        trainable_vars = scale_vars + q_vars
-        gradients = grad_scale + grad_q
+        trainable_vars = scale_vars + q_vars 
 
-        is_sane = tf.reduce_all([tf.reduce_all(tf.math.is_finite(g)) for g in gradients])
+        gradients = grad_scale + grad_q 
 
-        if is_sane:
-            # Update weights
-            self.optimizer.apply_gradients(zip(gradients, trainable_vars))
-        else:
-            tf.print("Numerical issue detected with gradients, skipping a step")
+        ll_vars = self.likelihood.trainable_variables
+        if len(ll_vars) > 0:
+            grad_ll = tape.gradient(loss, ll_vars)
+            grad_ll_norm = tf.sqrt(
+                tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_ll])
+            )
+            trainable_vars += ll_vars
+            gradients += grad_ll
+            metrics["|∇ll|"] = grad_ll_norm
+
+        gradients = [tf.where(tf.math.is_finite(g), g, 0.) for g in gradients]
+        self.optimizer.apply_gradients(zip(gradients, trainable_vars))
 
         # Update metrics (includes the metric that tracks the loss)
         self.compiled_metrics.update_state(y, y_pred)
 
+
         # Return a dict mapping metric names to current value
-        metrics = {m.name: m.result() for m in self.metrics}
-        metrics["|∇q|"] = grad_q_norm
-        metrics["|∇s|"] = grad_s_norm
         return metrics
 
 

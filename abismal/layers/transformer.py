@@ -5,7 +5,7 @@ from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
-from tensorflow import keras as tfk
+import tf_keras as tfk
 from abismal.layers import FeedForward
 
 
@@ -44,12 +44,12 @@ class MultiHeadAttention(tfk.layers.Layer):
         scale = tf.sqrt(0.1 / fan_avg / self.num_heads)
         kernel_initializer = tfk.initializers.TruncatedNormal(stddev=scale, seed=self.seed)
         
-        self.key_dense = tf.keras.layers.EinsumDense(
+        self.key_dense = tfk.layers.EinsumDense(
             "...nd,hdk->...hnk",
             (self.num_heads, None, self.key_dim),
             kernel_initializer=kernel_initializer,
         )
-        #self.value_dense = tf.keras.layers.EinsumDense(
+        #self.value_dense = tfk.layers.EinsumDense(
         #    "...nd,hdk->...hnk",
         #    (self.num_heads, None, self.key_dim),
         #    kernel_initializer=self.kernel_initializer,
@@ -58,7 +58,7 @@ class MultiHeadAttention(tfk.layers.Layer):
         fan_avg = dmodel
         scale = tf.sqrt(0.1 / fan_avg / self.num_heads)
         kernel_initializer = tfk.initializers.TruncatedNormal(stddev=scale, seed=self.seed)
-        self.output_dense = tf.keras.layers.EinsumDense(
+        self.output_dense = tfk.layers.EinsumDense(
             "...hnv,hdv->...nd",
             (None, dmodel),
             kernel_initializer=kernel_initializer,

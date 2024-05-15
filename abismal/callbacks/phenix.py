@@ -1,11 +1,12 @@
 import reciprocalspaceship as rs
+import tf_keras as tfk
 import tensorflow as tf
 from os.path import exists,dirname,abspath
 from os import mkdir
 from subprocess import Popen,DEVNULL
 from abismal.callbacks import MtzSaver
 
-class PhenixRunner(tf.keras.callbacks.Callback):
+class PhenixRunner(tfk.callbacks.Callback):
     """ A hybrid callback that saves mtz files and optionally runs PHENIX """
     def __init__(self, output_directory, eff_file=None, epoch_stride=10, *args, **kwargs):
         super().__init__(*args, **kwargs)

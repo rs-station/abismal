@@ -1,8 +1,9 @@
 import tensorflow as tf
-from tensorflow import keras as tfk
+import tf_keras as tfk
 from tensorflow_probability import distributions as tfd
+from abismal.likelihood.location_scale import LocationScale
 
-class NormalLikelihood(tfk.layers.Layer):
-    def call(self, ipred, iobs, sigiobs):
-        return tfd.Normal(iobs, sigiobs).log_prob(ipred)
+class NormalLikelihood(LocationScale):
+    def _likelihood(self, iobs, sigiobs):
+        return tfd.Normal(iobs, sigiobs)
 

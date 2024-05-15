@@ -1,1 +1,1 @@
-from .surrogate_posterior import PosteriorBase
+from .surrogate_posterior import PosteriorBase,IntensityPosteriorBase

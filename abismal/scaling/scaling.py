@@ -7,38 +7,12 @@ from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 from tensorflow_probability import stats as tfs
-from tensorflow import keras as tfk
-from IPython import embed
+import tf_keras as tfk
 
 from abismal.layers import *
 from abismal.distributions import FoldedNormal
 
-class DeltaDist():
-    def __init__(self, vals):
-        self.vals=vals
-
-    def sample(self, *args, **kwargs):
-        return self.vals[None,...]
-
-class DeltaFunctionLayer(tfk.layers.Layer):
-    def __init__(
-            self, 
-            kernel_initializer='glorot_normal',
-            bijector=None,
-        ):
-        super().__init__()
-        self.dense = tfk.layers.Dense(1, kernel_initializer=kernel_initializer)
-        self.bijector = None
-
-    def call(self, data, training=None, **kwargs):
-        theta = self.dense(data)
-        theta = tf.squeeze(theta, axis=-1)
-        if self.bijector is not None:
-            theta = self.bijector(theta)
-        q = DeltaDist(theta)
-        return q
-
-class FoldedNormalLayer(tfk.layers.Layer):
+class LocationScaleLayer(tfk.layers.Layer):
     def __init__(
             self, 
             eps=1e-12,
@@ -49,6 +23,7 @@ class FoldedNormalLayer(tfk.layers.Layer):
         self.eps = eps
         self.scale_bijector = tfb.Chain([tfb.Shift(eps), tfb.Exp()])
 
+class FoldedNormalLayer(LocationScaleLayer):
     def call(self, data, training=None, mc_samples=None, **kwargs):
         theta = self.dense(data)
         loc, scale = tf.unstack(theta, axis=-1)
@@ -57,36 +32,6 @@ class FoldedNormalLayer(tfk.layers.Layer):
             scale = self.scale_bijector(scale)
 
         q = FoldedNormal(loc, scale)
-        return q
-
-class GammaLayer(tfk.layers.Layer):
-    def __init__(
-            self, 
-            eps=1e-12,
-            kernel_initializer='glorot_normal',
-            conc_bijector=None,
-            rate_bijector=None,
-        ):
-        super().__init__()
-        self.dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
-        self.eps = eps
-        self.conc_bijector = conc_bijector
-        self.rate_bijector = rate_bijector
-        if self.conc_bijector is None:
-            self.conc_bijector = tfb.Chain([tfb.Shift(eps), tfb.Exp()])
-        if self.rate_bijector is None:
-            self.rate_bijector = tfb.Chain([tfb.Shift(eps), tfb.Exp()])
-
-    def call(self, data, training=None, mc_samples=None, **kwargs):
-        theta = self.dense(data)
-        conc, rate = tf.unstack(theta, axis=-1)
-
-        if self.conc_bijector is not None:
-            conc = self.conc_bijector(conc)
-        if self.rate_bijector is not None:
-            rate = self.rate_bijector(rate)
-
-        q = tfd.Gamma(conc, rate)
         return q
 
 class ImageScaler(tfk.layers.Layer):
@@ -98,41 +43,50 @@ class ImageScaler(tfk.layers.Layer):
             hidden_units=None,
             layer_norm=False,
             activation="ReLU",
-            kernel_initializer='glorot_normal',
+            kernel_initializer=None,
             stop_f_grad=True,
             scale_posterior=None,
             scale_prior=None,
             kl_weight=1.,
             eps=1e-12,
-            num_image_samples=96,
-            hkl_to_image_model=True,
-            hkl_divisor=1.,
+            num_image_samples=32,
             metadata_model=None,
-            share_weights=False,
-            imodel_to_image_model=True,
+            share_weights=True,
+            imodel_to_image_model=False,
+            seed=None,
             **kwargs, 
         ):
         super().__init__(**kwargs)
 
         self.kl_weight = kl_weight
         self.metadata_model = metadata_model
-        self.hkl_to_image_model = hkl_to_image_model
         self.imodel_to_image_model = imodel_to_image_model
         self.num_image_samples = num_image_samples
-        self.hkl_divisor = hkl_divisor
         self.scale_prior = scale_prior
         self.scale_posterior = scale_posterior
 
         if hidden_units is None:
             hidden_units = 2 * image_mpl_width
 
+        if kernel_initializer is None:
+            if seed is None:
+                seed = 1234 #This needs to be set to something otherwise all layers will
+                #initialize the same
+            kernel_initializer = tfk.initializers.VarianceScaling(
+                scale=1./10./np.sqrt(mlp_depth), 
+                mode='fan_avg', distribution='truncated_normal', seed=seed
+            )
+
         input_image   = [
             tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer),
         ]
-        if dropout is not None:
-            input_image.append(tfk.layers.Dropout(dropout))
+        input_scale = [
+            tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer),
+        ]
+            
         self.input_image   = tfk.models.Sequential(input_image)
-        self.input_scale  = tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer)
+        self.input_scale   = tfk.models.Sequential(input_scale)
+
         self.pool = Average(axis=-2)
 
         self.image_network = tfk.models.Sequential([
@@ -180,7 +134,7 @@ class ImageScaler(tfk.layers.Layer):
         out = tf.gather_nd(ragged, idx)
         return out
 
-    def call(self, inputs, imodel, mc_samples=1, training=None, **kwargs):
+    def call(self, inputs, imodel, mc_samples=32, training=None, **kwargs):
         (
             asu_id,
             hkl,
@@ -198,9 +152,6 @@ class ImageScaler(tfk.layers.Layer):
             metadata = tf.ragged.map_flat_values(self.metadata_model, metadata)
         scale = metadata
         image = [iobs, sigiobs, metadata]
-        if self.hkl_to_image_model:
-            hkl_float = tf.cast(hkl, dtype='float32') / self.hkl_divisor
-            image.append(hkl_float)
         if self.imodel_to_image_model:
             image.append(imodel)
         image = tf.concat(image, axis=-1)

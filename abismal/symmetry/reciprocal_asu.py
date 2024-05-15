@@ -8,6 +8,7 @@ from reciprocalspaceship.decorators import spacegroupify,cellify
 
 class ReciprocalASUCollection(tfk.layers.Layer):
     def __init__(self, *reciprocal_asus):
+        super().__init__()
         self.reciprocal_asus = reciprocal_asus
         asu_ids,dHKL,centric,epsilon = [],[],[],[]
         Hunique = []
@@ -122,6 +123,7 @@ class ReciprocalASU(tfk.layers.Layer):
         anomalous : bool
             If true, treat Friedel mates as non-redudant
         """
+        super().__init__()
         self.anomalous = anomalous
         self.cell = cell
         self.spacegroup = spacegroup

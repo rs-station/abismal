@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow import keras as tfk
+import tf_keras as tfk
 from tensorflow_probability import stats as tfs
 
 
@@ -83,7 +83,7 @@ class Standardize(tfk.layers.Layer):
         self.count.assign_add(k)
         diff = x - self.mean
         new_mean = self.mean + \
-            tf.reduce_sum(diff / self.count, axis=self.reduce_dims, keepdims=True)
+            tf.reduce_sum(diff, axis=self.reduce_dims, keepdims=True) / self.count
         self.mean.assign(new_mean)
         diff *= (x - self.mean)
         self.m2.assign(

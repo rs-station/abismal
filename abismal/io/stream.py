@@ -5,7 +5,7 @@ import reciprocalspaceship as rs
 import pandas as pd
 import gemmi
 import tensorflow as tf
-from .loader import DataLoader
+from abismal.io.loader import DataLoader
 from reciprocalspaceship.decorators import spacegroupify,cellify
 from multiprocessing import cpu_count,Pool
 
@@ -228,6 +228,7 @@ class StreamLoader():
         hkl = refls[:,:3]
 
         #Reflection resolution based on consensus cell
+        #d = rs.utils.compute_dHKL(hkl, cell)
         d = cell.calculate_d_array(hkl).astype('float32')
         #Apply dmin
         if dmin is not None:
@@ -261,8 +262,8 @@ class StreamLoader():
 
         # Compute angular ewald offset
         eo_sign = np.sign(eo)
-        q_obs = s1_obs - s0
-        ao = eo_sign * rs.utils.angle_between(q, q_obs)
+        #q_obs = s1_obs - s0
+        #ao = eo_sign * rs.utils.angle_between(q, q_obs)
 
         I = refls[:,3]
         SigI = refls[:,4]
@@ -272,10 +273,11 @@ class StreamLoader():
             SigI = SigI / intensity_std
 
         #panel = refls[:,9,None]
-        inv_d2 = np.reciprocal(np.square(d))
-        xydet = refls[:,7:9]
+        #inv_d2 = np.reciprocal(np.square(d))
+        #xydet = refls[:,7:9]
         #metadata = (s1[:,:2], eov, eo[...,None], ao[...,None], xydet, inv_d2[...,None])
-        metadata = (s1[:,:2], eov)
+        #metadata = (s1[:,:2], eov)
+        metadata = (s1, eov)
         #metadata = (xydet,)
         metadata = np.concatenate(metadata, axis=-1).astype('float32')
         if metadata_mean is not None:
@@ -283,9 +285,15 @@ class StreamLoader():
         if metadata_std is not None:
             metadata = metadata / metadata_std
 
-        rowids = np.zeros_like(I, dtype='int32')
-        d = tf.convert_to_tensor(d[None,:,None])
+        #rowids = np.zeros_like(I, dtype='int64')
+        #I = tf.RaggedTensor.from_value_rowids(I[:,None], rowids)
+        #SigI = tf.RaggedTensor.from_value_rowids(SigI[:,None], rowids)
+        #d = tf.RaggedTensor.from_value_rowids(d[:,None], rowids)
+        #hkl  = tf.RaggedTensor.from_value_rowids(hkl, rowids)
+        #metadata = tf.RaggedTensor.from_value_rowids(metadata, rowids)
+
         I = tf.convert_to_tensor(I[None,:,None])
+        d = tf.convert_to_tensor(d[None,:,None])
         SigI = tf.convert_to_tensor(SigI[None,:,None])
         hkl = tf.convert_to_tensor(hkl[None,:,:])
         metadata = tf.convert_to_tensor(metadata[None,:,:])
@@ -316,8 +324,8 @@ class StreamLoader():
                     datum = self.crystal_to_data(lines, self.wavelength)
                 else:
                     datum = self.crystal_to_data(lines, wavelength)
-                #size = datum[0][0].values.shape[0]
                 size = datum[0][0].shape[1]
+                #size = datum[0][0].flat_values.shape[0]
                 if size >= self.min_refls:
                     yield datum
                 #except:
@@ -333,6 +341,10 @@ class StreamLoader():
     @staticmethod
     def get_signature_from_datum(datum):
         """Work out the proper signature for creating a dataset from an example"""
+        #if ragged:
+        #    signature = tf.nest.map_structure(tf.RaggedTensorSpec.from_value, datum)
+        #else:
+        #    signature = tf.nest.map_structure(tf.TensorSpec.from_tensor, datum)
         def to_ragged_spec(tensor):
             spec = tf.TensorSpec.from_tensor(tensor)
             shape,dtype = spec.shape,spec.dtype
@@ -344,3 +356,19 @@ class StreamLoader():
         signature = tf.nest.map_structure(to_ragged_spec, datum)
         return signature
 
+if __name__ == '__main__':
+    file = "/mnt/raid/data/xtal/abismal_examples/cxidb_62/all-amb.stream.bz2"
+
+    dmin = 1.5
+    sg = "P 65"
+    loader = StreamLoader(file, dmin=dmin, spacegroup=sg)
+    ds = loader.get_dataset()
+    count_max = 100
+    count = 0
+    for datum in ds:
+        count += 1
+        if count > count_max:
+            break
+
+    from IPython import embed
+    embed(colors='linux')

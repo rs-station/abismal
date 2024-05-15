@@ -5,7 +5,7 @@ from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
-from tensorflow import keras as tfk
+import tf_keras as tfk
 from abismal.distributions import RiceWoolfson
 from abismal.surrogate_posterior import PosteriorBase
 from abismal.surrogate_posterior.intensity.surrogate_posterior import WilsonPrior

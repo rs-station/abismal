@@ -1,3 +1,3 @@
 from .normal import NormalLikelihood
 from .student import StudentTLikelihood
-from .latent import AdditiveNormalLikelihood
+from .latent import AdaptiveNormalLikelihood

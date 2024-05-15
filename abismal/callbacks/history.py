@@ -1,4 +1,5 @@
 import tensorflow as tf
+import tf_keras as tfk
 import numpy as np
 import pandas as pd
 from os.path import exists,dirname,abspath
@@ -6,7 +7,7 @@ from os import mkdir
 
 
 
-class HistorySaver(tf.keras.callbacks.Callback):
+class HistorySaver(tfk.callbacks.Callback):
     def __init__(self, output_directory,  *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.output_directory = abspath(output_directory)

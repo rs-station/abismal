@@ -97,8 +97,8 @@ class WAdam(tfk.optimizers.Optimizer):
             # Dense gradients.
             g = gradient
             delta = g - m
-            m.assign_add((1. - beta) * delta)
-            v.assign_add((1. - beta) * (beta * delta * (g - m) - v))
+            m.assign_add((beta - 1.) * m + (1. - beta) * delta)
+            v.assign_add((beta - 1.) * v + (1. - beta) * delta * (g - m))
             #variable.assign_sub((m * alpha) / (tf.sqrt(v + m*m) + self.epsilon))
             variable.assign_sub((m * alpha) / (tf.sqrt(v) + self.epsilon))
 

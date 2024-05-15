@@ -1,12 +1,13 @@
 import reciprocalspaceship as rs
 import tensorflow as tf
+import tf_keras as tfk
 from os.path import exists,dirname,abspath
 from os import mkdir,listdir
 from subprocess import Popen,DEVNULL
 from abismal.callbacks import MtzSaver
 
 #TODO: refactor all the other mtz saving callbacks as special cases of this one
-class AnomalousPeakFinder(tf.keras.callbacks.Callback):
+class AnomalousPeakFinder(tfk.callbacks.Callback):
     """ A hybrid callback that saves mtzs, runs phenix, and runs peakfinding """
     def __init__(self, output_directory, eff_file, epoch_stride=10, z_score_cutoff=5., **kwargs):
         super().__init__(**kwargs)

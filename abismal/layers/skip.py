@@ -1,11 +1,11 @@
 import numpy as np
 import reciprocalspaceship as rs
 import tensorflow as tf
+import tf_keras as tfk
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
-from tensorflow import keras as tfk
 
 
 class FeedForward(tfk.layers.Layer):
@@ -47,7 +47,7 @@ class FeedForward(tfk.layers.Layer):
         self.kernel_initializer = kernel_initializer
 
         if dropout is not None:
-            self.dropout = tf.keras.layers.Dropout(dropout)
+            self.dropout = tfk.layers.Dropout(dropout)
         else:
             self.dropout = None
 
@@ -63,8 +63,8 @@ class FeedForward(tfk.layers.Layer):
         if self.hidden_units is None:
             self.hidden_units = 2 * self.units
 
-        self.ff1 = tf.keras.layers.Dense(self.hidden_units, kernel_initializer=self.kernel_initializer, **kwargs)
-        self.ff2 = tf.keras.layers.Dense(self.units, kernel_initializer=self.kernel_initializer, **kwargs)
+        self.ff1 = tfk.layers.Dense(self.hidden_units, kernel_initializer=self.kernel_initializer, **kwargs)
+        self.ff2 = tfk.layers.Dense(self.units, kernel_initializer=self.kernel_initializer, **kwargs)
 
     def call(self, X, **kwargs):
         out = X

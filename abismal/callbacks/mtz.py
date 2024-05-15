@@ -1,9 +1,10 @@
 import reciprocalspaceship as rs
 import tensorflow as tf
+import tf_keras as tfk
 from os.path import exists,dirname,abspath
 from os import mkdir
 
-class MtzSaver(tf.keras.callbacks.Callback):
+class MtzSaver(tfk.callbacks.Callback):
     def __init__(self, output_directory, anomalous=True, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.output_directory = abspath(output_directory)

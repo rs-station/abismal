@@ -5,7 +5,7 @@ from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
-from tensorflow import keras as tfk
+import tf_keras as tfk
 from IPython import embed
 
 from abismal.layers import *
