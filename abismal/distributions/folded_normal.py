@@ -141,7 +141,11 @@ class FoldedNormal(tfd.Distribution):
     def _folded_normal_mean(loc, scale):
         u,s = loc, scale
         c = loc / scale
-        return s * tf.sqrt(2/math.pi) * tf.math.exp(-0.5 * c * c) + u * tf.math.erf(c/math.sqrt(2))
+        mean = (
+            s * tf.sqrt(2/math.pi) * tf.math.exp(-0.5 * c * c) + 
+            u * tf.math.erf(c/math.sqrt(2))
+        )
+        return mean
 
     def _mean(self):
         u = self.loc
@@ -154,7 +158,7 @@ class FoldedNormal(tfd.Distribution):
 
         return tf.where(
             idx,
-            u,
+            tf.abs(u),
             self._folded_normal_mean(u_safe, s_safe)
         )
 
