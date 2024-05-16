@@ -15,9 +15,10 @@ class FoldedNormalPosterior(IntensityPosteriorBase):
         super().__init__(rac, epsilon=epsilon, kl_weight=kl_weight, **kwargs)
         self.low = self.epsilon * tf.cast(self.rac.centric, dtype='float32')
         p = self.flat_prior()
-        self.loc = tf.Variable(p.mean())
+        loc_init = p.mean()
+        self.loc = tf.Variable(loc_init)
         self.scale = tfu.TransformedVariable(
-            scale_factor * p.stddev(),
+            scale_factor * loc_init,
             tfb.Chain([
                 tfb.Shift(epsilon), 
                 tfb.Exp(),
