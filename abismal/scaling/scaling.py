@@ -44,7 +44,6 @@ class ImageScaler(tfk.layers.Layer):
             layer_norm=False,
             activation="ReLU",
             kernel_initializer=None,
-            stop_f_grad=True,
             scale_posterior=None,
             scale_prior=None,
             kl_weight=1.,
@@ -52,7 +51,6 @@ class ImageScaler(tfk.layers.Layer):
             num_image_samples=32,
             metadata_model=None,
             share_weights=True,
-            imodel_to_image_model=False,
             seed=None,
             **kwargs, 
         ):
@@ -60,7 +58,6 @@ class ImageScaler(tfk.layers.Layer):
 
         self.kl_weight = kl_weight
         self.metadata_model = metadata_model
-        self.imodel_to_image_model = imodel_to_image_model
         self.num_image_samples = num_image_samples
         self.scale_prior = scale_prior
         self.scale_posterior = scale_posterior
@@ -73,7 +70,7 @@ class ImageScaler(tfk.layers.Layer):
                 seed = 1234 #This needs to be set to something otherwise all layers will
                 #initialize the same
             kernel_initializer = tfk.initializers.VarianceScaling(
-                scale=1./10./np.sqrt(mlp_depth), 
+                scale=1./10./mlp_depth,
                 mode='fan_avg', distribution='truncated_normal', seed=seed
             )
 
@@ -117,7 +114,6 @@ class ImageScaler(tfk.layers.Layer):
                 eps=eps,
             )
 
-        self.stop_f_grad = stop_f_grad
 
     @staticmethod
     def sample_ragged_dim(ragged, mc_samples):
@@ -134,7 +130,7 @@ class ImageScaler(tfk.layers.Layer):
         out = tf.gather_nd(ragged, idx)
         return out
 
-    def call(self, inputs, imodel, mc_samples=32, training=None, **kwargs):
+    def call(self, inputs, mc_samples=32, training=None, **kwargs):
         (
             asu_id,
             hkl,
@@ -145,15 +141,11 @@ class ImageScaler(tfk.layers.Layer):
             sigiobs,
         ) = inputs
 
-        if self.stop_f_grad:
-            imodel = tf.stop_gradient(imodel)
-
         if self.metadata_model is not None:
             metadata = tf.ragged.map_flat_values(self.metadata_model, metadata)
         scale = metadata
         image = [iobs, sigiobs, metadata]
-        if self.imodel_to_image_model:
-            image.append(imodel)
+
         image = tf.concat(image, axis=-1)
         image = ImageScaler.sample_ragged_dim(image, self.num_image_samples)
 
