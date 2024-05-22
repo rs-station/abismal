@@ -8,30 +8,10 @@ from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
+from abismal.symmetry import Op
 import tf_keras as tfk
 from IPython import embed
 
-
-
-class Op(tfk.layers.Layer):
-    def __init__(self, triplet):
-        super().__init__()
-        self.gemmi_op = gemmi.Op(triplet)
-        self.rot = tf.convert_to_tensor(self.gemmi_op.rot, dtype='float32')
-        self.den = tf.convert_to_tensor(self.gemmi_op.DEN, dtype='float32')
-        self.identity = self.gemmi_op == 'x,y,z'
-
-    def __str__(self):
-        return f"Op({self.gemmi_op.triplet()})"
-
-    def call(self, hkl):
-        if self.identity:
-            return hkl
-        dtype = hkl.dtype
-        hkl = tf.cast(hkl, tf.float32)
-        hkl = tf.math.floordiv(tf.matmul(hkl, self.rot), self.den)
-        hkl = tf.cast(hkl, dtype)
-        return hkl
 
 class VariationalMergingModel(tfk.models.Model):
     def __init__(self, scale_model, surrogate_posterior, likelihood, mc_samples=1, eps=1e-6, reindexing_ops=None):
@@ -78,42 +58,32 @@ class VariationalMergingModel(tfk.models.Model):
         if self.surrogate_posterior.parameterization == 'structure_factor':
             ipred = tf.square(ipred)
 
-        imodel = (
-            tf.reduce_mean(ipred, axis=0)[...,None],
-            tf.math.reduce_std(ipred, axis=0)[...,None],
-        )
-        imodel = tf.concat(imodel, axis=-1)
-
         if training:
             self.surrogate_posterior.register_seen(asu_id, hkl)
 
         ipred = tf.transpose(ipred)
         ipred_scaled = None
 
+        _inputs = (
+            asu_id,
+            hkl,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) 
+        scale = self.scale_model(
+            _inputs, 
+            mc_samples=mc_samples, 
+            **kwargs
+        )
+
         for op in self.reindexing_ops:
             # Choose the best indexing solution for each image
             _hkl = tf.ragged.map_flat_values(op, hkl)
 
             _ipred = self.surrogate_posterior.rac.gather(ipred, asu_id, _hkl)
-            _imodel = self.surrogate_posterior.rac.gather(imodel, asu_id, _hkl)
-
-            _inputs = (
-                asu_id,
-                _hkl,
-                resolution,
-                wavelength,
-                metadata,
-                iobs,
-                sigiobs,
-            ) 
-
-            scale = self.scale_model(
-                _inputs, 
-                _imodel,
-                mc_samples=mc_samples, 
-                **kwargs
-            )
-
             _ipred = _ipred * scale
 
             _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
@@ -135,7 +105,6 @@ class VariationalMergingModel(tfk.models.Model):
 
         # This is the mean across mc samples and observations
         ll = tf.reduce_mean(ll) 
-
 
         self.add_metric(-ll, name='NLL')
         self.add_loss(-ll)
