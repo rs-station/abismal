@@ -11,13 +11,22 @@ from abismal.surrogate_posterior.structure_factor.wilson import WilsonPrior
 
 
 class FoldedNormalPosterior(StructureFactorPosteriorBase):
-    def __init__(self, rac, scale_factor=1e-1, epsilon=1e-12, kl_weight=1., **kwargs):
+    def __init__(self, rac, prior=None, scale_factor=1e-1, epsilon=1e-12, kl_weight=1., **kwargs):
         super().__init__(rac, epsilon=epsilon, kl_weight=kl_weight, **kwargs)
+        if prior is None:
+            self._flat_prior = WilsonPrior(
+                self.rac.centric,
+                self.rac.epsilon,
+            )
+        else:
+            self._flat_prior = prior
+
         self.low = self.epsilon * tf.cast(~self.rac.centric, dtype='float32')
         p = self.flat_prior()
-        self.loc = tf.Variable(p.mean())
+        loc_init = p.mean()
+        self.loc = tf.Variable(loc_init)
         self.scale = tfu.TransformedVariable(
-            scale_factor * p.stddev(),
+            scale_factor * loc_init,
             tfb.Chain([
                 tfb.Shift(epsilon), 
                 tfb.Exp(),
@@ -25,11 +34,7 @@ class FoldedNormalPosterior(StructureFactorPosteriorBase):
         )
 
     def flat_prior(self):
-        prior = WilsonPrior(
-            self.rac.centric,
-            self.rac.epsilon,
-        )
-        return prior
+        return self._flat_prior
 
     def flat_distribution(self):
         f = FoldedNormal(

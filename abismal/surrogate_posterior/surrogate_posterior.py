@@ -119,15 +119,15 @@ class PosteriorBase(tfk.models.Model):
         if not (has_fsigf or has_isigi):
             raise NotImplementedError
 
-        ds = rs.DataSet(
-            data,
-            merged=True,
-            cell=rasu.cell,
-            spacegroup=rasu.spacegroup,
-        )
 
         asu_id = self.rac.asu_id
         for i,rasu in enumerate(self.rac):
+            ds = rs.DataSet(
+                data,
+                merged=True,
+                cell=rasu.cell,
+                spacegroup=rasu.spacegroup,
+            )
             idx = self.rac.asu_id.numpy() == i
             if seen:
                 idx = idx & self.seen.numpy()
