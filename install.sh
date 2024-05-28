@@ -1,25 +1,44 @@
-pip install -e . 
-
 ENVNAME=abismal
-source /home/kmdalton/opt/anaconda/etc/profile.d/conda.sh
-conda activate
-conda create -yn $ENVNAME python=3.11
+PY_VERSION=3.11
+TFP_VERSION=0.24.0
+TF_VERSION=2.16.1
+
+conda create -yn $ENVNAME python=$PY_VERSION
+source $CONDA_PREFIX/etc/profile.d/conda.sh
+conda activate base
+
 conda activate $ENVNAME
-conda install -c conda-forge mamba -y
-mamba install -c conda-forge cudatoolkit=11.8.0 dials -y
-python3 -m pip install nvidia-cudnn-cu11==8.6.0.163 tensorflow==2.12.*
+pip install --upgrade pip
+
+pip install tensorflow[and-cuda]==$TF_VERSION
+pip install tensorflow-probability[tf]==$TFP_VERSION
+
+
+# The following is a workaround for a bug in tensorflow cuda installation
+# https://github.com/tensorflow/tensorflow/issues/63362#issuecomment-2134680575
 mkdir -p $CONDA_PREFIX/etc/conda/activate.d
-echo 'CUDNN_PATH=$(dirname $(python -c "import nvidia.cudnn;print(nvidia.cudnn.__file__)"))' >> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
-echo 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/:$CUDNN_PATH/lib' >> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
-source $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
+echo '# Store original LD_LIBRARY_PATH 
+export ORIGINAL_LD_LIBRARY_PATH="${LD_LIBRARY_PATH}" 
 
-# Install NVCC
-conda install -c nvidia cuda-nvcc=11.3.58 -y
-# Configure the XLA cuda directory
-printf 'export XLA_FLAGS=--xla_gpu_cuda_data_dir=$CONDA_PREFIX/lib/\n' >> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
-source $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
-# Copy libdevice file to the required path
-mkdir -p $CONDA_PREFIX/lib/nvvm/libdevice
-cp $CONDA_PREFIX/lib/libdevice.10.bc $CONDA_PREFIX/lib/nvvm/libdevice/
+# Get the CUDNN directory 
+CUDNN_DIR=$(dirname $(dirname $(python -c "import nvidia.cudnn; print(nvidia.cudnn.__file__)")))
 
-pip install -e .
+# Set LD_LIBRARY_PATH to include CUDNN directory
+export LD_LIBRARY_PATH=$(find ${CUDNN_DIR}/*/lib/ -type d -printf "%p:")${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+
+# Get the ptxas directory  
+PTXAS_DIR=$(dirname $(dirname $(python -c "import nvidia.cuda_nvcc; print(nvidia.cuda_nvcc.__file__)")))
+
+# Set PATH to include the directory containing ptxas
+export PATH=$(find ${PTXAS_DIR}/*/bin/ -type d -printf "%p:")${PATH:+:${PATH}}
+
+'>> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
+
+mkdir -p $CONDA_PREFIX/etc/conda/deactivate.d
+echo '# Restore original LD_LIBRARY_PATH
+export LD_LIBRARY_PATH="${ORIGINAL_LD_LIBRARY_PATH}"
+
+# Unset environment variables
+unset CUDNN_DIR
+unset PTXAS_DIR' >> $CONDA_PREFIX/etc/conda/deactivate.d/env_vars.sh
+
