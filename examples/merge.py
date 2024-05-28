@@ -8,18 +8,13 @@ from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 from tensorflow import keras as tfk
 from abismal.symmetry import ReciprocalASU,ReciprocalASUCollection
-from abismal.merging import VariationalMergingModel,PosteriorCollection,WilsonPosterior
+from abismal.merging import VariationalMergingModel
+from abismal.surrogate_posterior.structure_factor import WilsonPosterior,PosteriorCollection
 from abismal.callbacks import HistorySaver,MtzSaver
 from abismal.io import StillsLoader
 from abismal.scaling import ImageScaler
 from IPython import embed
 
-
-def breakpoint():
-    from IPython import embed
-    embed(colors='linux')
-    from sys import exit
-    exit()
 
 
 # Handle GPU selection
@@ -39,22 +34,18 @@ def set_gpu(gpu_id):
             print(e)
 
 debug = False
-#debug = True
 eager = False
-#eager = True
 
 # Load filenames from text
 expt_files = [i for i in open('expt_files.txt').read().strip().split('\n') if i[0]!="#"]
 refl_files = [i for i in open('refl_files.txt').read().strip().split('\n') if i[0]!="#"]
-first_run_only = False
-#first_run_only = True
 
 # Hardware Parameters
-gpu_id = 0
+gpu_id = 1
 set_gpu(gpu_id)
 
 # Data Parameters
-outdir = "results/scratch"
+outdir = "results/less_kl"
 if os.path.exists(outdir):
     answer = input(f"""Permission to overwrite output directory {outdir} (y/N)""") + ' '
     if answer[0].lower()=='y':
@@ -64,28 +55,30 @@ if os.path.exists(outdir):
         from sys import exit
         exit()
 
-weights_file = None 
-#weights_file = f"results/simple_kl/weights.tf"
-test_size = 5_000
-mc_samples=50
+weights_file = None # f"results/merge/weights.tf"
+test_size = 5_000 #test set image count
+mc_samples=50 
 epochs=100
-batch_size=100
+batch_size=1
+shuffle_buffer_size=100_000
 dmin = 1.8
 anomalous = True
 
-
-# Model Hyperparameters
 # model dimensions
 model_dims = 32
 ff_dims = 2 * model_dims
-num_blocks = 50
+num_blocks = 20
+
+# likelihood stuff
+studentt_dof = None
 
 # kullback leibler divergences / regularizers 
-kl_weight = 1e-3
+kl_weight = 1e-8
+scale_kl_weight = 10.
 dropout=None
 
 # Optimizer settings
-#learning_rate=1e-4
+#learning_rate=1e-3
 boundaries = [50_000]
 values = [1e-3, 1e-4]
 learning_rate = tfk.optimizers.schedules.PiecewiseConstantDecay(boundaries, values)
@@ -98,21 +91,10 @@ clipnorm=None #Adam gradient clipping per parameter
 clipvalue=None  #Adam gradient clipping
 amsgrad=False #Whether to use amsgrad
 
+
 # layer options
 activation='relu'
-
-#kernel_initializer=tfk.initializers.VarianceScaling(scale=1./5./max_reflections_per_image, mode='fan_avg', distribution='truncated_normal')
-#kernel_initializer=FanMaxInitializer(scale=1. / num_blocks / 5.)
-#kernel_initializer=tfk.initializers.VarianceScaling(scale=1./2, mode='fan_avg', distribution='truncated_normal')
 kernel_initializer=tfk.initializers.VarianceScaling(scale=1./10., mode='fan_avg', distribution='truncated_normal', seed=1234)
-
-# likelihood stuff
-studentt_dof = None
-
-
-# Just cache the data in a temporary directory
-from tempfile import TemporaryDirectory
-datadir = TemporaryDirectory()
 
 # Write out this script for logging purposes
 if not os.path.exists(outdir):
@@ -120,14 +102,7 @@ if not os.path.exists(outdir):
 with open(outdir + "/merge.py", "w") as out:
     out.write(open(__file__).read())
 
-
-
-if first_run_only:
-    expt_files = [expt_files[0]]
-    refl_files = [refl_files[0]]
-
 loader = StillsLoader(expt_files, refl_files, dmin=dmin)
-
 
 rasu = ReciprocalASU(
     loader.cell,
@@ -141,6 +116,9 @@ surrogate_posterior = PosteriorCollection(
     WilsonPosterior(rasu, kl_weight, eps=epsilon),
 )
 
+from abismal.scaling.scaling import DeltaFunctionLayer
+scale_posterior = DeltaFunctionLayer(kernel_initializer=kernel_initializer)
+
 scale_model = ImageScaler(
     mlp_width=model_dims, 
     mlp_depth=num_blocks, 
@@ -149,9 +127,14 @@ scale_model = ImageScaler(
     layer_norm=False,
     activation=activation,
     kernel_initializer=kernel_initializer,
+    kl_weight=scale_kl_weight,
+    eps=epsilon,
+    scale_posterior=scale_posterior,
 )
 
-model = VariationalMergingModel(scale_model, surrogate_posterior, 
+model = VariationalMergingModel(
+    scale_model, 
+    surrogate_posterior, 
     mc_samples=mc_samples,
     studentt_dof=studentt_dof, 
 )
@@ -170,28 +153,29 @@ opt = tfk.optimizers.Adam(
 )
 
 
-data = data.cache()
 train = data.skip(test_size)
 test = data.take(test_size)
-train,test = train.batch(batch_size),test.batch(batch_size)
 
-if first_run_only:
-    phenix_frequency = 5
-    steps_per_epoch = None
-    validation_steps = None
-else:
-    phenix_frequency = 10
-    steps_per_epoch = int(100_000 / batch_size)
-    validation_steps = int(5_000 / batch_size)
-    train,test = train.repeat(),test.repeat()
+steps_per_epoch = 10_000 
+validation_steps = 1_000 
+train = train.cache().repeat()
+test = test.cache().repeat()
 
+if shuffle_buffer_size is not None:
+    train = train.shuffle(shuffle_buffer_size)
+
+train = train.batch(batch_size)
+test = test.batch(batch_size)
 
 #Debugging
 if debug:
-    batched = data.batch(2)
-    inputs = next(batched.as_numpy_iterator())[0]
-    out = model(inputs)
-    breakpoint()
+    for x,y in test:
+        break
+    out = model(x)
+    from IPython import embed
+    embed(colors='linux')
+    from sys import exit
+    exit()
 
 mtz_saver = MtzSaver(outdir)
 history_saver = HistorySaver(outdir)

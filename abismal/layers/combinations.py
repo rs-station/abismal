@@ -1,5 +1,5 @@
 import tensorflow as tf
-from tensorflow import keras as tfk
+import tf_keras as tfk
 
 """
 Various models that form convex combinations of inputs.
@@ -57,3 +57,11 @@ class ConvexCombinations(tfk.layers.Layer):
         points = tf.einsum("...ab,...ac->...bc", score, data)
         return points
 
+class Average(tfk.layers.Layer):
+    def __init__(self, axis, keepdims=True):
+        super().__init__()
+        self.axis = axis
+        self.keepdims = keepdims
+
+    def call(self, data, **kwargs):
+        return tf.reduce_mean(data, self.axis, self.keepdims)

@@ -2,35 +2,30 @@ import numpy as np
 import reciprocalspaceship as rs
 import tensorflow as tf
 import tensorflow_probability as tfp
+import gemmi
+from abismal.layers.standardization import Standardize
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
-from tensorflow import keras as tfk
+from abismal.symmetry import Op
+import tf_keras as tfk
 from IPython import embed
 
 
-def spearman_cc(yobs, ypred):
-    from scipy.stats import spearmanr
-    from scipy.special import seterr
-    seterr(all='ignore')
-
-    cc = spearmanr(yobs, ypred)[0]
-
-    if not np.isfinite(cc):
-        cc = 0.
-    return cc
-
-
 class VariationalMergingModel(tfk.models.Model):
-    def __init__(self, scale_model, surrogate_posterior, studentt_dof=None, sigiobs_model=None, mc_samples=1, eps=1e-6):
+    def __init__(self, scale_model, surrogate_posterior, likelihood, mc_samples=1, eps=1e-6, reindexing_ops=None):
         super().__init__()
         self.eps = eps
-        self.dof = studentt_dof
+        self.likelihood = likelihood
         self.scale_model = scale_model
         self.surrogate_posterior = surrogate_posterior
-        self.sigiobs_model = sigiobs_model
         self.mc_samples = mc_samples
+        if reindexing_ops is None:
+            reindexing_ops = ["x,y,z"]
+        self.reindexing_ops = [Op(op) for op in reindexing_ops]
+        self.standardize_intensity = Standardize(center=False)
+        self.standardize_metadata = Standardize()
 
     def call(self, inputs, mc_samples=None, **kwargs):
         if mc_samples is None:
@@ -45,87 +40,131 @@ class VariationalMergingModel(tfk.models.Model):
             iobs,
             sigiobs,
         ) = inputs
+        if self.standardize_intensity is not None:
+            iobs = tf.ragged.map_flat_values(self.standardize_intensity, iobs)
+            sigiobs = tf.ragged.map_flat_values(self.standardize_intensity.standardize, sigiobs)
+        if self.standardize_metadata is not None:
+            metadata = tf.ragged.map_flat_values(self.standardize_metadata, metadata)
 
-        iscale = self.surrogate_posterior.stddev(asu_id, hkl)
-        iloc   = self.surrogate_posterior.mean(asu_id, hkl)
+        training = kwargs.get('training', None)
+        ll = None
+        ipred = None
 
-        imodel = tf.concat((
-            iloc[...,None],
-            iscale[...,None],
-        ),  axis=-1)
+        q = self.surrogate_posterior.flat_distribution()
+        ipred = q.sample(mc_samples)
 
-        scale = self.scale_model((
-            metadata, 
+        kl_div = self.surrogate_posterior.register_kl(ipred, asu_id, hkl, training)
+
+        if self.surrogate_posterior.parameterization == 'structure_factor':
+            ipred = tf.square(ipred)
+
+        if training:
+            self.surrogate_posterior.register_seen(asu_id, hkl)
+
+        ipred = tf.transpose(ipred)
+        ipred_scaled = None
+
+        _inputs = (
+            asu_id,
+            hkl,
+            resolution,
+            wavelength,
+            metadata,
             iobs,
             sigiobs,
-            imodel,
-        ), mc_samples=mc_samples, **kwargs)
-
-        q = self.surrogate_posterior(asu_id.flat_values, hkl.flat_values)
-
-        ipred = q.sample(self.mc_samples)
-        ipred = ipred * tf.squeeze(scale.flat_values, axis=-1)
-        ipred = tf.RaggedTensor.from_row_splits(
-            tf.transpose(ipred),
-            iobs.row_splits,
+        ) 
+        scale = self.scale_model(
+            _inputs, 
+            mc_samples=mc_samples, 
+            **kwargs
         )
 
-        if self.sigiobs_model is not None:
-            sigiobs_pred = self.sigiobs_model(sigiobs, ipred)
-        else:
-            sigiobs_pred = sigiobs
+        for op in self.reindexing_ops:
+            # Choose the best indexing solution for each image
+            _hkl = tf.ragged.map_flat_values(op, hkl)
 
-        R = iobs - ipred
+            _ipred = self.surrogate_posterior.rac.gather(ipred, asu_id, _hkl)
+            _ipred = _ipred * scale
 
-        if self.dof is None:
-            ll = tfd.Normal(0., sigiobs_pred.flat_values).log_prob(R.flat_values)
-        else:
-            ll = tfd.StudentT(self.dof, 0, sigiobs_pred.flat_values).log_prob(R.flat_values)
+            _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
+            _ll = tf.reduce_mean(_ll, [-1, -2], keepdims=True)
 
-        # Clampy clamp clamp
-        ll = tf.maximum(ll, -1e4)
+            if ll is None:
+                ipred_scaled = _ipred
+                ll = _ll
+            else:
+                idx =  _ll > ll
+                ipred_scaled = tf.where(idx, _ipred, ipred_scaled)
+                ll = tf.where(idx, _ll, ll)
 
-        # This is the mean factoring the mask and any mc samples
+        self.likelihood.register_metrics(
+            ipred_scaled.flat_values, 
+            iobs.flat_values, 
+            sigiobs.flat_values,
+        )
+
+        # This is the mean across mc samples and observations
         ll = tf.reduce_mean(ll) 
 
         self.add_metric(-ll, name='NLL')
         self.add_loss(-ll)
 
-        # This is the mean ipred across the posterior mc samples
-        ipred = tf.reduce_mean(ipred, axis=-1)
-        cc = tf.numpy_function(spearman_cc, [iobs.flat_values, ipred.flat_values], Tout=tf.float64)
-        self.add_metric(cc, name='CCpred')
-
-        return ipred
+        ipred_avg = tf.reduce_mean(ipred_scaled, axis=-1)
+        return ipred_avg
 
     #For production with super nan avoiding powers
-    def traXXin_step(self, data):
+    @tf.function
+    def train_step(self, data):
         # Unpack the data. Its structure depends on your model and
         # on what you pass to `fit()`.
         x, y = data
 
-        with tf.GradientTape() as tape:
+        # Set up metrics dict
+        metrics = {m.name: m.result() for m in self.metrics}
+
+        with tf.GradientTape(persistent=True) as tape:
             y_pred = self(x, training=True)  # Forward pass
             # Compute the loss value
             # (the loss function is configured in `compile()`)
             loss = self.compiled_loss(y, y_pred, regularization_losses=self.losses)
 
         # Compute gradients
-        trainable_vars = self.trainable_variables
-        gradients = tape.gradient(loss, trainable_vars)
-        gradients = [tf.where(tf.math.is_finite(g), g, 0.) for g in gradients]
+        scale_vars = self.scale_model.trainable_variables
+        grad_scale = tape.gradient(loss, scale_vars)
+        grad_s_norm = tf.sqrt(
+            tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_scale])
+        )
+        metrics["|∇s|"] = grad_s_norm
 
-        # Update weights
+        q_vars = self.surrogate_posterior.trainable_variables
+        grad_q= tape.gradient(loss, q_vars)
+        grad_q_norm = tf.sqrt(
+            tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_q])
+        )
+        metrics["|∇q|"] = grad_q_norm
+
+        trainable_vars = scale_vars + q_vars 
+
+        gradients = grad_scale + grad_q 
+
+        ll_vars = self.likelihood.trainable_variables
+        if len(ll_vars) > 0:
+            grad_ll = tape.gradient(loss, ll_vars)
+            grad_ll_norm = tf.sqrt(
+                tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_ll])
+            )
+            trainable_vars += ll_vars
+            gradients += grad_ll
+            metrics["|∇ll|"] = grad_ll_norm
+
+        gradients = [tf.where(tf.math.is_finite(g), g, 0.) for g in gradients]
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
 
         # Update metrics (includes the metric that tracks the loss)
         self.compiled_metrics.update_state(y, y_pred)
 
+
         # Return a dict mapping metric names to current value
-        metrics = {m.name: m.result() for m in self.metrics}
-        # Record the norm of the gradients
-        grad_norm = tf.sqrt(tf.reduce_sum([tf.reduce_sum(tf.square(g)) for g in gradients]))
-        metrics['grad_norm'] = grad_norm
         return metrics
 
 
