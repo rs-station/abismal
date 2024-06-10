@@ -13,10 +13,10 @@ Stochastic merging for diffraction data.
 
 setup(
     name='abismal',
-    version='0.0.0',
+    version='0.0.1',
     author='Kevin M. Dalton',
     author_email='kevinmdalton@gmail.com',
-    license="All Rights Reserved",
+    license="MIT",
     include_package_data=True,
     packages=find_packages(),
     long_description=LONG_DESCRIPTION,
@@ -30,6 +30,7 @@ setup(
         "tensorflow",
         "tf_keras",
         "tensorflow-probability",
+        "rs-booster",
     ],
     setup_requires=['pytest-runner'],
     tests_require=['pytest', 'pytest-cov', 'pytest-xdist'],
