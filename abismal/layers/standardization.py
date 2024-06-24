@@ -10,13 +10,6 @@ class Standardize(tfk.layers.Layer):
         self.decay = decay
         self.center = center
         self.epsilon = epsilon
-        self.count = self.add_weight(
-            shape = (),
-            initializer = 'zeros',
-            dtype=tf.int32,
-            trainable=False,
-            name='zero_debias_count',
-        )
 
     def build(self, shape):
         d = shape[-1]
@@ -33,6 +26,13 @@ class Standardize(tfk.layers.Layer):
             dtype=tf.float32,
             trainable=False,
             name='variance',
+        )
+        self.count = self.add_weight(
+            shape = (),
+            initializer = 'zeros',
+            dtype=tf.int32,
+            trainable=False,
+            name='zero_debias_count',
         )
 
     def _debiased_mean_variance(self):
