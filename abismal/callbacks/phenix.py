@@ -28,7 +28,6 @@ class PhenixRunner(tfk.callbacks.Callback):
 
     def run_phenix(self, epoch):
         mtz_file = f"{self.output_directory}/asu_{self.asu_id}_epoch_{epoch+1}.mtz"
-        data.write_mtz(f"{self.output_directory}/asu_{self.asu_id}_epoch_{epoch+1}.mtz")
 
         phenix_dir = f"{self.output_directory}/{self.output_prefix}_asu_{self.asu_id}_epoch_{epoch+1}"
         if not exists(phenix_dir):
