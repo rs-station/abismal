@@ -37,11 +37,9 @@ class FoldedNormalLayer(LocationScaleLayer):
 class ImageScaler(tfk.layers.Layer):
     def __init__(
             self, 
-            mlp_width, 
-            mlp_depth, 
-            dropout=0.0, 
+            mlp_width=32, 
+            mlp_depth=20, 
             hidden_units=None,
-            layer_norm=False,
             activation="ReLU",
             kernel_initializer=None,
             scale_posterior=None,
@@ -49,7 +47,6 @@ class ImageScaler(tfk.layers.Layer):
             kl_weight=1.,
             eps=1e-12,
             num_image_samples=32,
-            metadata_model=None,
             share_weights=True,
             seed=None,
             **kwargs, 
@@ -57,7 +54,6 @@ class ImageScaler(tfk.layers.Layer):
         super().__init__(**kwargs)
 
         self.kl_weight = kl_weight
-        self.metadata_model = metadata_model
         self.num_image_samples = num_image_samples
         self.scale_prior = scale_prior
         self.scale_posterior = scale_posterior
@@ -91,7 +87,6 @@ class ImageScaler(tfk.layers.Layer):
                     hidden_units=hidden_units,
                     activation=activation,
                     kernel_initializer=kernel_initializer,
-                    normalize=layer_norm,
                 ) for i in range(mlp_depth)])
 
         if share_weights:
@@ -100,7 +95,6 @@ class ImageScaler(tfk.layers.Layer):
             self.scale_network = tfk.models.Sequential([
                 FeedForward(
                     hidden_units=hidden_units, 
-                    normalize=layer_norm, 
                     kernel_initializer=kernel_initializer, 
                     activation=activation, 
                     ) for i in range(mlp_depth)
@@ -141,8 +135,6 @@ class ImageScaler(tfk.layers.Layer):
             sigiobs,
         ) = inputs
 
-        if self.metadata_model is not None:
-            metadata = tf.ragged.map_flat_values(self.metadata_model, metadata)
         scale = metadata
         image = [iobs, sigiobs, metadata]
 
