@@ -5,6 +5,31 @@ def main():
     parser = parser.parse_args()
     run_abismal(parser)
 
+
+_file_endings = {
+    'refl' : ('.refl', '.pickle'),
+    'expt' : ('.expt', '.json'),
+    'stream' : ('.stream',),
+}
+
+def _is_file_type(s, endings):
+    for ending in endings:
+        if s.endswith(ending):
+            return True
+    return False
+
+def _is_stream_file(s):
+    return _is_file_type(s, _file_endings['stream'])
+
+def _is_refl_file(s):
+    return _is_file_type(s, _file_endings['refl'])
+
+def _is_expt_file(s):
+    return _is_file_type(s, _file_endings['expt'])
+
+def _is_dials_file(s):
+    return _is_refl_file(s) or _is_expt_file(s)
+
 def run_abismal(parser):
     from abismal.symmetry import ReciprocalASU,ReciprocalASUCollection
     from abismal.merging import VariationalMergingModel
@@ -19,9 +44,10 @@ def run_abismal(parser):
 
     set_gpu(parser.gpu_id)
     cell = parser.cell
-    if all([f.endswith('.stream') for f in parser.inputs]):
+    space_group = parser.space_group
+    if all([_is_stream_file(f) for f in parser.inputs]):
         from abismal.io import StreamLoader
-        result = None
+        data = None
         cell = parser.cell
         for stream_file in parser.inputs:
             loader = StreamLoader(
@@ -33,26 +59,37 @@ def run_abismal(parser):
             )
             if cell is None:
                 cell = loader.cell
-            data = loader.get_dataset()
-            if result is None:
-                result = data
+            _data = loader.get_dataset()
+            if data is None:
+                data = _data
             else:
-                result = result.concatenate(data)
-    elif all([f[-4:] in ('.expt', '.refl', '.json', '.pickle') for f in parser.inputs]):
+                data = data.concatenate(_data)
+    elif all([_is_dials_file(f) for f in parser.inputs]):
         from abismal.io import StillsLoader
-        expt_files = [i for i in parser.inputs if i in ('.expt', '.json')]
-        refl_files = [i for i in parser.inputs if i in ('.refl', '.pickle')]
-        loader = StillsLoader(parser)
-        result = loader.get_dataset()
+        expt_files = [f for f in parser.inputs if _is_expt_file(f)]
+        refl_files = [f for f in parser.inputs if _is_refl_file(f)]
+        loader = StillsLoader(
+            expt_files, refl_files, space_group, cell, parser.dmin, asu_id=0
+        )
+        if cell is None:
+            cell = loader.cell
+        data = loader.get_dataset()
     else:
         raise ValueError(
             "Couldn't determine input file type. "
             "DIALS reflection tables and CrystFEL streams are supported."
         )
+    if space_group is None:
+        if hasattr(loader, 'spacegroup'):
+            space_group = loader.spacegroup
+        else:
+            space_group = 'P1'
 
     # Gemmification
-    cell = gemmi.UnitCell(*cell)
-    space_group = gemmi.SpaceGroup(parser.space_group)
+    if not isinstance(cell, gemmi.UnitCell):
+        cell = gemmi.UnitCell(*cell)
+    if not isinstance(space_group, gemmi.SpaceGroup):
+        space_group = gemmi.SpaceGroup(space_group)
 
     # Handle setting up the test fraction, shuffle buffer, batching, etc
     if parser.test_fraction > 0.:

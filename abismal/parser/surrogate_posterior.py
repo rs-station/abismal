@@ -38,7 +38,7 @@ args_and_kwargs = (
         ),{
             "help": "Use the specified space group instead of P1.",
             "type": str,
-            "required" : "P1",
+            "default" : None,
         }
     ),
 
