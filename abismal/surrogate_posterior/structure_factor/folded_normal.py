@@ -11,7 +11,7 @@ from abismal.surrogate_posterior.structure_factor.wilson import WilsonPrior
 
 
 class FoldedNormalPosterior(StructureFactorPosteriorBase):
-    def __init__(self, rac, prior=None, scale_factor=1e-1, epsilon=1e-12, kl_weight=1., **kwargs):
+    def __init__(self, rac, prior=None, scale_factor=1e-2, epsilon=1e-12, kl_weight=1., **kwargs):
         super().__init__(rac, epsilon=epsilon, kl_weight=kl_weight, **kwargs)
         if prior is None:
             self._flat_prior = WilsonPrior(
