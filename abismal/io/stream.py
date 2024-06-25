@@ -15,7 +15,7 @@ from multiprocessing import cpu_count,Pool
 class StreamLoader(rs.io.crystfel.StreamLoader):
     @cellify
     @spacegroupify
-    def __init__(self, stream_file, cell=None, dmin=None, asu_id=0, min_refls=0, wavelength=None, encoding='utf-8'):
+    def __init__(self, stream_file, cell=None, dmin=None, asu_id=0, wavelength=None, encoding='utf-8'):
         """
         Parameters
         ----------
@@ -30,8 +30,6 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
         asu_id : int (optional)
             asu_id will be passed to the downstream model and is used to control which reflections 
             are merged together. 
-        min_refls : int (optional)
-            Discard images with fewer than min_refls reflections
         wavelength : float (optional)
             Optionally override the wavelengths recorded for each event in the stream file. 
         encoding : str (optional)
@@ -40,7 +38,6 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
         super().__init__(stream_file, encoding)
 
         self.signature = None
-        self.min_refls = min_refls
         self.cell = self._get_unit_cell(cell)
         self.asu_id = asu_id
         self.wavelength = wavelength
