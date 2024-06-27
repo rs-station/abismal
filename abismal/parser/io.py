@@ -16,6 +16,16 @@ args_and_kwargs=(
 
     (
         (
+            "--num-cpus",
+        ),{
+        "help": "Number of CPUs to use for parsing CrystFEL .stream files with default 1.",
+        "default": 1,
+        "type": int,
+        }
+    ),
+
+    (
+        (
             "inputs",
         ),{
             "nargs": '+',
