@@ -60,11 +60,12 @@ def run_abismal(parser):
                 dmin=parser.dmin, 
                 asu_id=asu_id, 
                 wavelength=parser.wavelength,
-                num_cpus=parser.num_cpus,
             )
             if cell is None:
                 cell = loader.cell
-            _data = loader.get_dataset()
+            _data = loader.get_dataset(
+                num_cpus=parser.num_cpus,
+            )
             if data is None:
                 data = _data
             else:
