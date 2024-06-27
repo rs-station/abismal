@@ -81,7 +81,7 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
         data = super()._parse_chunk(*args, **kwargs)
         return [self._convert_to_tf(pl, data['wavelength']) for pl in data['peak_lists']]
 
-    def get_dataset(self, peak_list_columns=None):
+    def get_dataset(self, peak_list_columns=None, **ray_kwargs):
         """
         Convert CrystFEL .stream files to a tf.data.Dataset.
         """
@@ -97,6 +97,7 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
         chunks = self.parallel_read_crystfel(
             wavelength=self.wavelength,
             peak_list_columns=peak_list_columns,
+            **ray_kwargs,
         )
 
         def data_gen():

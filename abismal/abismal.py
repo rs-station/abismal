@@ -50,6 +50,7 @@ def run_abismal(parser):
         from abismal.io import StreamLoader
         data = None
         cell = parser.cell
+
         for stream_file in parser.inputs:
             if parser.separate:
                 asu_id += 1
@@ -59,6 +60,7 @@ def run_abismal(parser):
                 dmin=parser.dmin, 
                 asu_id=asu_id, 
                 wavelength=parser.wavelength,
+                num_cpus=parser.num_cpus,
             )
             if cell is None:
                 cell = loader.cell
@@ -67,6 +69,7 @@ def run_abismal(parser):
                 data = _data
             else:
                 data = data.concatenate(_data)
+
     elif all([_is_dials_file(f) for f in parser.inputs]):
         from abismal.io import StillsLoader
         expt_files = [f for f in parser.inputs if _is_expt_file(f)]
