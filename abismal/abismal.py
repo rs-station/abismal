@@ -45,16 +45,19 @@ def run_abismal(parser):
     set_gpu(parser.gpu_id)
     cell = parser.cell
     space_group = parser.space_group
+    asu_id = 0
     if all([_is_stream_file(f) for f in parser.inputs]):
         from abismal.io import StreamLoader
         data = None
         cell = parser.cell
         for stream_file in parser.inputs:
+            if parser.separate:
+                asu_id += 1
             loader = StreamLoader(
                 stream_file, 
                 cell=cell, 
                 dmin=parser.dmin, 
-                asu_id=0, 
+                asu_id=asu_id, 
                 wavelength=parser.wavelength,
             )
             if cell is None:
@@ -68,12 +71,24 @@ def run_abismal(parser):
         from abismal.io import StillsLoader
         expt_files = [f for f in parser.inputs if _is_expt_file(f)]
         refl_files = [f for f in parser.inputs if _is_refl_file(f)]
-        loader = StillsLoader(
-            expt_files, refl_files, space_group, cell, parser.dmin, asu_id=0
-        )
+
+        data = None
+        if parser.separate:
+            for expt,refl in zip(expt_files, refl_files):
+                asu_id += 1
+                loader = StillsLoader([expt], [refl], space_group, cell, parser.dmin, asu_id)
+                _data = loader.get_dataset()
+                if data is None:
+                    data = _data
+                else:
+                    data = data.concatenate(_data)
+        else:
+            loader = StillsLoader(
+                expt_files, refl_files, space_group, cell, parser.dmin, asu_id=asu_id
+            )
+            data = loader.get_dataset()
         if cell is None:
             cell = loader.cell
-        data = loader.get_dataset()
     else:
         raise ValueError(
             "Couldn't determine input file type. "
@@ -100,13 +115,15 @@ def run_abismal(parser):
         train = train.shuffle(parser.shuffle_buffer_size)
     train = train.ragged_batch(parser.batch_size)
 
-    rasu = ReciprocalASU(
-        cell,
-        space_group,
-        parser.dmin,
-        anomalous=parser.anomalous,
-    )
-    rac = ReciprocalASUCollection(rasu)
+    rasu = []
+    for i in range(asu_id + 1):
+        rasu.append(ReciprocalASU(
+            cell,
+            space_group,
+            parser.dmin,
+            anomalous=parser.anomalous,
+        ))
+    rac = ReciprocalASUCollection(*rasu)
 
     reindexing_ops = ['x,y,z']
     if not parser.disable_index_disambiguation:

@@ -32,4 +32,13 @@ args_and_kwargs=(
             "help": 'Override the wavelengths inferred from the inputs.',
         }
     ),
+
+    (
+        (
+            "--separate",
+        ),{
+        "help": "Merge the contents of each input file into a separate output file. ",
+        "action": "store_true",
+        }
+    ),
 )

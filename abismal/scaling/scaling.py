@@ -100,8 +100,9 @@ class ImageScaler(tfk.layers.Layer):
                     ) for i in range(mlp_depth)
             ]) 
 
-        if self.scale_prior is None:
+        if self.scale_prior is None and kl_weight > 0.:
             self.scale_prior = tfd.Exponential(1.)
+
         if scale_posterior is None:
             self.scale_posterior = FoldedNormalLayer(
                 kernel_initializer=kernel_initializer,
