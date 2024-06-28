@@ -195,6 +195,8 @@ def run_abismal(parser):
     ]
 
     for i,eff_file in enumerate(parser.eff_files.split(',')):
+        if eff_file is None:
+            break
         pfx = f"eff_{i}"
         if parser.anomalous:
             f = AnomalousPeakFinder(
