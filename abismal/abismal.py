@@ -194,21 +194,20 @@ def run_abismal(parser):
         weight_saver,
     ]
 
-    for i,eff_file in enumerate(parser.eff_files.split(',')):
-        if eff_file is None:
-            break
-        pfx = f"eff_{i}"
-        if parser.anomalous:
-            f = AnomalousPeakFinder(
-                parser.out_dir, eff_file, epoch_stride=parser.phenix_frequency, 
-                asu_id=0, output_prefix=pfx
-            )
-        else:
-            f = PhenixRunner(
-                parser.out_dir, eff_file, epoch_stride=parser.phenix_frequency, 
-                asu_id=0, output_prefix=pfx
-            )
-        callbacks.append(f)
+    if parser.eff_files is not None:
+        for i,eff_file in enumerate(parser.eff_files.split(',')):
+            pfx = f"eff_{i}"
+            if parser.anomalous:
+                f = AnomalousPeakFinder(
+                    parser.out_dir, eff_file, epoch_stride=parser.phenix_frequency, 
+                    asu_id=0, output_prefix=pfx
+                )
+            else:
+                f = PhenixRunner(
+                    parser.out_dir, eff_file, epoch_stride=parser.phenix_frequency, 
+                    asu_id=0, output_prefix=pfx
+                )
+            callbacks.append(f)
 
 
     train,test = train.prefetch(AUTOTUNE),test.prefetch(AUTOTUNE)
