@@ -111,9 +111,13 @@ def run_abismal(parser):
         space_group = gemmi.SpaceGroup(space_group)
 
     # Handle setting up the test fraction, shuffle buffer, batching, etc
+    test = None
     if parser.test_fraction > 0.:
-        train,test = train,test = split_dataset_train_test(data, parser.test_fraction)
+        train,test = split_dataset_train_test(data, parser.test_fraction)
         test  = test.cache().repeat().ragged_batch(parser.batch_size)
+        test = test.prefetch(AUTOTUNE)
+    else:
+        train = data
     train = train.cache().repeat()
     if parser.shuffle_buffer_size > 0:
         train = train.shuffle(parser.shuffle_buffer_size)
@@ -184,7 +188,7 @@ def run_abismal(parser):
 
     
     mtz_saver = MtzSaver(parser.out_dir, parser.anomalous)
-    history_saver = HistorySaver(parser.out_dir)
+    history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id)
     weight_saver  = ModelCheckpoint(
         filepath=f'{parser.out_dir}/abismal.weights.h5', save_weights_only=True, verbose=1)
 
@@ -209,8 +213,8 @@ def run_abismal(parser):
                 )
             callbacks.append(f)
 
+    train = train.prefetch(AUTOTUNE)
 
-    train,test = train.prefetch(AUTOTUNE),test.prefetch(AUTOTUNE)
     model.compile(opt, run_eagerly=parser.run_eagerly)
     history = model.fit(
         x=train, 
