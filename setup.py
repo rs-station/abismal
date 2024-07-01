@@ -1,5 +1,10 @@
 from setuptools import setup, find_packages
 
+# Get version number
+def getVersionNumber():
+    with open("abismal/VERSION", "r") as vfile:
+        version = vfile.read().strip()
+    return version
 
 PROJECT_URLS = {
     "Bug Tracker": "https://github.com/rs-station/abismal/issues",
