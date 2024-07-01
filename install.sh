@@ -56,5 +56,5 @@ pip install git+https://github.com/rs-station/reciprocalspaceship@parstream
 pip install ray
 
 # Install abismal
-pip install git+https://github.com/rs-station/abismal
+pip install abismal
 
