@@ -5,9 +5,16 @@ on:
     types: [published]
 
 jobs:
-  deploy:
+  pypi-publish:
+    name: Upload release to PyPI
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/abismal
+    permissions:
+      id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
     steps:
+    # retrieve your distributions here
     - uses: actions/checkout@v4
     - name: Install Python
       uses: actions/setup-python@v5
@@ -20,5 +27,5 @@ jobs:
     - name: Build package
       run: |
         python setup.py sdist bdist_wheel
-    - name: Publish package to PyPI
+    - name: Publish package distributions to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
