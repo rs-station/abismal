@@ -37,6 +37,7 @@ def run_abismal(parser):
     from abismal.io import split_dataset_train_test,set_gpu
     from abismal.scaling import ImageScaler
     from abismal.surrogate_posterior.structure_factor import FoldedNormalPosterior
+    from abismal.surrogate_posterior.intensity import GammaPosterior
     from tf_keras.optimizers import Adam
     from tf_keras.callbacks import ModelCheckpoint
     import gemmi
@@ -143,12 +144,20 @@ def run_abismal(parser):
         )
         reindexing_ops = reindexing_ops + [op.triplet() for op in ops] 
 
-    surrogate_posterior = FoldedNormalPosterior(
-        rac, 
-        kl_weight=parser.kl_weight,
-        epsilon=parser.epsilon,
-        scale_factor=parser.init_scale,
-    )
+    if parser.intensity_posterior:
+        surrogate_posterior = GammaPosterior(
+            rac, 
+            kl_weight=parser.kl_weight,
+            epsilon=parser.epsilon,
+            scale_factor=parser.init_scale,
+        )
+    else:
+        surrogate_posterior = FoldedNormalPosterior(
+            rac, 
+            kl_weight=parser.kl_weight,
+            epsilon=parser.epsilon,
+            scale_factor=parser.init_scale,
+        )
 
     scale_model = ImageScaler(
         mlp_width=parser.d_model, 

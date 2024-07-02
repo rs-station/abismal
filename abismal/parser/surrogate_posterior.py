@@ -23,6 +23,16 @@ args_and_kwargs = (
 
     (
         (
+            "--intensity-posterior",
+        ),{
+            "help": "Use a gamma-distributed posterior over intensities instead of the"
+                    "default FoldedNormal over structure factors.",
+            "action": 'store_true',
+        }
+    ),
+
+    (
+        (
             "--cell",
         ),{
             "help": "Use the specified unit cell.",
