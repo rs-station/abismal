@@ -16,8 +16,8 @@ args_and_kwargs = (
         (
             "--scale-kl-weight",
         ),{
-            "help": "The strength of the scale prior distribution with default 1.0.",
-            "default": 1.0,
+            "help": "The strength of the scale prior distribution with default 0.0.",
+            "default": 0.0,
             "type": float,
         }
     ),
