@@ -24,7 +24,11 @@ class FoldedNormalPosterior(StructureFactorPosteriorBase):
         self.low = self.epsilon * tf.cast(~self.rac.centric, dtype='float32')
         p = self.flat_prior()
         loc_init = p.mean()
-        self.loc = tf.Variable(loc_init)
+        self.loc = tfu.TransformedVariable(
+            loc_init,
+            tfb.Exp(),
+        )
+
         self.scale = tfu.TransformedVariable(
             scale_factor * loc_init,
             tfb.Chain([

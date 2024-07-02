@@ -67,7 +67,7 @@ class PosteriorBase(tfk.models.Model):
         if training:
             q,p = self.flat_distribution(), self.flat_prior()
             try:
-                q.kl_divergence(p)
+                kl_div = q.kl_divergence(p)
             except NotImplementedError:
                 kl_div = q.log_prob(samples) - p.log_prob(samples)
             kl_div = tf.reduce_mean(kl_div)
