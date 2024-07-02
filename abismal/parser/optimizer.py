@@ -16,6 +16,16 @@ args_and_kwargs=(
 
     (
         (
+            "--learning-rate-final",
+        ),{
+            "help": "Optionally anneal the learning rate to this value throughout training.",
+            "default": None,
+            "type": float
+        }
+    ),
+
+    (
+        (
             "--beta-1",
         ),{
             "help": "First moment momentum parameter for Adam with default 0.9.",

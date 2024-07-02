@@ -184,6 +184,16 @@ def run_abismal(parser):
         reindexing_ops=reindexing_ops,
     )
 
+    if parser.learning_rate_final is not None:
+        from tf_keras.optimizers.schedules import PolynomialDecay
+        learning_rate = PolynomialDecay(
+            parser.learning_rate,
+            parser.epochs * parser.steps_per_epoch,
+            end_learning_rate=parser.learning_rate_final,
+        )
+    else:
+        learning_rate = parser.learning_rate
+
     opt = Adam(
         parser.learning_rate, 
         parser.beta_1, 

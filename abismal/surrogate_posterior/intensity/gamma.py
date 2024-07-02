@@ -53,26 +53,27 @@ class GammaPosterior(IntensityPosteriorBase):
     def flat_distribution(self):
         return tfd.Gamma(self.concentration, self.rate)
 
-    def get_flat_fsigf(q, eps=1e-6):
-        """
-        Compute the mean and standard deviation of the square root of a gamma distribution.
-        """
-        alpha = q.concentration
-        beta  = q.rate
-        omega = alpha / beta
-
-        log_mean_sqrt_beta = tf.math.lgamma(alpha + 0.5) - tf.math.lgamma(alpha) #log(mean * beta**0.5)
-        mean = tf.math.exp(log_mean_sqrt_beta) / tf.sqrt(beta)
-
-        num = alpha - tf.math.exp(2.* log_mean_sqrt_beta)
-        var = tf.where(
-            alpha > 1e4,
-            0.25/beta, #The limit is 0.25 for num
-            num/beta,
-        )
-
-        std = tf.math.sqrt(var)
-        return mean,std
+# This is experimental still. 
+#    def get_flat_fsigf(q, eps=1e-6):
+#        """
+#        Compute the mean and standard deviation of the square root of a gamma distribution.
+#        """
+#        alpha = q.concentration
+#        beta  = q.rate
+#        omega = alpha / beta
+#
+#        log_mean_sqrt_beta = tf.math.lgamma(alpha + 0.5) - tf.math.lgamma(alpha) #log(mean * beta**0.5)
+#        mean = tf.math.exp(log_mean_sqrt_beta) / tf.sqrt(beta)
+#
+#        num = alpha - tf.math.exp(2.* log_mean_sqrt_beta)
+#        var = tf.where(
+#            alpha > 1e4,
+#            0.25/beta, #The limit is 0.25 for num
+#            num/beta,
+#        )
+#
+#        std = tf.math.sqrt(var)
+#        return mean,std
 
 
 

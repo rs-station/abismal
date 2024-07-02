@@ -76,22 +76,22 @@ class LocationScale(tfk.layers.Layer):
         resid = ipred - iobs
         r2 = tf.square(resid)
 
-        mse = tf.reduce_mean(r2)
-        self.add_metric(mse, name='MSE')
+        #mse = tf.reduce_mean(r2)
+        #self.add_metric(mse, name='MSE')
 
-        mae = tf.reduce_mean(tf.abs(resid))
-        self.add_metric(mse, name='MAE')
+        #mae = tf.reduce_mean(tf.abs(resid))
+        #self.add_metric(mse, name='MAE')
 
-        wmse = tf.reduce_sum(w * r2) / tf.reduce_sum(w * tf.ones_like(r2))
-        self.add_metric(wmse, name='WMSE')
+        #wmse = tf.reduce_sum(w * r2) / tf.reduce_sum(w * tf.ones_like(r2))
+        #self.add_metric(wmse, name='WMSE')
 
-        z = tf.abs(resid / sigiobs) 
-        z1 = tf.reduce_mean(tf.where(z > 1., 0., 1.))
-        z2 = tf.reduce_mean(tf.where(z > 2., 0., 1.))
-        z3 = tf.reduce_mean(tf.where(z > 3., 0., 1.))
-        self.add_metric(z1, name='Z1_Frac')
-        self.add_metric(z2, name='Z2_Frac')
-        self.add_metric(z3, name='Z3_Frac')
+        #z = tf.abs(resid / sigiobs) 
+        #z1 = tf.reduce_mean(tf.where(z > 1., 0., 1.))
+        #z2 = tf.reduce_mean(tf.where(z > 2., 0., 1.))
+        #z3 = tf.reduce_mean(tf.where(z > 3., 0., 1.))
+        #self.add_metric(z1, name='Z1_Frac')
+        #self.add_metric(z2, name='Z2_Frac')
+        #self.add_metric(z3, name='Z3_Frac')
 
     def call(self, ipred, iobs, sigiobs):
         likelihood = self._likelihood(iobs, sigiobs)
