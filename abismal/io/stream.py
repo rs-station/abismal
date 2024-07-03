@@ -46,8 +46,11 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
     def _get_unit_cell(self, cell=None):
         if cell is None:
             cell = self.extract_target_unit_cell()
+            
         if cell is None:
             cell = self.calculate_average_unit_cell()
+        if not isinstance(cell, gemmi.UnitCell):
+            cell = gemmi.UnitCell(*cell)
         return cell
 
     def _convert_to_tf(self, peak_list, wavelength):
