@@ -31,6 +31,7 @@ def _is_dials_file(s):
     return _is_refl_file(s) or _is_expt_file(s)
 
 def run_abismal(parser):
+    from abismal import __version__ as version
     from abismal.symmetry import ReciprocalASU,ReciprocalASUCollection
     from abismal.merging import VariationalMergingModel
     from abismal.callbacks import HistorySaver,MtzSaver,PhenixRunner,AnomalousPeakFinder
@@ -42,6 +43,17 @@ def run_abismal(parser):
     from tf_keras.callbacks import ModelCheckpoint
     import gemmi
     from tensorflow.data import AUTOTUNE
+    import logging
+    from os.path import exists
+    from os import mkdir
+
+    if not exists(parser.out_dir):
+        mkdir(parser.out_dir)
+
+    log_file = parser.out_dir + "/abismal.log"
+    logger = logging.getLogger(__name__)
+    logging.basicConfig(filename=log_file, level=logging.DEBUG)
+    logger.info(f"Starting abismal, version {version}")
 
     set_gpu(parser.gpu_id)
     cell = parser.cell
@@ -53,8 +65,6 @@ def run_abismal(parser):
         cell = parser.cell
 
         for stream_file in parser.inputs:
-            if parser.separate:
-                asu_id += 1
             loader = StreamLoader(
                 stream_file, 
                 cell=cell, 
@@ -62,6 +72,8 @@ def run_abismal(parser):
                 asu_id=asu_id, 
                 wavelength=parser.wavelength,
             )
+            if parser.separate:
+                asu_id += 1
             if cell is None:
                 cell = loader.cell
             _data = loader.get_dataset(
@@ -80,8 +92,8 @@ def run_abismal(parser):
         data = None
         if parser.separate:
             for expt,refl in zip(expt_files, refl_files):
-                asu_id += 1
                 loader = StillsLoader([expt], [refl], space_group, cell, parser.dmin, asu_id)
+                asu_id += 1
                 _data = loader.get_dataset()
                 if data is None:
                     data = _data
@@ -92,6 +104,7 @@ def run_abismal(parser):
                 expt_files, refl_files, space_group, cell, parser.dmin, asu_id=asu_id
             )
             data = loader.get_dataset()
+            asu_id += 1
         if cell is None:
             cell = loader.cell
     else:
@@ -125,7 +138,7 @@ def run_abismal(parser):
     train = train.ragged_batch(parser.batch_size)
 
     rasu = []
-    for i in range(asu_id + 1):
+    for i in range(asu_id):
         rasu.append(ReciprocalASU(
             cell,
             space_group,
