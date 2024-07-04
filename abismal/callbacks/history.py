@@ -6,6 +6,7 @@ from os.path import exists,dirname,abspath
 from os import mkdir
 from time import time
 from subprocess import run
+from shutil import which
 
 
 
@@ -44,27 +45,29 @@ class HistorySaver(tfk.callbacks.Callback):
 
     def get_gpu_memory_usage(self):
         usage = {}
-        try:
-            nvidia_smi_cmd = f"nvidia-smi -q -i {self.gpu_id} -d MEMORY"
-            result = run(nvidia_smi_cmd.split(), capture_output=True)
-            txt = result.stdout.decode()
 
-            bank = None
-            for line in txt.split('\n'):
-                if 'Memory Usage'  in line:
-                    bank = ' '.join(line.split()[0:-2])
-                    continue
-                if bank is None:
-                    continue
-                if line=='':
-                    continue
-                stat = line.split()[0]
-                unit = line.split()[-1]
-                k = f'{bank} {stat} ({unit})'
-                v = int(line.split()[-2])
-                usage[k] = v
-        except:
-            pass
+        smi_path = which('nvidia-smi')
+        if smi_path is None:
+            return usage
+
+        nvidia_smi_cmd = f"nvidia-smi -q -i {self.gpu_id} -d MEMORY"
+        result = run(nvidia_smi_cmd.split(), capture_output=True)
+        txt = result.stdout.decode()
+
+        bank = None
+        for line in txt.split('\n'):
+            if 'Memory Usage'  in line:
+                bank = ' '.join(line.split()[0:-2])
+                continue
+            if bank is None:
+                continue
+            if line=='':
+                continue
+            stat = line.split()[0]
+            unit = line.split()[-1]
+            k = f'{bank} {stat} ({unit})'
+            v = int(line.split()[-2])
+            usage[k] = v
 
         return usage
 
