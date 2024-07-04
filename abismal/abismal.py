@@ -6,6 +6,7 @@ def main():
     run_abismal(parser)
 
 
+# TODO: refactor this filetype control flow into abismal.io
 _file_endings = {
     'refl' : ('.refl', '.pickle'),
     'expt' : ('.expt', '.json'),
@@ -165,11 +166,21 @@ def run_abismal(parser):
             scale_factor=parser.init_scale,
         )
     else:
+        prior = None
+        if parser.parents is not None:
+            from abismal.surrogate_posterior.structure_factor.wilson import MultiWilsonPrior
+            prior = MultiWilsonPrior(
+                rac, 
+                parser.parents, 
+                parser.prior_correlation, 
+                parser.reindexing_ops,
+            )
         surrogate_posterior = FoldedNormalPosterior(
             rac, 
             kl_weight=parser.kl_weight,
             epsilon=parser.epsilon,
             scale_factor=parser.init_scale,
+            prior=prior
         )
 
     scale_model = ImageScaler(

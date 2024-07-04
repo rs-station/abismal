@@ -121,7 +121,12 @@ class MultiWilsonPrior(tfk.layers.Layer):
         parent_ids = []
         for asu_id, rasu in enumerate(rac):
             pa = parents[asu_id]
-            r = correlations[asu_id]
+            if pa == asu_id or pa < 0:
+                pa = None
+            if pa is None:
+                r = 0.
+            else:
+                r = correlations[asu_id]
             op = 'x,y,z'
             if reindexing_ops is not None:
                 op = reindexing_ops[asu_id]
