@@ -60,7 +60,9 @@ def run_abismal(parser):
     logging.basicConfig(filename=log_file, level=logging.DEBUG)
     logger.info(f"Starting abismal, version {version}")
     logger.info("Running with the following options... ")
-    logger.info(str(parser))
+    for k,v in vars(parser).items():
+        logger.info(f"{k} : {v}")
+    logger.info(str(vars(parser)))
 
     cell = parser.cell
     space_group = parser.space_group
