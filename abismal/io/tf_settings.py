@@ -1,11 +1,13 @@
-import tensorflow as tf
+def set_log_level(level):
+    from os import environ
+    environ['TF_CPP_MIN_LOG_LEVEL'] =  str(int(level))
 
 # Handle GPU selection
 def set_gpu(gpu_id):
+    import tensorflow as tf
     gpus = tf.config.experimental.list_physical_devices('GPU')
     for g in gpus:
         tf.config.experimental.set_memory_growth(g, True)
-    print(gpus)
     if gpus:
         try:
             if gpu_id is None:

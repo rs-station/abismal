@@ -8,6 +8,7 @@ import abismal.parser.likelihood as likelihood
 import abismal.parser.optimizer as optimizer
 import abismal.parser.phenix as phenix
 import abismal.parser.priors as priors
+import abismal.parser.ray as ray
 import abismal.parser.surrogate_posterior as surrogate_posterior
 import abismal.parser.tf as tf
 import abismal.parser.training as training
@@ -19,6 +20,7 @@ groups = [
     optimizer,
     phenix,
     priors,
+    ray,
     surrogate_posterior,
     tf,
     training,

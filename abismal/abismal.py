@@ -3,6 +3,10 @@
 def main():
     from abismal.parser import parser
     parser = parser.parse_args()
+
+    from abismal.io.tf_settings import set_log_level, set_gpu
+    set_log_level(parser.tf_log_level)
+    set_gpu(parser.gpu_id)
     run_abismal(parser)
 
 
@@ -55,8 +59,9 @@ def run_abismal(parser):
     logger = logging.getLogger(__name__)
     logging.basicConfig(filename=log_file, level=logging.DEBUG)
     logger.info(f"Starting abismal, version {version}")
+    logger.info("Running with the following options... ")
+    logger.info(str(parser))
 
-    set_gpu(parser.gpu_id)
     cell = parser.cell
     space_group = parser.space_group
     asu_id = 0
@@ -79,6 +84,7 @@ def run_abismal(parser):
                 cell = loader.cell
             _data = loader.get_dataset(
                 num_cpus=parser.num_cpus,
+                logging_level=parser.ray_log_level,
             )
             if data is None:
                 data = _data

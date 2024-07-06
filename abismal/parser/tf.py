@@ -14,6 +14,16 @@ args_and_kwargs = (
 
     (
         (
+            "--tf-log-level",
+        ),{
+            "help": "The tf log level is an int with default 3.",
+            "default": 3,
+            "type": int,
+        }
+    ),
+
+    (
+        (
             "--run-eagerly",
         ),{
             "help": "Run in eager mode.",
