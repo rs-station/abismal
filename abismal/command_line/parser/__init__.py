@@ -2,16 +2,16 @@
 ABISMAL - merge serial diffraction data using neural networks and variational inference.
 """
 
-import abismal.parser.io as io
-import abismal.parser.architecture as architecture
-import abismal.parser.likelihood as likelihood
-import abismal.parser.optimizer as optimizer
-import abismal.parser.phenix as phenix
-import abismal.parser.priors as priors
-import abismal.parser.ray as ray
-import abismal.parser.surrogate_posterior as surrogate_posterior
-import abismal.parser.tf as tf
-import abismal.parser.training as training
+import abismal.command_line.parser.io as io
+import abismal.command_line.parser.architecture as architecture
+import abismal.command_line.parser.likelihood as likelihood
+import abismal.command_line.parser.optimizer as optimizer
+import abismal.command_line.parser.phenix as phenix
+import abismal.command_line.parser.priors as priors
+import abismal.command_line.parser.ray as ray
+import abismal.command_line.parser.surrogate_posterior as surrogate_posterior
+import abismal.command_line.parser.tf as tf
+import abismal.command_line.parser.training as training
 
 groups = [
     architecture,
