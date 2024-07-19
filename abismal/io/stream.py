@@ -4,10 +4,9 @@ import argparse
 import reciprocalspaceship as rs
 import pandas as pd
 import gemmi
-import tensorflow as tf
 from abismal.io.loader import DataLoader
 from reciprocalspaceship.decorators import spacegroupify,cellify
-from multiprocessing import cpu_count,Pool
+import torch
 
 
 

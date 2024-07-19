@@ -4,7 +4,8 @@ import argparse
 import reciprocalspaceship as rs
 import pandas as pd
 import gemmi
-import tensorflow as tf
+import torch
+from torch.utils.data import Dataset
 
 
 class DataLoader():

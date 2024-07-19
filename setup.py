@@ -20,7 +20,7 @@ setup(
     name='abismal',
     version='0.0.1',
     author='Kevin M. Dalton',
-    author_email='kevinmdalton@gmail.com',
+    author_email='kmdalton@slac.stanford.edu',
     license="MIT",
     include_package_data=True,
     packages=find_packages(),
@@ -32,16 +32,15 @@ setup(
     install_requires=[
         "reciprocalspaceship>=0.9.16",
         "tqdm",
-        "tensorflow",
-        "tf_keras",
-        "tensorflow-probability",
+        "torch",
+        "rs-distributions",
         "rs-booster",
     ],
     setup_requires=['pytest-runner'],
     tests_require=['pytest', 'pytest-cov', 'pytest-xdist'],
-    entry_points={
-        "console_scripts": [
-            "abismal=abismal.command_line.abismal:main",
-        ]
-    },
+    #entry_points={
+    #    "console_scripts": [
+    #        "abismal=abismal.command_line.abismal:main",
+    #    ]
+    #},
 )
