@@ -26,6 +26,16 @@ args_and_kwargs = (
 
     (
         (
+            "--prior-snr",
+        ),{
+            "help": "Put the prior on an empirical scale with this signal to noise.",
+            "default": None, 
+            "type": float,
+        }
+    ),
+
+    (
+        (
             "--parents",
         ),{
             "help": "Set parent asu for the Multi-Wilson prior. This is used with --separate flag." 

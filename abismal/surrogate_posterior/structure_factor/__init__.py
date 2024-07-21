@@ -1,1 +1,2 @@
 from .folded_normal import FoldedNormalPosterior
+from .empirical import EmpiricalFoldedNormalPosterior
