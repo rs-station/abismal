@@ -173,10 +173,11 @@ def run_abismal(parser):
             epsilon=parser.epsilon,
             scale_factor=parser.init_scale,
         )
-    elif parser.empirical:
+    elif parser.prior_snr is not None:
         from abismal.surrogate_posterior.structure_factor import EmpiricalFoldedNormalPosterior
         surrogate_posterior = EmpiricalFoldedNormalPosterior(
             rac,
+            snr=parser.prior_snr,
             kl_weight=parser.kl_weight,
             epsilon=parser.epsilon,
             scale_factor=parser.init_scale,
