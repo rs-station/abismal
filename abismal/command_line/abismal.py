@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 def main():
-    from abismal.parser import parser
+    from abismal.command_line.parser import parser
     parser = parser.parse_args()
 
     from abismal.io.tf_settings import set_log_level, set_gpu

@@ -1,7 +1,7 @@
 title = "Priors"
 description = "Arguments governing the prior distributions"
 
-from abismal.parser.custom_types import list_of_ints,list_of_ops,list_of_floats
+from abismal.command_line.parser.custom_types import list_of_ints,list_of_ops,list_of_floats
 
 args_and_kwargs = (
     (

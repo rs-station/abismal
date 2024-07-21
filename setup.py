@@ -41,7 +41,7 @@ setup(
     tests_require=['pytest', 'pytest-cov', 'pytest-xdist'],
     entry_points={
         "console_scripts": [
-            "abismal=abismal.abismal:main",
+            "abismal=abismal.command_line.abismal:main",
         ]
     },
 )

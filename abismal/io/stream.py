@@ -97,7 +97,7 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
                 'ewald_offset_x', 'ewald_offset_y', 'ewald_offset_z',
             ]
 
-        chunks = self.parallel_read_crystfel(
+        chunks = self.read_crystfel(
             wavelength=self.wavelength,
             peak_list_columns=peak_list_columns,
             **ray_kwargs,
