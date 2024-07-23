@@ -82,6 +82,8 @@ def run_abismal(parser):
             )
             if parser.separate:
                 asu_id += 1
+            else:
+                asu_id = 1
             if cell is None:
                 cell = loader.cell
             _data = loader.get_dataset(
