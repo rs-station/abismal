@@ -6,6 +6,8 @@ def getVersionNumber():
         version = vfile.read().strip()
     return version
 
+__version__ = getVersionNumber()
+
 PROJECT_URLS = {
     "Bug Tracker": "https://github.com/rs-station/abismal/issues",
     "Source Code": "https://github.com/rs-station/abismal",
@@ -18,7 +20,7 @@ Stochastic merging for diffraction data.
 
 setup(
     name='abismal',
-    version='0.0.1',
+    version=__version__,
     author='Kevin M. Dalton',
     author_email='kevinmdalton@gmail.com',
     license="MIT",
