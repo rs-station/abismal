@@ -113,6 +113,12 @@ class PosteriorBase(tfk.models.Model):
                 'F' : rs.DataSeries(F, dtype='F'),
                 'SIGF' : rs.DataSeries(SIGF, dtype='Q'),
             })
+
+            sqrt_mult = np.sqrt(self.rac.epsilon)
+            data.update({
+                'E' : rs.DataSeries(F / sqrt_mult, dtype='F'),
+                'SIGE' : rs.DataSeries(SIGF / sqrt_mult, dtype='Q'),
+            })
         except NotImplementedError:
             has_fsigf = False
 
@@ -143,6 +149,10 @@ class PosteriorBase(tfk.models.Model):
                         'SIGF(+)',
                         'F(-)',
                         'SIGF(-)',
+                        'E(+)',
+                        'SIGE(+)',
+                        'E(-)',
+                        'SIGE(-)',
                     ]
                 if has_isigi:
                     keys += [
