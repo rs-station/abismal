@@ -43,15 +43,16 @@ class GammaPosterior(IntensityPosteriorBase):
                 tfb.Exp(),
             ]),
         )
+        self.built=True
 
     def get_config(self):
-        config = {
+        config = super().get_config()
+        config.update({
             'rac' : self.rac,
-            'prior' : self._flat_prior,
             'scale_factor' : self._init_scale_factor,
             'epsilon' : self.epsilon,
             'kl_weight' : self.kl_weight,
-        }
+        })
         return config
 
     def flat_prior(self):

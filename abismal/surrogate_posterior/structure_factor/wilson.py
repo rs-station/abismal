@@ -18,7 +18,7 @@ def acentric_wilson(epsilon, sigma=1.):
 @tfk.saving.register_keras_serializable(package="abismal")
 class WilsonPrior(tfk.layers.Layer):
     """Wilson's priors on structure factor amplitudes."""
-    def __init__(self, rac, sigma=1.):
+    def __init__(self, rac, sigma=1., **kwargs):
         """
         Parameters
         ----------
@@ -30,7 +30,7 @@ class WilsonPrior(tfk.layers.Layer):
             The Σ value for the wilson distribution. The represents the average intensity stratified by a measure
             like resolution. 
         """
-        super().__init__()
+        super().__init__(**kwargs)
 
         self._rac = rac.get_config()
         self.epsilon = rac.epsilon
@@ -46,10 +46,11 @@ class WilsonPrior(tfk.layers.Layer):
         return ReciprocalASUCollection.from_config(self._rac)
 
     def get_config(self):
-        config = {
+        config = super().get_config()
+        config.update({
             'rac' : self.rac,
             'sigma' : self.sigma,
-        }
+        })
         return config
 
     def log_prob(self, x):
@@ -113,7 +114,7 @@ class MultiWilsonPrior(tfk.layers.Layer):
     ```
 
     """
-    def __init__(self, rac, parents, correlations, reindexing_ops=None, sigma=1.):
+    def __init__(self, rac, parents, correlations, reindexing_ops=None, sigma=1., **kwargs):
         """
         Parameters
         ----------
@@ -132,7 +133,7 @@ class MultiWilsonPrior(tfk.layers.Layer):
             If this is a tensor, it should have the combinded length of all
             the asus in the rac. 
         """
-        super().__init__()
+        super().__init__(**kwargs)
         self._rac = rac.get_config()
         self.centric = rac.centric
         self.epsilon = rac.epsilon
@@ -188,13 +189,14 @@ class MultiWilsonPrior(tfk.layers.Layer):
         return ReciprocalASUCollection.from_config(self._rac)
 
     def get_config(self):
-        config = {
+        config = super().get_config()
+        config.update({
             'rac' : self.rac,
             'parents' : self._parents,
             'correlations' : self._correlations,
             'reindexing_ops' : self._reindexing_ops,
             'sigma' : self.sigma,
-        }
+        })
         return config
 
 

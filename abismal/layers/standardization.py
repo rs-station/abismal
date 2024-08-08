@@ -6,8 +6,8 @@ from tensorflow_probability import stats as tfs
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class Standardize(tfk.layers.Layer):
-    def __init__(self, center=True, decay=0.999, epsilon=1e-6):
-        super().__init__()
+    def __init__(self, center=True, decay=0.999, epsilon=1e-6, **kwargs):
+        super().__init__(**kwargs)
         self.decay = decay
         self.center = center
         self.epsilon = epsilon
@@ -39,11 +39,12 @@ class Standardize(tfk.layers.Layer):
         )
 
     def get_config(self):
-        conf = {
+        conf = super().get_config()
+        conf.update({
             'center' : self.center,
             'decay' : self.decay,
             'epsilon' : self.epsilon,
-        }
+        })
         return conf
 
     @classmethod

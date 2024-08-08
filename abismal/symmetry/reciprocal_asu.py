@@ -9,8 +9,8 @@ import gemmi
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class ReciprocalASUCollection(tfk.layers.Layer):
-    def __init__(self, *reciprocal_asus):
-        super().__init__()
+    def __init__(self, *reciprocal_asus, **kwargs):
+        super().__init__(**kwargs)
         self.reciprocal_asus = reciprocal_asus
         asu_ids,dHKL,centric,epsilon = [],[],[],[]
         Hunique = []
@@ -42,13 +42,19 @@ class ReciprocalASUCollection(tfk.layers.Layer):
         self.built = True
 
     def get_config(self):
-        config = {f'rasu_{i}' : v.get_config() for i,v in enumerate(self.reciprocal_asus)}
+        config = super().get_config()
+        config.update(
+            {f'rasu_{i}' : v.get_config() for i,v in enumerate(self.reciprocal_asus)}
+        )
         return config
 
     @classmethod
     def from_config(cls, config):
-        rasus = [ReciprocalASU(**v) for v in config.values()]
-        return cls(*rasus)
+        rasus = []
+        keys = config.keys()
+        rasus = [ReciprocalASU(**v) for k,v in config.items() if k.startswith('rasu_')]
+        config = {k:v for k,v in config.items() if not k.startswith('rasu_')}
+        return cls(*rasus, **config)
 
     def _ensure_in_range(self, H):
         """ Cast any out of bounds indices to [0,0,0] """
@@ -107,7 +113,7 @@ class ReciprocalASUCollection(tfk.layers.Layer):
 class ReciprocalASU(tfk.layers.Layer):
     @cellify
     @spacegroupify
-    def __init__(self, cell, spacegroup, dmin, anomalous=True):
+    def __init__(self, cell, spacegroup, dmin, anomalous=True, **kwargs):
         """
         Base Layer that remaps observed miller indices to the reciprocal asu.
         This class enables indexing of per reflection variables from tf.
@@ -136,7 +142,7 @@ class ReciprocalASU(tfk.layers.Layer):
         anomalous : bool
             If true, treat Friedel mates as non-redudant
         """
-        super().__init__()
+        super().__init__(**kwargs)
         self.anomalous = anomalous
         self._cell = cell.parameters
         self._spacegroup = spacegroup.xhm()
@@ -169,17 +175,14 @@ class ReciprocalASU(tfk.layers.Layer):
         self.built = True #This object is not lazy
 
     def get_config(self):
-        config = {
+        config = super().get_config()
+        config.update({
             'cell' : self.cell.parameters,
             'spacegroup' : self.spacegroup.xhm(),
             'dmin' : self.dmin,
             'anomalous' : self.anomalous,
-        }
+        })
         return config
-
-#    @classmethod
-#    def from_config(cls, config):
-#        return cls(**config)
 
     @property
     def spacegroup(self):

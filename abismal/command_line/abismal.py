@@ -282,9 +282,6 @@ def run_abismal(parser):
         callbacks=callbacks, 
         validation_data=test
     )
-    from IPython import embed
-    embed(colors='linux')
-    XX
 
 if __name__=='__main__':
     main()

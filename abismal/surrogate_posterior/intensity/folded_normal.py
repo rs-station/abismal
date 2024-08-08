@@ -10,6 +10,7 @@ from abismal.surrogate_posterior import IntensityPosteriorBase
 from abismal.surrogate_posterior.intensity.wilson import WilsonPrior
 
 
+@tfk.saving.register_keras_serializable(package="abismal")
 class FoldedNormalPosterior(IntensityPosteriorBase):
     def __init__(self, rac, scale_factor=1e-1, epsilon=1e-12, kl_weight=1., **kwargs):
         super().__init__(rac, epsilon=epsilon, kl_weight=kl_weight, **kwargs)
@@ -24,6 +25,16 @@ class FoldedNormalPosterior(IntensityPosteriorBase):
                 tfb.Exp(),
             ]),
         )
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'rac' : self.rac,
+            'scale_factor' : self._init_scale_factor,
+            'epsilon' : self.epsilon,
+            'kl_weight' : self.kl_weight,
+        })
+        return config
 
     def flat_prior(self):
         prior = WilsonPrior(

@@ -15,8 +15,8 @@ from IPython import embed
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class VariationalMergingModel(tfk.models.Model):
-    def __init__(self, scale_model, surrogate_posterior, likelihood, mc_samples=1, epsilon=1e-6, reindexing_ops=None):
-        super().__init__()
+    def __init__(self, scale_model, surrogate_posterior, likelihood, mc_samples=1, epsilon=1e-6, reindexing_ops=None, **kwargs):
+        super().__init__(**kwargs)
         self.epsilon = epsilon
         self.likelihood = likelihood
         self.scale_model = scale_model
@@ -32,14 +32,15 @@ class VariationalMergingModel(tfk.models.Model):
         ops = self.reindexing_ops
         if ops is not None:
             ops = [op.gemmi_op.triplet() for op in self.reindexing_ops]
-        config = {
+        config = super().get_config()
+        config.update({
             'scale_model' : self.scale_model,
             'surrogate_posterior' : self.surrogate_posterior,
             'likelihood' : self.likelihood, 
             'mc_samples' : self.mc_samples,
             'epsilon' : self.epsilon,
             'reindexing_ops' : ops,
-        }
+        })
         return config
 
     @classmethod

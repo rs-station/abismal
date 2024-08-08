@@ -107,7 +107,8 @@ class ImageScaler(tfk.models.Model):
         self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
 
     def get_config(self):
-        config = {
+        config = super().get_config()
+        config.update({
             'mlp_width' : self.mlp_width,
             'mlp_depth' : self.mlp_depth, 
             'hidden_units': self.hidden_units,
@@ -117,7 +118,7 @@ class ImageScaler(tfk.models.Model):
             'num_image_samples' : self.num_image_samples,
             'share_weights' : self.share_weights,
             'seed' : self.seed,
-        }
+        })
         return config
 
     def distribution_function(self, output):
