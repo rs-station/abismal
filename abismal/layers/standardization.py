@@ -33,7 +33,7 @@ class Standardize(tfk.layers.Layer):
         self.count = self.add_weight(
             shape = (),
             initializer = 'zeros',
-            dtype=tf.int32,
+            dtype=tf.int64,
             trainable=False,
             name='zero_debias_count',
         )

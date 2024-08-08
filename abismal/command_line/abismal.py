@@ -272,7 +272,7 @@ def run_abismal(parser):
         model(x)
         break
 
-    model.compile(opt, run_eagerly=parser.run_eagerly)
+    model.compile(opt, run_eagerly=parser.run_eagerly, jit_compile=parser.jit_compile)
 
     history = model.fit(
         x=train, 

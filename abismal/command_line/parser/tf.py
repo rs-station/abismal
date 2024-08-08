@@ -30,4 +30,13 @@ args_and_kwargs = (
             "action" : "store_true",
         }
     ),
+
+    (
+        (
+            "--jit-compile",
+        ),{
+            "help": "Compile with jit.",
+            "action" : "store_true",
+        }
+    ),
 )

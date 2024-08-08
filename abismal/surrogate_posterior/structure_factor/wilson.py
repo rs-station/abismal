@@ -181,7 +181,7 @@ class MultiWilsonPrior(tfk.layers.Layer):
             tf.sqrt(0.5 * rac.epsilon * sigma * (1. - tf.square(self.r))),
         )
         self.has_parent = self.parent_ids >= 0
-        self.parent_ids = tf.where(self.has_parent, self.parent_ids, tf.range(rac.asu_size))
+        self.parent_ids = tf.where(self.has_parent, self.parent_ids, tf.range(rac.asu_size, dtype=tf.int32))
         self.built = True #This is always true
 
     @property

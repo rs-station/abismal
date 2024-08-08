@@ -25,8 +25,10 @@ class VariationalMergingModel(tfk.models.Model):
         if reindexing_ops is None:
             reindexing_ops = ["x,y,z"]
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
-        self.standardize_intensity = Standardize(center=False)
-        self.standardize_metadata = Standardize()
+        #self.standardize_intensity = Standardize(center=False)
+        #self.standardize_metadata = Standardize()
+        self.standardize_intensity = None
+        self.standardize_metadata = None
 
     def get_config(self):
         ops = self.reindexing_ops
@@ -80,7 +82,7 @@ class VariationalMergingModel(tfk.models.Model):
             ipred = tf.square(ipred)
 
         if training:
-            self.surrogate_posterior.register_seen(asu_id, hkl)
+            self.surrogate_posterior.register_seen(asu_id.flat_values, hkl.flat_values)
 
         ipred = tf.transpose(ipred)
         ipred_scaled = None
@@ -104,7 +106,10 @@ class VariationalMergingModel(tfk.models.Model):
             # Choose the best indexing solution for each image
             _hkl = tf.ragged.map_flat_values(op, hkl)
 
-            _ipred = self.surrogate_posterior.rac.gather(ipred, asu_id, _hkl)
+            _ipred = tf.ragged.map_flat_values(
+                self.surrogate_posterior.rac.gather,
+                ipred, asu_id, _hkl
+            )
             _ipred = _ipred * scale
 
             _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)

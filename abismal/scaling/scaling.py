@@ -136,14 +136,15 @@ class ImageScaler(tfk.models.Model):
         """
         Randomly subsample "length" entries from ragged with replacement.
         """
-        l = ragged.row_lengths()
+        l = tf.cast(ragged.row_lengths(), 'int32')
         n = tf.shape(ragged)[0]
-        r = tf.random.uniform((n, mc_samples))
-        idx2 = tf.round(r * tf.cast(l, 'float32')[:,None]- 0.5)
-        idx2 = tf.cast(idx2, 'int32')
-        idx1 = tf.range(n)[:,None] * tf.ones_like(idx2)
-        idx = tf.stack((idx1, idx2), axis=-1)
-        out = tf.gather_nd(ragged, idx)
+        maxval = tf.cumsum(l)
+        minval = maxval - l[0]
+        r = tf.random.uniform((n, mc_samples), minval=-0.5, maxval=tf.cast(l, 'float32')[:,None] - 0.5)
+        r = tf.round(r)
+        idx2 = tf.cast(r, 'int32')
+        flat_idx = (tf.cumsum(l) - l[0])[:,None] + tf.cast(r, 'int32')
+        out = tf.gather(ragged.flat_values, flat_idx)
         return out
 
     def call(self, inputs, mc_samples=32, training=None, **kwargs):
@@ -187,6 +188,7 @@ class ImageScaler(tfk.models.Model):
         kl_div = tf.reduce_mean(kl_div)
         self.add_loss(self.kl_weight * kl_div)
         self.add_metric(kl_div, name='KL_Σ')
-        z = tf.RaggedTensor.from_row_splits(tf.transpose(z), metadata.row_splits)
-
+        z = tf.RaggedTensor.from_row_splits(
+            tf.transpose(z), metadata.row_splits
+        )
         return z
