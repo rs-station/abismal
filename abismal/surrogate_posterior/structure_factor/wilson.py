@@ -6,7 +6,7 @@ from tensorflow_probability import distributions as tfd
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 import tf_keras as tfk
-from abismal.symmetry import Op
+from abismal.symmetry import Op,ReciprocalASUCollection
 
 
 def centric_wilson(epsilon, sigma=1.):
@@ -15,9 +15,10 @@ def centric_wilson(epsilon, sigma=1.):
 def acentric_wilson(epsilon, sigma=1.):
     return tfd.Weibull(2., tf.math.sqrt(epsilon * sigma))
 
+@tfk.saving.register_keras_serializable(package="abismal")
 class WilsonPrior(tfk.layers.Layer):
     """Wilson's priors on structure factor amplitudes."""
-    def __init__(self, centric, epsilon, sigma=1.):
+    def __init__(self, rac, sigma=1.):
         """
         Parameters
         ----------
@@ -30,12 +31,26 @@ class WilsonPrior(tfk.layers.Layer):
             like resolution. 
         """
         super().__init__()
-        self.epsilon = np.array(epsilon, dtype=np.float32)
-        self.centric = np.array(centric, dtype=bool)
+
+        self._rac = rac.get_config()
+        self.epsilon = rac.epsilon
+        self.centric = rac.centric
         self.sigma = np.array(sigma, dtype=np.float32)
 
         self.p_centric = centric_wilson(self.epsilon, self.sigma)
         self.p_acentric = acentric_wilson(self.epsilon, self.sigma)
+        self.built = True #This is always true
+
+    @property
+    def rac(self):
+        return ReciprocalASUCollection.from_config(self._rac)
+
+    def get_config(self):
+        config = {
+            'rac' : self.rac,
+            'sigma' : self.sigma,
+        }
+        return config
 
     def log_prob(self, x):
         """
@@ -68,6 +83,7 @@ class WilsonPrior(tfk.layers.Layer):
             self.p_acentric.sample(*args, **kwargs),
         )
 
+@tfk.saving.register_keras_serializable(package="abismal")
 class MultiWilsonPrior(tfk.layers.Layer):
     """
     This class uses reparameterized samples to approximate the log probability 
@@ -109,7 +125,7 @@ class MultiWilsonPrior(tfk.layers.Layer):
         correlations : list
             An iterable of prior correlation coefficients between asus. Use
             0.0 for root nodes. 
-        reindexing_opts : list (optional)
+        reindexing_ops : list (optional)
             Optionally provide a list of reindexing operator strings, one per asu. 
         sigma : float or tensor (optional)
             Optionally provide an average intensity value for the prior. 
@@ -117,7 +133,13 @@ class MultiWilsonPrior(tfk.layers.Layer):
             the asus in the rac. 
         """
         super().__init__()
-        self.rac = rac
+        self._rac = rac.get_config()
+        self.centric = rac.centric
+        self.epsilon = rac.epsilon
+        self._parents = parents
+        self._correlations = correlations
+        self._reindexing_ops = reindexing_ops
+        self._sigma = sigma
         parent_ids = []
         for asu_id, rasu in enumerate(rac):
             pa = parents[asu_id]
@@ -158,13 +180,29 @@ class MultiWilsonPrior(tfk.layers.Layer):
             tf.sqrt(0.5 * rac.epsilon * sigma * (1. - tf.square(self.r))),
         )
         self.has_parent = self.parent_ids >= 0
-        self.parent_ids = tf.where(self.has_parent, self.parent_ids, tf.range(self.rac.asu_size))
+        self.parent_ids = tf.where(self.has_parent, self.parent_ids, tf.range(rac.asu_size))
+        self.built = True #This is always true
+
+    @property
+    def rac(self):
+        return ReciprocalASUCollection.from_config(self._rac)
+
+    def get_config(self):
+        config = {
+            'rac' : self.rac,
+            'parents' : self._parents,
+            'correlations' : self._correlations,
+            'reindexing_ops' : self._reindexing_ops,
+            'sigma' : self.sigma,
+        }
+        return config
+
 
     def mean(self):
         """
         This is only for initialization of the surrogate!
         """
-        return WilsonPrior(self.rac.centric, self.rac.epsilon, self.sigma).mean()
+        return WilsonPrior(self.rac, self.sigma).mean()
 
     def log_prob(self, z):
         scale = self.scale #This is precomputed
@@ -174,7 +212,7 @@ class MultiWilsonPrior(tfk.layers.Layer):
         loc = tf.where(self.has_parent, loc, 0.)
 
         ll  = tf.where(
-            self.rac.centric,
+            self.centric,
             FoldedNormal(loc, scale).log_prob(z),
             Rice(loc, scale).log_prob(z),
         )

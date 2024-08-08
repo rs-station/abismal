@@ -4,15 +4,18 @@ import tf_keras as tfk
 from tensorflow_probability import stats as tfs
 
 
+@tfk.saving.register_keras_serializable(package="abismal")
 class Standardize(tfk.layers.Layer):
-    def __init__(self, center=True, decay=0.999, epsilon=1e-3):
+    def __init__(self, center=True, decay=0.999, epsilon=1e-6):
         super().__init__()
         self.decay = decay
         self.center = center
         self.epsilon = epsilon
 
     def build(self, shape):
-        d = shape[-1]
+        d = [1] * len(shape)
+        d[-1] = shape[-1]
+
         self._mean = self.add_weight(
             shape=d,
             initializer='zeros',
@@ -34,6 +37,18 @@ class Standardize(tfk.layers.Layer):
             trainable=False,
             name='zero_debias_count',
         )
+
+    def get_config(self):
+        conf = {
+            'center' : self.center,
+            'decay' : self.decay,
+            'epsilon' : self.epsilon,
+        }
+        return conf
+
+    @classmethod
+    def from_config(cls, conf):
+        return cls(**conf)
 
     def _debiased_mean_variance(self):
         mean,var = tfs.moving_mean_variance_zero_debiased(

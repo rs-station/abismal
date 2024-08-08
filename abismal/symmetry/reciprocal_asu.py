@@ -7,6 +7,7 @@ from inspect import signature
 from reciprocalspaceship.decorators import spacegroupify,cellify
 import gemmi
 
+@tfk.saving.register_keras_serializable(package="abismal")
 class ReciprocalASUCollection(tfk.layers.Layer):
     def __init__(self, *reciprocal_asus):
         super().__init__()
@@ -38,6 +39,16 @@ class ReciprocalASUCollection(tfk.layers.Layer):
             h,k,l = rasu.Hall.T
             self.miller_id[asu_id *np.ones_like(h),h,k,l] = rasu.miller_id[h,k,l] + offset
             offset = offset + rasu.asu_size
+        self.built = True
+
+    def get_config(self):
+        config = {f'rasu_{i}' : v.get_config() for i,v in enumerate(self.reciprocal_asus)}
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        rasus = [ReciprocalASU(**v) for v in config.values()]
+        return cls(*rasus)
 
     def _ensure_in_range(self, H):
         """ Cast any out of bounds indices to [0,0,0] """
@@ -92,6 +103,7 @@ class ReciprocalASUCollection(tfk.layers.Layer):
     def __len__(self):
         return len(self.reciprocal_asus)
 
+@tfk.saving.register_keras_serializable(package="abismal")
 class ReciprocalASU(tfk.layers.Layer):
     @cellify
     @spacegroupify
@@ -154,6 +166,20 @@ class ReciprocalASU(tfk.layers.Layer):
         self.dHKL = cell.calculate_d_array(self.Hunique).astype(np.float32)
         self.epsilon = go.epsilon_factor_array(self.Hunique).astype(np.float32)
         self.centric = go.centric_flag_array(self.Hunique).astype(bool)
+        self.built = True #This object is not lazy
+
+    def get_config(self):
+        config = {
+            'cell' : self.cell.parameters,
+            'spacegroup' : self.spacegroup.xhm(),
+            'dmin' : self.dmin,
+            'anomalous' : self.anomalous,
+        }
+        return config
+
+#    @classmethod
+#    def from_config(cls, config):
+#        return cls(**config)
 
     @property
     def spacegroup(self):

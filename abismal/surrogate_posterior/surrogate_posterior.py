@@ -23,6 +23,7 @@ class PosteriorBase(tfk.models.Model):
             trainable=False,
             name="hkl_tracker",
         )
+        self.built = True #This model is not built lazily and doesn't have self.call
 
     def register_seen(self, asu_id, hkl):
         unique,_ = tf.unique(tf.reshape(self.rac._miller_ids(asu_id, hkl), [-1]))

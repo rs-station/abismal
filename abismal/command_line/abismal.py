@@ -199,7 +199,7 @@ def run_abismal(parser):
         hidden_units=parser.d_model * 2,
         activation=parser.activation,
         kl_weight=parser.scale_kl_weight,
-        eps=parser.epsilon,
+        epsilon=parser.epsilon,
         num_image_samples=parser.sample_reflections_per_image,
     )
 
@@ -268,7 +268,12 @@ def run_abismal(parser):
 
     train = train.prefetch(AUTOTUNE)
 
+    for x,y in train:
+        model(x)
+        break
+
     model.compile(opt, run_eagerly=parser.run_eagerly)
+
     history = model.fit(
         x=train, 
         epochs=parser.epochs, 
@@ -277,6 +282,9 @@ def run_abismal(parser):
         callbacks=callbacks, 
         validation_data=test
     )
+    from IPython import embed
+    embed(colors='linux')
+    XX
 
 if __name__=='__main__':
     main()

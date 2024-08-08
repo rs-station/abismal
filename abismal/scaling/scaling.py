@@ -12,70 +12,19 @@ import tf_keras as tfk
 from abismal.layers import *
 from abismal.distributions import FoldedNormal
 
-class LocationScaleLayer(tfk.layers.Layer):
-    def __init__(
-            self, 
-            eps=1e-12,
-            kernel_initializer='glorot_normal',
-            scale_bijector=None,
-            loc_bijector=None,
-        ):
-        super().__init__()
-        self.dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
-        self.eps = eps
-        self.scale_bijector = scale_bijector
-        if scale_bijector is None:
-            self.scale_bijector = tfb.Chain([tfb.Shift(eps), tfb.Exp()])
-        self.loc_bijector = loc_bijector
-
-class FoldedNormalLayer(LocationScaleLayer):
-    def call(self, data, training=None, mc_samples=None, **kwargs):
-        theta = self.dense(data)
-        loc, scale = tf.unstack(theta, axis=-1)
-
-        if self.scale_bijector is not None:
-            scale = self.scale_bijector(scale)
-        if self.loc_bijector is not None:
-            loc = self.loc_bijector(loc)
-
-        q = FoldedNormal(loc, scale)
-        return q
-
-class DeltaDist():
-    def __init__(self, loc):
-        self.loc = loc
-
-    def sample(self, *args, **kwargs):
-        return self.loc[None,...]
-
-class DeltaLayer(tfk.layers.Layer):
-    def __init__(self, kernel_initializer='glorot_normal', loc_bijector=None):
-        super().__init__()
-        self.loc_bijector = loc_bijector
-        self.dense = tfk.layers.Dense(1, kernel_initializer=kernel_initializer)
-
-    def call(self, data, *args, **kwargs):
-        loc = self.dense(data)
-        if self.loc_bijector is not None:
-            loc = self.loc_bijector(loc)
-        loc = tf.squeeze(loc, axis=-1)
-        return DeltaDist(loc)
-
-class ImageScaler(tfk.layers.Layer):
+@tfk.saving.register_keras_serializable(package="abismal")
+class ImageScaler(tfk.models.Model):
     def __init__(
             self, 
             mlp_width=32, 
             mlp_depth=20, 
             hidden_units=None,
             activation="ReLU",
-            kernel_initializer=None,
-            scale_posterior=None,
-            scale_prior=None,
             kl_weight=1.,
-            eps=1e-12,
+            epsilon=1e-12,
             num_image_samples=32,
             share_weights=True,
-            seed=None,
+            seed=1234,
             **kwargs, 
         ):
         """
@@ -91,18 +40,11 @@ class ImageScaler(tfk.layers.Layer):
             This defaults to 2*mlp_width
         activation : str (optional)
             This is a Keras activation function with the default being "ReLU"
-        kernel_initializer : str or keras Initializer
-            This defaults to a carefully chosen strategy which ensures the output is not
-            too large. Users may want to override it for something more standard. 
-        scale_posterior : layer (optional)
-            Override the scale_posterior which defaults to a FoldedNormal if kl_weight > 0.
-        scale_prior : Distribution (optional)
-            Override the scale_prior which defaults to an exponential distribution
         kl_weight : float (optional)
             This toggles the behavior of the scale_posterior. If scale_posterior isn't passed, and
             kl_weight is 0., a Delta distribution is used. Otherwise, the default surrogate
             posterior is a FoldedNormal. 
-        eps : float (optional)
+        epsilon : float (optional)
             A small constant for numerical stability defaults to 1e-12. 
         num_image_samples : int (optional)
             The number of reflections to sample in order to create the image representation vectors. 
@@ -114,23 +56,23 @@ class ImageScaler(tfk.layers.Layer):
             An int or tf random seed for initialization. 
         """
         super().__init__(**kwargs)
-
         self.kl_weight = kl_weight
         self.num_image_samples = num_image_samples
-        self.scale_prior = scale_prior
-        self.scale_posterior = scale_posterior
+        self.mlp_width = mlp_width
+        self.mlp_depth = mlp_depth
+        self.epsilon = epsilon
+        self.activation = activation
+        self.share_weights = share_weights
+        self.seed = seed
 
-        if hidden_units is None:
-            hidden_units = 2 * image_mpl_width
+        self.hidden_units = hidden_units
+        if self.hidden_units is None:
+            self.hidden_units = 2 * image_mpl_width
 
-        if kernel_initializer is None:
-            if seed is None:
-                seed = 1234 #This needs to be set to something otherwise all layers will
-                #initialize the same
-            kernel_initializer = tfk.initializers.VarianceScaling(
-                scale=1./10./mlp_depth,
-                mode='fan_avg', distribution='truncated_normal', seed=seed
-            )
+        kernel_initializer = tfk.initializers.VarianceScaling(
+            scale=1./10./mlp_depth,
+            mode='fan_avg', distribution='truncated_normal', seed=seed
+        )
 
         input_image   = [
             tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer),
@@ -146,8 +88,8 @@ class ImageScaler(tfk.layers.Layer):
 
         self.image_network = tfk.models.Sequential([
                 FeedForward(
-                    hidden_units=hidden_units,
-                    activation=activation,
+                    hidden_units=self.hidden_units,
+                    activation=self.activation,
                     kernel_initializer=kernel_initializer,
                 ) for i in range(mlp_depth)])
 
@@ -156,28 +98,37 @@ class ImageScaler(tfk.layers.Layer):
         else:
             self.scale_network = tfk.models.Sequential([
                 FeedForward(
-                    hidden_units=hidden_units, 
+                    hidden_units=self.hidden_units, 
                     kernel_initializer=kernel_initializer, 
-                    activation=activation, 
+                    activation=self.activation, 
                     ) for i in range(mlp_depth)
             ]) 
 
-        # If kl_weight is nonzero, set the default 
-        # posterior to FoldedNormal, prior to Exponential
-        if kl_weight > 0.:
-            if self.scale_prior is None:
-                self.scale_prior = tfd.Exponential(1.)
-            if self.scale_posterior is None:
-                self.scale_posterior = FoldedNormalLayer(
-                    kernel_initializer=kernel_initializer,
-                    eps=eps,
-                )
-        # if kl_weight is zero, set the default posterior to a Delta function
-        else:
-            if self.scale_posterior is None:
-                self.scale_posterior = DeltaLayer(
-                    kernel_initializer=kernel_initializer,
-                )
+        self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
+
+    def get_config(self):
+        config = {
+            'mlp_width' : self.mlp_width,
+            'mlp_depth' : self.mlp_depth, 
+            'hidden_units': self.hidden_units,
+            'epsilon' : self.epsilon,
+            'activation' : self.activation,
+            'kl_weight' : self.kl_weight,
+            'num_image_samples' : self.num_image_samples,
+            'share_weights' : self.share_weights,
+            'seed' : self.seed,
+        }
+        return config
+
+    def distribution_function(self, output):
+        loc, scale = tf.unstack(output, axis=-1)
+        loc = tf.exp(loc) + self.epsilon
+        scale = tf.exp(scale) + self.epsilon
+        q = FoldedNormal(loc, scale)
+        return q
+
+    def scale_prior(self):
+        return tfd.Exponential(1.)
 
     @staticmethod
     def sample_ragged_dim(ragged, mc_samples):
@@ -219,20 +170,22 @@ class ImageScaler(tfk.layers.Layer):
         scale = scale + image
 
         scale = self.scale_network(scale)
-        q = self.scale_posterior(scale.flat_values, training=training)
+        scale = self.output_dense(scale)
+
+        q = self.distribution_function(scale.flat_values)
         z = q.sample(mc_samples)
+        p = self.scale_prior()
 
-        if self.scale_prior is not None:
-            try:
-                kl_div = q.kl_divergence(self.scale_prior)
-            except NotImplementedError:
-                q_z = q.log_prob(z)
-                p_z = self.scale_prior.log_prob(z)
-                kl_div = q_z - p_z
+        try:
+            kl_div = q.kl_divergence(p)
+        except NotImplementedError:
+            q_z = q.log_prob(z)
+            p_z = p.log_prob(z)
+            kl_div = q_z - p_z
 
-            kl_div = tf.reduce_mean(kl_div)
-            self.add_loss(self.kl_weight * kl_div)
-            self.add_metric(kl_div, name='KL_Σ')
+        kl_div = tf.reduce_mean(kl_div)
+        self.add_loss(self.kl_weight * kl_div)
+        self.add_metric(kl_div, name='KL_Σ')
         z = tf.RaggedTensor.from_row_splits(tf.transpose(z), metadata.row_splits)
 
         return z

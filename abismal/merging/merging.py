@@ -13,10 +13,11 @@ import tf_keras as tfk
 from IPython import embed
 
 
+@tfk.saving.register_keras_serializable(package="abismal")
 class VariationalMergingModel(tfk.models.Model):
-    def __init__(self, scale_model, surrogate_posterior, likelihood, mc_samples=1, eps=1e-6, reindexing_ops=None):
+    def __init__(self, scale_model, surrogate_posterior, likelihood, mc_samples=1, epsilon=1e-6, reindexing_ops=None):
         super().__init__()
-        self.eps = eps
+        self.epsilon = epsilon
         self.likelihood = likelihood
         self.scale_model = scale_model
         self.surrogate_posterior = surrogate_posterior
@@ -26,6 +27,24 @@ class VariationalMergingModel(tfk.models.Model):
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
         self.standardize_intensity = Standardize(center=False)
         self.standardize_metadata = Standardize()
+
+    def get_config(self):
+        ops = self.reindexing_ops
+        if ops is not None:
+            ops = [op.gemmi_op.triplet() for op in self.reindexing_ops]
+        config = {
+            'scale_model' : self.scale_model,
+            'surrogate_posterior' : self.surrogate_posterior,
+            'likelihood' : self.likelihood, 
+            'mc_samples' : self.mc_samples,
+            'epsilon' : self.epsilon,
+            'reindexing_ops' : ops,
+        }
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 
     def call(self, inputs, mc_samples=None, **kwargs):
         if mc_samples is None:
@@ -40,6 +59,7 @@ class VariationalMergingModel(tfk.models.Model):
             iobs,
             sigiobs,
         ) = inputs
+
         if self.standardize_intensity is not None:
             iobs = tf.ragged.map_flat_values(self.standardize_intensity, iobs)
             sigiobs = tf.ragged.map_flat_values(self.standardize_intensity.standardize, sigiobs)
@@ -162,7 +182,6 @@ class VariationalMergingModel(tfk.models.Model):
 
         # Update metrics (includes the metric that tracks the loss)
         self.compiled_metrics.update_state(y, y_pred)
-
 
         # Return a dict mapping metric names to current value
         return metrics

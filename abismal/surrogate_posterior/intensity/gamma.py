@@ -11,6 +11,7 @@ from tensorflow_probability import bijectors as tfb
 import tf_keras as tfk
 
 
+@tfk.saving.register_keras_serializable(package="abismal")
 class GammaPosterior(IntensityPosteriorBase):
     def __init__(self, rac, kl_weight, scale_factor=1e-2, eps=1e-12, concentration_min=1., **kwargs):
         super().__init__(rac, **kwargs)
@@ -42,6 +43,16 @@ class GammaPosterior(IntensityPosteriorBase):
                 tfb.Exp(),
             ]),
         )
+
+    def get_config(self):
+        config = {
+            'rac' : self.rac,
+            'prior' : self._flat_prior,
+            'scale_factor' : self._init_scale_factor,
+            'epsilon' : self.epsilon,
+            'kl_weight' : self.kl_weight,
+        }
+        return config
 
     def flat_prior(self):
         prior = WilsonPrior(
