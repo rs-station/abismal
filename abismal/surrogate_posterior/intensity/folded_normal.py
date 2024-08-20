@@ -14,8 +14,8 @@ from abismal.surrogate_posterior.intensity.wilson import WilsonPrior
 class FoldedNormalPosterior(IntensityPosteriorBase):
     def __init__(self, rac, scale_factor=1e-1, epsilon=1e-12, kl_weight=1., **kwargs):
         super().__init__(rac, epsilon=epsilon, kl_weight=kl_weight, **kwargs)
-        self.low = self.epsilon * tf.cast(self.rac.centric, dtype='float32')
-        p = self.flat_prior()
+        self.low = self.epsilon 
+        p = self.prior(self.rac.asu_id[...,None], self.rac.Hunique)
         loc_init = p.mean()
         self.loc = tf.Variable(loc_init)
         self.scale = tfu.TransformedVariable(
@@ -36,21 +36,31 @@ class FoldedNormalPosterior(IntensityPosteriorBase):
         })
         return config
 
-    def flat_prior(self):
-        prior = WilsonPrior(
-            self.rac.centric,
-            self.rac.epsilon,
+    def prior(self, asu_id, hkl):
+        p = WilsonPrior(
+            self.rac.gather(self.rac.centric, asu_id, hkl),
+            self.rac.gather(self.rac.epsilon, asu_id, hkl),
         )
-        return prior
+        return p
 
-    def flat_distribution(self):
+    def _distribution(self, loc, scale, low):
         f = FoldedNormal(
-            self.loc, 
-            self.scale, 
+            loc, 
+            scale, 
         )
         q = tfd.TransformedDistribution(
             f, 
             tfb.Shift(self.low),
         )
+        return q
+
+    def distribution(self, asu_id, hkl):
+        loc = self.rac.gather(self.loc, asu_id, hkl)
+        scale = self.rac.gather(self.scale, asu_id, hkl)
+        q = self._distribution(loc, scale, self.low)
+        return q
+
+    def flat_distribution(self):
+        q = self._distribution(self.loc, self.scale, self.low)
         return q
 

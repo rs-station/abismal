@@ -35,11 +35,18 @@ class PosteriorBase(tfk.models.Model):
         )
         self.seen.assign(self.seen | seen_batch)
 
-    def flat_distribution(self):
-        raise NotImplementedError("Subclasses must implement a flat_distribution method")
+    def distribution(self, asu_id, hkl):
+        raise NotImplementedError("Subclasses must implement a distribution method")
 
-    def flat_prior(self):
-        raise NotImplementedError("Subclasses must implement a flat_prior method")
+    def prior(self, asu_id, hkl):
+        raise NotImplementedError("Subclasses must implement a prior method")
+
+    def flat_distribution(self):
+        q = self.distribution(
+            self.rac.asu_id,
+            self.rac.Hunique,
+        )
+        return q
 
     def to_datasets(self, seen=True):
         """
@@ -60,20 +67,14 @@ class PosteriorBase(tfk.models.Model):
         stddev = self.rac.gather(q.stddev(), asu_id, hkl)
         return stddev
 
-    def register_kl(self, samples=None, asu_id=None, hkl=None, training=None):
-        """
-        this method will always try to use an analytical kl divergence. failing
-        that, the samples will be used
-        """
-        if training:
-            q,p = self.flat_distribution(), self.flat_prior()
-            try:
-                kl_div = q.kl_divergence(p)
-            except NotImplementedError:
-                kl_div = q.log_prob(samples) - p.log_prob(samples)
-            kl_div = tf.reduce_mean(kl_div)
-            self.add_metric(kl_div, name='KL')
-            self.add_loss(self.kl_weight * kl_div)
+    def compute_kl_terms(self, q, p, samples=None):
+        try:
+            kl_div = q.kl_divergence(p)
+        except NotImplementedError:
+            kl_div = q.log_prob(samples) - p.log_prob(samples)
+            kl_div = tf.reduce_mean(kl_div, axis=0)
+
+        return kl_div
 
     def get_flat_fsigf(self):
         msg = """

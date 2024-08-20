@@ -1,6 +1,7 @@
 import numpy as np
 import tensorflow as tf
 import reciprocalspaceship as rs
+from abismal.layers import Standardize
 from abismal.distributions import TruncatedNormal,FoldedNormal
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers  as tfl
@@ -75,10 +76,10 @@ class ImageScaler(tfk.models.Model):
         )
 
         input_image   = [
-            tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer),
+            tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer, use_bias=True),
         ]
         input_scale = [
-            tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer),
+            tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer, use_bias=False),
         ]
             
         self.input_image   = tfk.models.Sequential(input_image)
@@ -105,6 +106,9 @@ class ImageScaler(tfk.models.Model):
             ]) 
 
         self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
+
+        self.standardize_intensity = Standardize(center=False)
+        self.standardize_metadata = Standardize()
 
     def get_config(self):
         config = super().get_config()
@@ -158,6 +162,15 @@ class ImageScaler(tfk.models.Model):
             sigiobs,
         ) = inputs
 
+        iscale = 1.
+        if self.standardize_intensity is not None:
+            iobs = tf.ragged.map_flat_values(self.standardize_intensity, iobs)
+            sigiobs = tf.ragged.map_flat_values(self.standardize_intensity.standardize, sigiobs)
+            iscale = self.standardize_intensity.std
+
+        if self.standardize_metadata is not None:
+            metadata = tf.ragged.map_flat_values(self.standardize_metadata, metadata)
+
         scale = metadata
         image = [iobs, sigiobs, metadata]
 
@@ -165,14 +178,14 @@ class ImageScaler(tfk.models.Model):
         image = ImageScaler.sample_ragged_dim(image, self.num_image_samples)
 
         image = self.input_image(image)
-        scale = self.input_scale(scale)
+        scale = tf.ragged.map_flat_values(self.input_scale, scale)
 
         image = self.image_network(image)
         image = self.pool(image)
         scale = scale + image
 
-        scale = self.scale_network(scale)
-        scale = self.output_dense(scale)
+        scale = tf.ragged.map_flat_values(self.scale_network, scale)
+        scale = tf.ragged.map_flat_values(self.output_dense, scale)
 
         q = self.distribution_function(scale.flat_values)
         z = q.sample(mc_samples)
@@ -191,4 +204,5 @@ class ImageScaler(tfk.models.Model):
         z = tf.RaggedTensor.from_row_splits(
             tf.transpose(z), metadata.row_splits
         )
+        z = z * iscale
         return z

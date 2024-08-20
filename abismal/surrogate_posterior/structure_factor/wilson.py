@@ -18,7 +18,7 @@ def acentric_wilson(epsilon, sigma=1.):
 @tfk.saving.register_keras_serializable(package="abismal")
 class WilsonPrior(tfk.layers.Layer):
     """Wilson's priors on structure factor amplitudes."""
-    def __init__(self, rac, sigma=1., **kwargs):
+    def __init__(self, centric, epsilon, sigma=1., **kwargs):
         """
         Parameters
         ----------
@@ -32,23 +32,19 @@ class WilsonPrior(tfk.layers.Layer):
         """
         super().__init__(**kwargs)
 
-        self._rac = rac.get_config()
-        self.epsilon = rac.epsilon
-        self.centric = rac.centric
+        self.epsilon = epsilon
+        self.centric = centric
         self.sigma = np.array(sigma, dtype=np.float32)
 
         self.p_centric = centric_wilson(self.epsilon, self.sigma)
         self.p_acentric = acentric_wilson(self.epsilon, self.sigma)
         self.built = True #This is always true
 
-    @property
-    def rac(self):
-        return ReciprocalASUCollection.from_config(self._rac)
-
     def get_config(self):
         config = super().get_config()
         config.update({
-            'rac' : self.rac,
+            'epsilon' : self.epsilon,
+            'centric' : self.centric,
             'sigma' : self.sigma,
         })
         return config
@@ -134,14 +130,19 @@ class MultiWilsonPrior(tfk.layers.Layer):
             the asus in the rac. 
         """
         super().__init__(**kwargs)
+        #Store these for config purposes
         self._rac = rac.get_config()
-        self.centric = rac.centric
-        self.epsilon = rac.epsilon
         self._parents = parents
         self._correlations = correlations
         self._reindexing_ops = reindexing_ops
         self._sigma = sigma
+
+        self.centric = rac.centric
+        self.epsilon = rac.epsilon
+
         parent_ids = []
+        is_root = []
+
         for asu_id, rasu in enumerate(rac):
             pa = parents[asu_id]
             if pa == asu_id or pa < 0:
@@ -150,6 +151,7 @@ class MultiWilsonPrior(tfk.layers.Layer):
                 r = 0.
             else:
                 r = correlations[asu_id]
+
             op = 'x,y,z'
             if reindexing_ops is not None:
                 op = reindexing_ops[asu_id]
@@ -161,13 +163,20 @@ class MultiWilsonPrior(tfk.layers.Layer):
 
             if pa is None:
                 parent_id = -tf.ones(rasu.asu_size, rasu.miller_id.dtype)
+                is_root.append(
+                    tf.ones(rasu.asu_size, dtype='bool')
+                )
             else:
                 parent_id = rac._miller_ids(
                     pa * tf.ones_like(hkl[:,:1]),
                     hkl,
                 )
+                is_root.append(
+                    tf.zeros(rasu.asu_size, dtype='bool')
+                )
             parent_ids.append(parent_id)
 
+        self.is_root = tf.concat(is_root, axis=0)
         self.parent_ids = tf.concat(parent_ids, axis=0)
         self.sigma = sigma
 
@@ -184,6 +193,9 @@ class MultiWilsonPrior(tfk.layers.Layer):
         self.parent_ids = tf.where(self.has_parent, self.parent_ids, tf.range(rac.asu_size, dtype=tf.int32))
         self.built = True #This is always true
 
+        self.p_centric  = centric_wilson(self.epsilon, sigma)
+        self.p_acentric = acentric_wilson(self.epsilon, sigma)
+
     @property
     def rac(self):
         return ReciprocalASUCollection.from_config(self._rac)
@@ -198,7 +210,6 @@ class MultiWilsonPrior(tfk.layers.Layer):
             'sigma' : self.sigma,
         })
         return config
-
 
     def mean(self):
         """
@@ -217,6 +228,17 @@ class MultiWilsonPrior(tfk.layers.Layer):
             self.centric,
             FoldedNormal(loc, scale).log_prob(z),
             Rice(loc, scale).log_prob(z),
+        )
+        wilson_p = tf.where(
+            self.centric,
+            self.p_centric.log_prob(z),
+            self.p_acentric.log_prob(z),
+        )
+
+        ll = tf.where(
+            self.is_root,
+            wilson_p,
+            ll,
         )
 
         return ll

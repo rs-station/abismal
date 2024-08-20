@@ -13,7 +13,7 @@ import tf_keras as tfk
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class GammaPosterior(IntensityPosteriorBase):
-    def __init__(self, rac, kl_weight, scale_factor=1e-2, eps=1e-12, concentration_min=1., **kwargs):
+    def __init__(self, rac, kl_weight, scale_factor=1e-2, eps=1e-12, concentration_min=0., **kwargs):
         super().__init__(rac, **kwargs)
         self.rac = rac
 
@@ -28,7 +28,6 @@ class GammaPosterior(IntensityPosteriorBase):
             rate_init,
             tfb.Chain([
                 tfb.Shift(eps), 
-                #tfb.Softplus(),
                 tfb.Exp(),
             ]),
         )
@@ -38,8 +37,6 @@ class GammaPosterior(IntensityPosteriorBase):
             conc_init,
             tfb.Chain([
                 tfb.Shift(concentration_min + eps), 
-                #tfb.Shift(eps), 
-                #tfb.Softplus(),
                 tfb.Exp(),
             ]),
         )
@@ -54,6 +51,19 @@ class GammaPosterior(IntensityPosteriorBase):
             'kl_weight' : self.kl_weight,
         })
         return config
+
+    def prior(self, asu_id, hkl):
+        p = WilsonPrior(
+            self.rac.gather(self.rac.centric, asu_id, hkl),
+            self.rac.gather(self.rac.epsilon, asu_id, hkl),
+        )
+        return p
+
+    def distribution(self, asu_id, hkl):
+        concentration = self.rac.gather(self.concentration, asu_id, hkl)
+        rate = self.rac.gather(self.rate, asu_id, hkl)
+        q = tfd.Gamma(concentration, rate)
+        return q
 
     def flat_prior(self):
         prior = WilsonPrior(
