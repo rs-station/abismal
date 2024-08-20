@@ -84,7 +84,11 @@ class FoldedNormal(tfd.Distribution):
               parameters=parameters,
               name=name)
 
-    def _batch_shape_tensor(self, loc, scale):
+    def _batch_shape_tensor(self, loc=None, scale=None):
+        if loc is None:
+            loc = self.loc
+        if scale is None:
+            scale =self.scale
         return array_ops.shape(loc / scale)
 
     @classmethod
