@@ -13,6 +13,14 @@ import tf_keras as tfk
 from abismal.layers import *
 from abismal.distributions import FoldedNormal
 
+class DeltaDist():
+    def __init__(self, values):
+        self.values = values
+
+    def sample(self, *args, **kwargs):
+        return self.values[None,...]
+
+
 @tfk.saving.register_keras_serializable(package="abismal")
 class ImageScaler(tfk.models.Model):
     def __init__(
@@ -76,12 +84,14 @@ class ImageScaler(tfk.models.Model):
         )
 
         input_image   = [
-            tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer, use_bias=True),
+            tfk.layers.Dense(
+                mlp_width, kernel_initializer=kernel_initializer, use_bias=True),
         ]
         input_scale = [
-            tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer, use_bias=False),
+            tfk.layers.Dense(
+                mlp_width, kernel_initializer=kernel_initializer, use_bias=True),
         ]
-            
+
         self.input_image   = tfk.models.Sequential(input_image)
         self.input_scale   = tfk.models.Sequential(input_scale)
 
@@ -107,9 +117,6 @@ class ImageScaler(tfk.models.Model):
 
         self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
 
-        self.standardize_intensity = Standardize(center=False)
-        self.standardize_metadata = Standardize()
-
     def get_config(self):
         config = super().get_config()
         config.update({
@@ -125,31 +132,32 @@ class ImageScaler(tfk.models.Model):
         })
         return config
 
-    def distribution_function(self, output):
-        loc, scale = tf.unstack(output, axis=-1)
-        loc = tf.exp(loc) + self.epsilon
-        scale = tf.exp(scale) + self.epsilon
-        q = FoldedNormal(loc, scale)
-        return q
-
     def scale_prior(self):
-        return tfd.Exponential(1.)
+        p = tfd.Exponential(1.)
+        return p
 
     @staticmethod
     def sample_ragged_dim(ragged, mc_samples):
         """
         Randomly subsample "length" entries from ragged with replacement.
         """
-        l = tf.cast(ragged.row_lengths(), 'int32')
         n = tf.shape(ragged)[0]
-        maxval = tf.cumsum(l)
-        minval = maxval - l[0]
-        r = tf.random.uniform((n, mc_samples), minval=-0.5, maxval=tf.cast(l, 'float32')[:,None] - 0.5)
-        r = tf.round(r)
-        idx2 = tf.cast(r, 'int32')
-        flat_idx = (tf.cumsum(l) - l[0])[:,None] + tf.cast(r, 'int32')
-        out = tf.gather(ragged.flat_values, flat_idx)
+        row_start = ragged.row_starts()
+        row_limit = ragged.row_limits()
+        idx = tf.random.uniform(
+            (n, mc_samples), 
+            minval=tf.cast(row_start, 'float32')[:,None] - 0.5, 
+            maxval=tf.cast(row_limit, 'float32')[:,None] - 0.5,
+        )
+        idx = tf.cast(tf.round(idx), 'int32')
+        out = tf.gather(ragged.flat_values, idx)
         return out
+
+    def distribution_function(self, output):
+        loc, scale = tf.unstack(output, axis=-1)
+        scale = tf.math.exp(scale) + self.epsilon
+        q = FoldedNormal(loc, scale)
+        return q
 
     def call(self, inputs, mc_samples=32, training=None, **kwargs):
         (
@@ -162,14 +170,6 @@ class ImageScaler(tfk.models.Model):
             sigiobs,
         ) = inputs
 
-        iscale = 1.
-        if self.standardize_intensity is not None:
-            iobs = tf.ragged.map_flat_values(self.standardize_intensity, iobs)
-            sigiobs = tf.ragged.map_flat_values(self.standardize_intensity.standardize, sigiobs)
-            iscale = self.standardize_intensity.std
-
-        if self.standardize_metadata is not None:
-            metadata = tf.ragged.map_flat_values(self.standardize_metadata, metadata)
 
         scale = metadata
         image = [iobs, sigiobs, metadata]
@@ -189,20 +189,23 @@ class ImageScaler(tfk.models.Model):
 
         q = self.distribution_function(scale.flat_values)
         z = q.sample(mc_samples)
+
         p = self.scale_prior()
 
-        try:
-            kl_div = q.kl_divergence(p)
-        except NotImplementedError:
-            q_z = q.log_prob(z)
-            p_z = p.log_prob(z)
-            kl_div = q_z - p_z
+        if self.kl_weight > 0.:
+            try:
+                kl_div = q.kl_divergence(p)
+            except NotImplementedError:
+                q_z = q.log_prob(z)
+                p_z = p.log_prob(z)
+                kl_div = q_z - p_z
 
-        kl_div = tf.reduce_mean(kl_div)
-        self.add_loss(self.kl_weight * kl_div)
-        self.add_metric(kl_div, name='KL_Σ')
+            kl_div = tf.reduce_mean(kl_div)
+            self.add_loss(self.kl_weight * kl_div)
+            self.add_metric(kl_div, name='KL_Σ')
+
         z = tf.RaggedTensor.from_row_splits(
             tf.transpose(z), metadata.row_splits
         )
-        z = z * iscale
+
         return z
