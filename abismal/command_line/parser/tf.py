@@ -39,4 +39,13 @@ args_and_kwargs = (
             "action" : "store_true",
         }
     ),
+
+    (
+        (
+            "--debug",
+        ),{
+            "help": "Set various behaviors helpful for debugging.",
+            "action" : "store_true",
+        }
+    ),
 )

@@ -48,22 +48,13 @@ class PosteriorBase(tfk.models.Model):
         )
         return q
 
-    def to_datasets(self, seen=True):
-        """
-        Parameters
-        ----------
-        seen : bool (optional)
-            Only include reflections seen during training. Defaults to True. 
-        """
-        raise NotImplementedError("Subclasses must implement a to_datasets method")
-
     def mean(self, asu_id, hkl):
-        q = self.flat_distribution
+        q = self.flat_distribution()
         mean = self.rac.gather(q.mean(), asu_id, hkl)
         return mean
 
     def stddev(self, asu_id, hkl):
-        q = self.flat_distribution
+        q = self.flat_distribution()
         stddev = self.rac.gather(q.stddev(), asu_id, hkl)
         return stddev
 
@@ -118,7 +109,7 @@ class PosteriorBase(tfk.models.Model):
 
             sqrt_mult = np.sqrt(self.rac.epsilon)
             data.update({
-                'E' : rs.DataSeries(F / sqrt_mult, dtype='F'),
+                'E' : rs.DataSeries(F / sqrt_mult, dtype='E'),
                 'SIGE' : rs.DataSeries(SIGF / sqrt_mult, dtype='Q'),
             })
         except NotImplementedError:
@@ -151,10 +142,11 @@ class PosteriorBase(tfk.models.Model):
                         'SIGF(+)',
                         'F(-)',
                         'SIGF(-)',
-                        'E(+)',
-                        'SIGE(+)',
-                        'E(-)',
-                        'SIGE(-)',
+                        # There's a bug with anomalous E-values
+                        #'E(+)', 
+                        #'SIGE(+)',
+                        #'E(-)',
+                        #'SIGE(-)',
                     ]
                 if has_isigi:
                     keys += [

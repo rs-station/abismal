@@ -267,9 +267,10 @@ def run_abismal(parser):
 
     train = train.prefetch(AUTOTUNE)
 
-    #for x,y in train:
-    #    model(x)
-    #    break
+    if parser.debug
+        for x,y in train:
+            model(x)
+            break
 
     model.compile(opt, run_eagerly=parser.run_eagerly, jit_compile=parser.jit_compile)
 

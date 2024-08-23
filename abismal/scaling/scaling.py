@@ -116,6 +116,8 @@ class ImageScaler(tfk.models.Model):
             ]) 
 
         self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
+        self.standardize_intensity = Standardize(center=False)
+        self.standardize_metadata = Standardize()
 
     def get_config(self):
         config = super().get_config()
@@ -131,10 +133,6 @@ class ImageScaler(tfk.models.Model):
             'seed' : self.seed,
         })
         return config
-
-    def scale_prior(self):
-        p = tfd.Exponential(1.)
-        return p
 
     @staticmethod
     def sample_ragged_dim(ragged, mc_samples):
@@ -153,9 +151,14 @@ class ImageScaler(tfk.models.Model):
         out = tf.gather(ragged.flat_values, idx)
         return out
 
+    def prior_function(self):
+        p = tfd.Exponential(1.)
+        return p
+
     def distribution_function(self, output):
         loc, scale = tf.unstack(output, axis=-1)
         scale = tf.math.exp(scale) + self.epsilon
+        loc = tf.math.exp(loc) + self.epsilon
         q = FoldedNormal(loc, scale)
         return q
 
@@ -170,6 +173,14 @@ class ImageScaler(tfk.models.Model):
             sigiobs,
         ) = inputs
 
+        if self.standardize_intensity is not None:
+            iobs = tf.ragged.map_flat_values(
+                self.standardize_intensity, iobs)
+            sigiobs = tf.ragged.map_flat_values(
+                self.standardize_intensity.standardize, sigiobs)
+        if self.standardize_metadata is not None:
+            metadata = tf.ragged.map_flat_values(
+                self.standardize_metadata, metadata)
 
         scale = metadata
         image = [iobs, sigiobs, metadata]
@@ -190,7 +201,7 @@ class ImageScaler(tfk.models.Model):
         q = self.distribution_function(scale.flat_values)
         z = q.sample(mc_samples)
 
-        p = self.scale_prior()
+        p = self.prior_function()
 
         if self.kl_weight > 0.:
             try:
@@ -204,6 +215,8 @@ class ImageScaler(tfk.models.Model):
             self.add_loss(self.kl_weight * kl_div)
             self.add_metric(kl_div, name='KL_Σ')
 
+        if self.standardize_intensity is not None:
+            z = z * tf.squeeze(self.standardize_intensity.std)
         z = tf.RaggedTensor.from_row_splits(
             tf.transpose(z), metadata.row_splits
         )

@@ -9,7 +9,7 @@ from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 from abismal.symmetry import Op
 import tf_keras as tfk
-from IPython import embed
+from abismal.layers import Standardize
 
 
 @tfk.saving.register_keras_serializable(package="abismal")
@@ -58,12 +58,20 @@ class VariationalMergingModel(tfk.models.Model):
             sigiobs,
         ) = inputs
 
-
         scale = self.scale_model(
-            inputs, 
+            (
+                asu_id,
+                hkl_in, 
+                resolution, 
+                wavelength, 
+                metadata, 
+                iobs, 
+                sigiobs,
+            ),
             mc_samples=mc_samples, 
             **kwargs
         )
+
         ll = None
         ipred = None
         kl_div = None

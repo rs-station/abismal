@@ -15,7 +15,6 @@ class FoldedNormalPosterior(StructureFactorPosteriorBase):
     def __init__(self, rac, scale_factor=1e-2, epsilon=1e-12, kl_weight=1., **kwargs):
         super().__init__(rac, epsilon=epsilon, kl_weight=kl_weight, **kwargs)
         self._init_scale_factor = scale_factor
-
         self.low = self.epsilon
 
         p = self.prior(rac.asu_id[...,None], rac.Hunique)
