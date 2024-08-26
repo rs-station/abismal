@@ -238,7 +238,6 @@ def run_abismal(parser):
         amsgrad=parser.amsgrad
     )
 
-    
     mtz_saver = MtzSaver(parser.out_dir, parser.anomalous)
     history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id)
     weight_saver  = ModelCheckpoint(
@@ -267,7 +266,7 @@ def run_abismal(parser):
 
     train = train.prefetch(AUTOTUNE)
 
-    if parser.debug
+    if parser.debug:
         for x,y in train:
             model(x)
             break
@@ -282,6 +281,10 @@ def run_abismal(parser):
         callbacks=callbacks, 
         validation_data=test
     )
+
+    if parser.debug:
+        from IPython import embed
+        embed(colors='linux')
 
 if __name__=='__main__':
     main()

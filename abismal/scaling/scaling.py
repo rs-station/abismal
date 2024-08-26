@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import tensorflow as tf
 import reciprocalspaceship as rs
@@ -12,13 +13,6 @@ import tf_keras as tfk
 
 from abismal.layers import *
 from abismal.distributions import FoldedNormal
-
-class DeltaDist():
-    def __init__(self, values):
-        self.values = values
-
-    def sample(self, *args, **kwargs):
-        return self.values[None,...]
 
 
 @tfk.saving.register_keras_serializable(package="abismal")
@@ -50,9 +44,7 @@ class ImageScaler(tfk.models.Model):
         activation : str (optional)
             This is a Keras activation function with the default being "ReLU"
         kl_weight : float (optional)
-            This toggles the behavior of the scale_posterior. If scale_posterior isn't passed, and
-            kl_weight is 0., a Delta distribution is used. Otherwise, the default surrogate
-            posterior is a FoldedNormal. 
+            The importance of the prior distribution on scales. 
         epsilon : float (optional)
             A small constant for numerical stability defaults to 1e-12. 
         num_image_samples : int (optional)
@@ -137,7 +129,7 @@ class ImageScaler(tfk.models.Model):
     @staticmethod
     def sample_ragged_dim(ragged, mc_samples):
         """
-        Randomly subsample "length" entries from ragged with replacement.
+        Randomly subsample "mc_samples" entries from ragged with replacement.
         """
         n = tf.shape(ragged)[0]
         row_start = ragged.row_starts()
@@ -153,13 +145,18 @@ class ImageScaler(tfk.models.Model):
 
     def prior_function(self):
         p = tfd.Exponential(1.)
+        #scale = tf.sqrt(0.5 * np.pi)
+        #p = tfd.HalfNormal(scale)
+        #scale = math.sqrt(math.log(0.5 * (math.sqrt(5.) + 1.)))
+        #scale = 1.
+        #p = tfd.LogNormal(0., scale)
         return p
 
     def distribution_function(self, output):
         loc, scale = tf.unstack(output, axis=-1)
-        scale = tf.math.exp(scale) + self.epsilon
-        loc = tf.math.exp(loc) + self.epsilon
+        scale = tf.nn.softplus(scale) + self.epsilon
         q = FoldedNormal(loc, scale)
+        #q = tfd.LogNormal(loc, scale)
         return q
 
     def call(self, inputs, mc_samples=32, training=None, **kwargs):
@@ -217,6 +214,7 @@ class ImageScaler(tfk.models.Model):
 
         if self.standardize_intensity is not None:
             z = z * tf.squeeze(self.standardize_intensity.std)
+
         z = tf.RaggedTensor.from_row_splits(
             tf.transpose(z), metadata.row_splits
         )

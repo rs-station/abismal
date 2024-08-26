@@ -4,6 +4,7 @@ from tensorflow_probability import distributions as tfd
 from tensorflow_probability import bijectors as tfb
 from tensorflow_probability import util as tfu
 from abismal.distributions.folded_normal import FoldedNormal
+from abismal.likelihood.location_scale import LocationScale
 
 def make_fn_posterior(loc, scale, epsilon=1e-12):
     loc = tf.convert_to_tensor(loc)
@@ -19,7 +20,7 @@ def make_fn_posterior(loc, scale, epsilon=1e-12):
     )
     return FoldedNormal(loc, scale)
 
-class AdaptiveLikelihoodBase(tfk.layers.Layer):
+class AdaptiveLikelihoodBase(LocationScale):
     """
     A Bayesian additive error model inspired by EV11 wherein
     sigi = a * sqrt(sigiobs**2. + b * iobs + c * iobs**2.)
@@ -30,7 +31,8 @@ class AdaptiveLikelihoodBase(tfk.layers.Layer):
         self.kl_weight = kl_weight
         self.prior = prior
         if self.prior is None:
-            self.prior = tfd.HalfNormal(1.)
+            #self.prior = tfd.HalfNormal(1.)
+            self.prior = tfd.Exponential(1.)
 
         self.qa = make_fn_posterior(
             1.,
@@ -62,17 +64,16 @@ class AdaptiveLikelihoodBase(tfk.layers.Layer):
         sigi = a[...,:] * tf.sqrt(var)
         ll = self._distribution(iobs, sigi).log_prob(ipred)
 
-        q = (
+        kl_div = (
             self.qa.log_prob(a) +
             self.qb.log_prob(b) +
             self.qc.log_prob(c)
-        )
-        p = (
+        ) - (
             self.prior.log_prob(a) +
             self.prior.log_prob(b) +
             self.prior.log_prob(c)
         )
-        kl_div = tf.reduce_mean(q - p)
+        kl_div = tf.reduce_mean(kl_div)
         self.add_metric(kl_div, "KL_LL")
         self.add_loss(self.kl_weight * kl_div)
         self.add_metric(self.qa.mean(), 'sdfac')
