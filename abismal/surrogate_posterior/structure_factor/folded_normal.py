@@ -35,7 +35,6 @@ class FoldedNormalPosterior(StructureFactorPosteriorBase):
     def get_config(self):
         config = {
             'rac' : self.rac,
-            'prior' : self._flat_prior,
             'scale_factor' : self._init_scale_factor,
             'epsilon' : self.epsilon,
             'kl_weight' : self.kl_weight,
