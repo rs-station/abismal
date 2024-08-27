@@ -66,6 +66,9 @@ class FeedForward(tfk.layers.Layer):
         self.ff1 = tfk.layers.Dense(self.hidden_units, kernel_initializer=self.kernel_initializer, **kwargs)
         self.ff2 = tfk.layers.Dense(self.units, kernel_initializer=self.kernel_initializer, **kwargs)
 
+        self.ff1.build(shape)
+        self.ff2.build(shape[:-1] + [self.hidden_units])
+
     def call(self, X, **kwargs):
         out = X
 
