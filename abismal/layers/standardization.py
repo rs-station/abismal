@@ -13,8 +13,9 @@ class Standardize(tfk.layers.Layer):
         self.epsilon = epsilon
 
     def build(self, shape):
-        d = [1] * len(shape)
-        d[-1] = shape[-1]
+        #d = [1] * len(shape)
+        #d[-1] = shape[-1]
+        d = shape[-1]
 
         self._mean = self.add_weight(
             shape=d,
@@ -47,10 +48,6 @@ class Standardize(tfk.layers.Layer):
         })
         return conf
 
-    @classmethod
-    def from_config(cls, conf):
-        return cls(**conf)
-
     def _debiased_mean_variance(self):
         mean,var = tfs.moving_mean_variance_zero_debiased(
             self._mean,
@@ -82,7 +79,7 @@ class Standardize(tfk.layers.Layer):
             self._var,
             zero_debias_count=self.count,
             decay=self.decay,
-            axis=-2,
+            axis=(0, 1),
         )
 
     def standardize(self, data):
