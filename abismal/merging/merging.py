@@ -30,6 +30,7 @@ class VariationalMergingModel(tfk.models.Model):
         if ops is not None:
             ops = [op.gemmi_op.triplet() for op in self.reindexing_ops]
         config = super().get_config()
+
         config.update({
             'scale_model' : self.scale_model,
             'surrogate_posterior' : self.surrogate_posterior,
@@ -38,11 +39,18 @@ class VariationalMergingModel(tfk.models.Model):
             'epsilon' : self.epsilon,
             'reindexing_ops' : ops,
         })
+        for k in ['scale_model', 'surrogate_posterior', 'likelihood']:
+            config[k] = tfk.saving.serialize_keras_object(config[k])
         return config
 
     @classmethod
     def from_config(cls, config):
+        for k in ['scale_model', 'surrogate_posterior', 'likelihood']:
+            config[k] = tfk.saving.deserialize_keras_object(config[k])
         return cls(**config)
+
+    def build(self, shapes):
+        self.scale_model.build(shapes)
 
     def call(self, inputs, mc_samples=None, training=None, **kwargs):
         if mc_samples is None:
