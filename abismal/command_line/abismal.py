@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 def main():
+    from abismal.ragged import quiet
     from abismal.command_line.parser import parser
     parser = parser.parse_args()
 
@@ -36,6 +37,7 @@ def _is_dials_file(s):
     return _is_refl_file(s) or _is_expt_file(s)
 
 def run_abismal(parser):
+    import tf_keras as tfk
     from abismal import __version__ as version
     from abismal.symmetry import ReciprocalASU,ReciprocalASUCollection
     from abismal.merging import VariationalMergingModel
@@ -50,6 +52,8 @@ def run_abismal(parser):
     import logging
     from os.path import exists
     from os import mkdir
+    from abismal.likelihood import StudentTLikelihood
+    from abismal.likelihood import NormalLikelihood
 
     if not exists(parser.out_dir):
         mkdir(parser.out_dir)
@@ -203,10 +207,8 @@ def run_abismal(parser):
     )
 
     if parser.studentt_dof is not None:
-        from abismal.likelihood import StudentTLikelihood
         likelihood = StudentTLikelihood(parser.studentt_dof)
     else:
-        from abismal.likelihood import NormalLikelihood
         likelihood = NormalLikelihood()
 
     model = VariationalMergingModel(
@@ -241,7 +243,7 @@ def run_abismal(parser):
     mtz_saver = MtzSaver(parser.out_dir, parser.anomalous)
     history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id)
     weight_saver  = ModelCheckpoint(
-        filepath=f'{parser.out_dir}/abismal.weights.h5', save_weights_only=True, verbose=1)
+        filepath=f'{parser.out_dir}/model.keras', verbose=1)
 
     callbacks = [
         mtz_saver,
@@ -268,8 +270,8 @@ def run_abismal(parser):
 
     if parser.debug:
         for x,y in train:
-            model(x)
             break
+        model([i[:3,:5] for i in x])
 
     model.compile(opt, run_eagerly=parser.run_eagerly, jit_compile=parser.jit_compile)
 
