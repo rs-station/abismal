@@ -9,6 +9,7 @@ from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 from tensorflow_probability import stats as tfs
+from tensorflow.python.ops.ragged import ragged_tensor
 import tf_keras as tfk
 
 from abismal.layers import *
@@ -75,17 +76,10 @@ class ImageScaler(tfk.models.Model):
             mode='fan_avg', distribution='truncated_normal', seed=seed
         )
 
-        input_image   = [
-            tfk.layers.Dense(
-                mlp_width, kernel_initializer=kernel_initializer, use_bias=True),
-        ]
-        input_scale = [
-            tfk.layers.Dense(
-                mlp_width, kernel_initializer=kernel_initializer, use_bias=True),
-        ]
-
-        self.input_image   = tfk.models.Sequential(input_image)
-        self.input_scale   = tfk.models.Sequential(input_scale)
+        self.input_image = tfk.layers.Dense(
+                mlp_width, kernel_initializer=kernel_initializer, use_bias=True)
+        self.input_scale = tfk.layers.Dense(
+                mlp_width, kernel_initializer=kernel_initializer, use_bias=True)
 
         self.pool = Average(axis=-2)
 
@@ -127,20 +121,16 @@ class ImageScaler(tfk.models.Model):
         return config
 
     @staticmethod
-    def sample_ragged_dim(ragged, mc_samples):
-        """
-        Randomly subsample "mc_samples" entries from ragged with replacement.
-        """
-        n = tf.shape(ragged)[0]
-        row_start = ragged.row_starts()
-        row_limit = ragged.row_limits()
+    def sample_refls(tensor, mc_samples):
+        n = tf.shape(tensor)[0]
+        l = tf.reduce_sum(tf.ones_like(tensor[...,0]), axis=-1)
         idx = tf.random.uniform(
-            (n, mc_samples), 
-            minval=tf.cast(row_start, 'float32')[:,None] - 0.5, 
-            maxval=tf.cast(row_limit, 'float32')[:,None] - 0.5,
+            (n, mc_samples),
+            minval=-0.5,
+            maxval=l[:,None]-0.5,
         )
         idx = tf.cast(tf.round(idx), 'int32')
-        out = tf.gather(ragged.flat_values, idx)
+        out = tf.gather(tensor, idx, axis=1, batch_dims=1)
         return out
 
     def prior_function(self):
@@ -158,6 +148,28 @@ class ImageScaler(tfk.models.Model):
         q = FoldedNormal(loc, scale)
         #q = tfd.LogNormal(loc, scale)
         return q
+
+    def build(self, shapes):
+        (
+            asu_id,
+            hkl,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = shapes
+        self.input_image.build(
+            metadata[:-1] + [metadata[-1] + 2] #add columns for iobs/sigiobs
+        )
+        self.input_scale.build(metadata)
+        self.image_network.build(metadata[:-1] + [self.mlp_width])
+        if not self.share_weights:
+            self.scale_network.build(metadata[:-1] + [self.mlp_width])
+        self.standardize_intensity.build(iobs)
+        self.standardize_metadata.build(metadata)
+        self.pool.build(metadata[:-1] + [self.mlp_width])
+        self.output_dense.build(metadata[:-1] + [self.mlp_width])
 
     def call(self, inputs, mc_samples=32, training=None, **kwargs):
         (
@@ -183,9 +195,10 @@ class ImageScaler(tfk.models.Model):
         image = [iobs, sigiobs, metadata]
 
         image = tf.concat(image, axis=-1)
-        image = ImageScaler.sample_ragged_dim(image, self.num_image_samples)
+        image = ImageScaler.sample_refls(image, self.num_image_samples)
 
         image = self.input_image(image)
+
         scale = tf.ragged.map_flat_values(self.input_scale, scale)
 
         image = self.image_network(image)
@@ -195,28 +208,34 @@ class ImageScaler(tfk.models.Model):
         scale = tf.ragged.map_flat_values(self.scale_network, scale)
         scale = tf.ragged.map_flat_values(self.output_dense, scale)
 
-        q = self.distribution_function(scale.flat_values)
+        if ragged_tensor.is_ragged(scale):
+            q = self.distribution_function(scale.flat_values)
+        else:
+            q = self.distribution_function(scale)
+
         z = q.sample(mc_samples)
 
         p = self.prior_function()
 
-        if self.kl_weight > 0.:
-            try:
-                kl_div = q.kl_divergence(p)
-            except NotImplementedError:
-                q_z = q.log_prob(z)
-                p_z = p.log_prob(z)
-                kl_div = q_z - p_z
+        try:
+            kl_div = q.kl_divergence(p)
+        except NotImplementedError:
+            q_z = q.log_prob(z)
+            p_z = p.log_prob(z)
+            kl_div = q_z - p_z
 
-            kl_div = tf.reduce_mean(kl_div)
-            self.add_loss(self.kl_weight * kl_div)
-            self.add_metric(kl_div, name='KL_Σ')
+        kl_div = tf.reduce_mean(kl_div)
+        self.add_loss(self.kl_weight * kl_div)
+        self.add_metric(kl_div, name='KL_Σ')
 
         if self.standardize_intensity is not None:
             z = z * tf.squeeze(self.standardize_intensity.std)
 
-        z = tf.RaggedTensor.from_row_splits(
-            tf.transpose(z), metadata.row_splits
-        )
+        if ragged_tensor.is_ragged(scale):
+            z = tf.RaggedTensor.from_row_splits(
+                tf.transpose(z), metadata.row_splits
+            )
+        else:
+            z = tf.transpose(z)
 
         return z
