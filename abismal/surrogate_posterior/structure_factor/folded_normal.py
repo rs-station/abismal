@@ -34,12 +34,17 @@ class FoldedNormalPosterior(StructureFactorPosteriorBase):
 
     def get_config(self):
         config = {
-            'rac' : self.rac,
+            'rac' : tfk.saving.serialize_keras_object(self.rac),
             'scale_factor' : self._init_scale_factor,
             'epsilon' : self.epsilon,
             'kl_weight' : self.kl_weight,
         }
         return config
+
+    @classmethod
+    def from_config(cls, config):
+        config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
+        return cls(**config)
 
     def prior(self, asu_id, hkl):
         p = WilsonPrior(
