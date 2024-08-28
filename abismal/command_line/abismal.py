@@ -182,6 +182,7 @@ def run_abismal(parser):
     else:
         prior = None
         if parser.parents is not None:
+            raise NotImplementedError("The Multivariate Wilson prior is unavailable in this version.")
             from abismal.surrogate_posterior.structure_factor.wilson import MultiWilsonPrior
             prior = MultiWilsonPrior(
                 rac, 
@@ -229,16 +230,28 @@ def run_abismal(parser):
     else:
         learning_rate = parser.learning_rate
 
-    opt = Adam(
-        parser.learning_rate, 
-        parser.beta_1, 
-        parser.beta_2, 
-        global_clipnorm=parser.global_clipnorm, 
-        clipnorm=parser.clipnorm, 
-        clipvalue=parser.clip, 
-        epsilon=parser.adam_epsilon, 
-        amsgrad=parser.amsgrad
-    )
+
+    if parser.use_wadam:
+        opt = WAdam(
+            parser.learning_rate, 
+            parser.beta_1, 
+            global_clipnorm=parser.global_clipnorm, 
+            clipnorm=parser.clipnorm, 
+            clipvalue=parser.clip, 
+            epsilon=parser.adam_epsilon, 
+        )
+    else:
+        from abismal.optimizers.wadam import WAdam
+        opt = Adam(
+            parser.learning_rate, 
+            parser.beta_1, 
+            parser.beta_2, 
+            global_clipnorm=parser.global_clipnorm, 
+            clipnorm=parser.clipnorm, 
+            clipvalue=parser.clip, 
+            epsilon=parser.adam_epsilon, 
+            amsgrad=parser.amsgrad
+        )
 
     mtz_saver = MtzSaver(parser.out_dir, parser.anomalous)
     history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id)

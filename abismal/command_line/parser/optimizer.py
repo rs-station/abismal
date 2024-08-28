@@ -92,4 +92,13 @@ args_and_kwargs=(
             "action": 'store_true',
         }
     ),
+
+    (
+        (
+            "--use-wadam",
+        ),{
+            "help": "Optionally use a Welfordized version of Adam.",
+            "action": 'store_true',
+        }
+    ),
 )
