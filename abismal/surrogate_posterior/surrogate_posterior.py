@@ -8,13 +8,12 @@ from tensorflow_probability import bijectors as tfb
 import tf_keras as tfk
 
 class PosteriorBase(tfk.models.Model):
-    def __init__(self, rac, epsilon=1e-12, kl_weight=1., **kwargs):
+    def __init__(self, rac, epsilon=1e-12, **kwargs):
         """
         rac : ReciprocalASUCollection
         """
         super().__init__(**kwargs)
         self.epsilon = epsilon
-        self.kl_weight = kl_weight
         self.rac = rac
         self.seen = self.add_weight(
             shape=self.rac.asu_size,
@@ -24,6 +23,18 @@ class PosteriorBase(tfk.models.Model):
             name="hkl_tracker",
         )
         self.built = True #This model is not built lazily and doesn't have self.call
+
+    def get_config(self):
+        config = {
+            'rac' : tfk.saving.serialize_keras_object(self.rac),
+            'epsilon' : self.epsilon,
+        }
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
+        return cls(**config)
 
     def register_seen(self, asu_id, hkl):
         unique,_ = tf.unique(tf.reshape(self.rac._miller_ids(asu_id, hkl), [-1]))
@@ -37,9 +48,6 @@ class PosteriorBase(tfk.models.Model):
 
     def distribution(self, asu_id, hkl):
         raise NotImplementedError("Subclasses must implement a distribution method")
-
-    def prior(self, asu_id, hkl):
-        raise NotImplementedError("Subclasses must implement a prior method")
 
     def flat_distribution(self):
         q = self.distribution(

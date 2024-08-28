@@ -7,51 +7,37 @@ from tensorflow_probability import bijectors as tfb
 import tf_keras as tfk
 from abismal.distributions import FoldedNormal as FoldedNormal
 from abismal.surrogate_posterior import StructureFactorPosteriorBase
-from abismal.surrogate_posterior.structure_factor.wilson import WilsonPrior
 
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class FoldedNormalPosterior(StructureFactorPosteriorBase):
-    def __init__(self, rac, scale_factor=1e-2, epsilon=1e-12, kl_weight=1., **kwargs):
-        super().__init__(rac, epsilon=epsilon, kl_weight=kl_weight, **kwargs)
-        self._init_scale_factor = scale_factor
+    def __init__(self, rac, loc_init, scale_init, epsilon=1e-12, **kwargs):
+        super().__init__(rac, epsilon=epsilon, **kwargs)
         self.low = self.epsilon
+        self._loc_init = loc_init
+        self._scale_init = scale_init
 
-        p = self.prior(rac.asu_id[...,None], rac.Hunique)
-        loc_init = p.mean()
         self.loc = tfu.TransformedVariable(
             loc_init,
             tfb.Exp(),
         )
 
         self.scale = tfu.TransformedVariable(
-            scale_factor * loc_init,
+            scale_init,
             tfb.Chain([
                 tfb.Shift(epsilon), 
                 tfb.Exp(),
             ]),
         )
+        self.built = True
 
     def get_config(self):
-        config = {
-            'rac' : tfk.saving.serialize_keras_object(self.rac),
-            'scale_factor' : self._init_scale_factor,
-            'epsilon' : self.epsilon,
-            'kl_weight' : self.kl_weight,
-        }
+        config = super().get_config()
+        config.update({
+            'loc_init' : self._loc_init,
+            'scale_init' : self._scale_init,
+        })
         return config
-
-    @classmethod
-    def from_config(cls, config):
-        config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
-        return cls(**config)
-
-    def prior(self, asu_id, hkl):
-        p = WilsonPrior(
-            self.rac.gather(self.rac.centric, asu_id, hkl),
-            self.rac.gather(self.rac.epsilon, asu_id, hkl),
-        )
-        return p
 
     def _distribution(self, loc, scale, low):
         f = FoldedNormal(

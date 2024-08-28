@@ -14,13 +14,15 @@ from abismal.layers import Standardize
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class VariationalMergingModel(tfk.models.Model):
-    def __init__(self, scale_model, surrogate_posterior, likelihood, mc_samples=1, epsilon=1e-6, reindexing_ops=None, **kwargs):
+    def __init__(self, scale_model, surrogate_posterior, prior, likelihood, mc_samples=1, kl_weight=1., epsilon=1e-6, reindexing_ops=None, **kwargs):
         super().__init__(**kwargs)
         self.epsilon = epsilon
         self.likelihood = likelihood
+        self.prior = prior
         self.scale_model = scale_model
         self.surrogate_posterior = surrogate_posterior
         self.mc_samples = mc_samples
+        self.kl_weight = kl_weight
         if reindexing_ops is None:
             reindexing_ops = ["x,y,z"]
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
@@ -34,12 +36,14 @@ class VariationalMergingModel(tfk.models.Model):
         config.update({
             'scale_model' : self.scale_model,
             'surrogate_posterior' : self.surrogate_posterior,
+            'prior' : self.prior,
             'likelihood' : self.likelihood, 
             'mc_samples' : self.mc_samples,
+            'kl_weight' : 1.,
             'epsilon' : self.epsilon,
             'reindexing_ops' : ops,
         })
-        for k in ['scale_model', 'surrogate_posterior', 'likelihood']:
+        for k in ['scale_model', 'surrogate_posterior', 'likelihood', 'prior']:
             config[k] = tfk.saving.serialize_keras_object(config[k])
         return config
 
@@ -67,15 +71,7 @@ class VariationalMergingModel(tfk.models.Model):
         ) = inputs
 
         scale = self.scale_model(
-            (
-                asu_id,
-                hkl_in, 
-                resolution, 
-                wavelength, 
-                metadata, 
-                iobs, 
-                sigiobs,
-            ),
+            inputs,
             mc_samples=mc_samples, 
             **kwargs
         )
@@ -90,7 +86,7 @@ class VariationalMergingModel(tfk.models.Model):
             _hkl = tf.ragged.map_flat_values(op, hkl_in)
 
             _q = self.surrogate_posterior.distribution(asu_id.flat_values, _hkl.flat_values)
-            _p = self.surrogate_posterior.prior(asu_id.flat_values, _hkl.flat_values)
+            _p = self.prior.distribution(asu_id.flat_values, _hkl.flat_values)
             _ipred = _q.sample(mc_samples)
 
             _kl_div = self.surrogate_posterior.compute_kl_terms(_q, _p, samples=_ipred)
@@ -135,7 +131,7 @@ class VariationalMergingModel(tfk.models.Model):
         self.add_loss(-ll)
 
         self.add_metric(kl_div, name='KL')
-        self.add_loss(self.surrogate_posterior.kl_weight * kl_div)
+        self.add_loss(self.kl_weight * kl_div)
 
         ipred_avg = tf.reduce_mean(ipred, axis=-1)
         return ipred_avg

@@ -7,6 +7,7 @@ from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 import tf_keras as tfk
 from abismal.symmetry import Op,ReciprocalASUCollection
+from abismal.prior.base import PriorBase
 
 
 def centric_wilson(epsilon, sigma=1.):
@@ -15,70 +16,72 @@ def centric_wilson(epsilon, sigma=1.):
 def acentric_wilson(epsilon, sigma=1.):
     return tfd.Weibull(2., tf.math.sqrt(epsilon * sigma))
 
+class WilsonDistribution:
+    def __init__(self, centric, epsilon, sigma=1.):
+        self.p_centric = centric_wilson(epsilon, sigma)
+        self.p_acentric = acentric_wilson(epsilon, sigma)
+        self.centric = centric
+
+    def mean(self):
+        return tf.where(
+            self.centric,
+            self.p_centric.mean(),
+            self.p_acentric.mean(),
+        )
+
+    def stddev(self):
+        return tf.where(
+            self.centric,
+            self.p_centric.stddev(),
+            self.p_acentric.stddev(),
+        )
+
+    def log_prob(self, z):
+        ll = tf.where(
+            self.centric,
+            self.p_centric.log_prob(z),
+            self.p_acentric.log_prob(z),
+        )
+        return ll
+
 @tfk.saving.register_keras_serializable(package="abismal")
-class WilsonPrior(tfk.layers.Layer):
+class WilsonPrior(PriorBase):
     """Wilson's priors on structure factor amplitudes."""
-    def __init__(self, centric, epsilon, sigma=1., **kwargs):
+    def __init__(self, rac, sigma=1., **kwargs):
         """
         Parameters
         ----------
-        centric : array
-            Floating point or boolean array with value 1/True for centric reflections and 0/False. for acentric.
-        epsilon : array
-            Floating point array with multiplicity values for each structure factor.
+        rac : ReciprocalASUCollection
         sigma : float or array
             The Σ value for the wilson distribution. The represents the average intensity stratified by a measure
-            like resolution. 
+            like resolution. If this is an array it must be length rac.asu_size
         """
         super().__init__(**kwargs)
-
-        self.epsilon = epsilon
-        self.centric = centric
-        self.sigma = np.array(sigma, dtype=np.float32)
-
-        self.p_centric = centric_wilson(self.epsilon, self.sigma)
-        self.p_acentric = acentric_wilson(self.epsilon, self.sigma)
+        self.rac = rac
+        self.sigma = sigma
         self.built = True #This is always true
 
     def get_config(self):
         config = super().get_config()
         config.update({
-            'epsilon' : self.epsilon,
-            'centric' : self.centric,
+            'rac' : tfk.saving.serialize_keras_object(self.rac),
             'sigma' : self.sigma,
         })
         return config
 
-    def log_prob(self, x):
-        """
-        Parameters
-        ----------
-        x : tf.Tensor
-            Array of structure factor values with the same shape epsilon and centric.
-        """
-        return tf.where(self.centric, self.p_centric.log_prob(x), self.p_acentric.log_prob(x))
+    @classmethod
+    def from_config(cls, config):
+        config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
+        return cls(**config)
 
-    def prob(self, x):
-        """
-        Parameters
-        ----------
-        x : tf.Tensor
-            Array of structure factor values with the same shape epsilon and centric.
-        """
-        return tf.where(self.centric, self.p_centric.prob(x), self.p_acentric.prob(x))
-
-    def mean(self):
-        return tf.where(self.centric, self.p_centric.mean(), self.p_acentric.mean())
-
-    def stddev(self):
-        return tf.where(self.centric, self.p_centric.stddev(), self.p_acentric.stddev())
-
-    def sample(self, *args, **kwargs):
-        return tf.where(
-            self.centric, 
-            self.p_centric.sample(*args, **kwargs),
-            self.p_acentric.sample(*args, **kwargs),
-        )
+    def distribution(self, asu_id, hkl):
+        centric = self.rac.gather(self.rac.centric, asu_id, hkl)
+        epsilon = self.rac.gather(self.rac.epsilon, asu_id, hkl)
+        sigma = self.sigma
+        if len(tf.shape(sigma)) > 0:
+            sigma = self.rac.gather(sigma, asu_id, hkl)
+        p = WilsonDistribution(centric, epsilon, sigma)
+        return p
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class MultiWilsonPrior(tfk.layers.Layer):
@@ -131,7 +134,7 @@ class MultiWilsonPrior(tfk.layers.Layer):
         """
         super().__init__(**kwargs)
         #Store these for config purposes
-        self._rac = rac.get_config()
+        self.rac = rac
         self._parents = parents
         self._correlations = correlations
         self._reindexing_ops = reindexing_ops
@@ -196,20 +199,22 @@ class MultiWilsonPrior(tfk.layers.Layer):
         self.p_centric  = centric_wilson(self.epsilon, sigma)
         self.p_acentric = acentric_wilson(self.epsilon, sigma)
 
-    @property
-    def rac(self):
-        return ReciprocalASUCollection.from_config(self._rac)
-
     def get_config(self):
         config = super().get_config()
         config.update({
-            'rac' : self.rac,
+            'rac' : tfk.saving.serialize_keras_object(self.rac),
             'parents' : self._parents,
             'correlations' : self._correlations,
             'reindexing_ops' : self._reindexing_ops,
             'sigma' : self.sigma,
         })
         return config
+
+    @classmethod
+    def from_config(cls, config):
+        config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
+        return cls(**config)
+
 
     def mean(self):
         """
