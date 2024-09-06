@@ -83,6 +83,48 @@ class WilsonPrior(PriorBase):
         p = WilsonDistribution(centric, epsilon, sigma)
         return p
 
+class MultiWilsonDistribution:
+    def __init__(self, is_root, correlation, centric, multiplicity, sigma=1.):
+        self.is_root = is_root
+        self.correlation = correlation
+        self.centric = centric
+        self.multiplicity = multiplicity
+        self.sigma = sigma
+
+    def mean(self):
+        """ 
+        This is purely for initialization purposes and is not to be trusted.
+        """ 
+        loc = tf.where(
+            self.centric,
+            centric_wilson(self.multiplicity, self.sigma).mean(),
+            acentric_wilson(self.multiplicity, self.sigma).mean(),
+        )
+        return loc
+
+    def log_prob(self, z):
+        z_h, z_pa = tf.unstack(z, axis=-1)
+
+        #Single wilson case for root nodes
+        ll_sw = WilsonDistribution(self.centric, self.multiplicity, self.sigma).log_prob(z_h)
+
+        #Double wilson case for child nodes
+        loc = self.correlation * z_pa
+        scale = tf.sqrt(self.multiplicity * (1. - tf.square(self.correlation))),
+        ll_dw = tf.where(
+            self.centric,
+            FoldedNormal(loc, scale).log_prob(z_h),
+            Rice(loc, tf.sqrt(0.5) * scale).log_prob(z_h),
+        )
+
+        #Put them both together
+        ll = tf.where(
+            self.is_root,
+            ll_sw,
+            ll_dw,
+        )
+        return ll
+
 @tfk.saving.register_keras_serializable(package="abismal")
 class MultiWilsonPrior(tfk.layers.Layer):
     """
@@ -113,99 +155,31 @@ class MultiWilsonPrior(tfk.layers.Layer):
     ```
 
     """
-    def __init__(self, rac, parents, correlations, reindexing_ops=None, sigma=1., **kwargs):
+    def __init__(self, rac, correlation, sigma=1., **kwargs):
         """
         Parameters
         ----------
         rac : ReciprocalASUCollection
             The reciprocal asu collection describing the merged structure factors
-        parents : list
-            An iterable of zero-indexed parents for each asu in the rac. Use None
-            to indicate root nodes.
-        correlations : list
+        correlation : list
             An iterable of prior correlation coefficients between asus. Use
             0.0 for root nodes. 
-        reindexing_ops : list (optional)
-            Optionally provide a list of reindexing operator strings, one per asu. 
         sigma : float or tensor (optional)
             Optionally provide an average intensity value for the prior. 
             If this is a tensor, it should have the combinded length of all
             the asus in the rac. 
         """
         super().__init__(**kwargs)
-        #Store these for config purposes
         self.rac = rac
-        self._parents = parents
-        self._correlations = correlations
-        self._reindexing_ops = reindexing_ops
-        self._sigma = sigma
-
-        self.centric = rac.centric
-        self.epsilon = rac.epsilon
-
-        parent_ids = []
-        is_root = []
-
-        for asu_id, rasu in enumerate(rac):
-            pa = parents[asu_id]
-            if pa == asu_id or pa < 0:
-                pa = None
-            if pa is None:
-                r = 0.
-            else:
-                r = correlations[asu_id]
-
-            op = 'x,y,z'
-            if reindexing_ops is not None:
-                op = reindexing_ops[asu_id]
-            if not isinstance(op, Op):
-                op = Op(op)
-
-            hkl = rasu.Hunique
-            hkl = op(hkl)
-
-            if pa is None:
-                parent_id = -tf.ones(rasu.asu_size, rasu.miller_id.dtype)
-                is_root.append(
-                    tf.ones(rasu.asu_size, dtype='bool')
-                )
-            else:
-                parent_id = rac._miller_ids(
-                    pa * tf.ones_like(hkl[:,:1]),
-                    hkl,
-                )
-                is_root.append(
-                    tf.zeros(rasu.asu_size, dtype='bool')
-                )
-            parent_ids.append(parent_id)
-
-        self.is_root = tf.concat(is_root, axis=0)
-        self.parent_ids = tf.concat(parent_ids, axis=0)
+        self.correlation = tf.gather(correlation, self.rac.asu_id)
         self.sigma = sigma
-
-        idx = self.parent_ids >= 0
-        r = tf.gather(tf.convert_to_tensor(correlations), rac.asu_id)
-        self.r = tf.where(idx, r, 0.)
-
-        self.scale = tf.where(
-            rac.centric,
-            tf.sqrt(rac.epsilon * sigma * (1. - tf.square(self.r))),
-            tf.sqrt(0.5 * rac.epsilon * sigma * (1. - tf.square(self.r))),
-        )
-        self.has_parent = self.parent_ids >= 0
-        self.parent_ids = tf.where(self.has_parent, self.parent_ids, tf.range(rac.asu_size, dtype=tf.int32))
         self.built = True #This is always true
-
-        self.p_centric  = centric_wilson(self.epsilon, sigma)
-        self.p_acentric = acentric_wilson(self.epsilon, sigma)
 
     def get_config(self):
         config = super().get_config()
         config.update({
             'rac' : tfk.saving.serialize_keras_object(self.rac),
-            'parents' : self._parents,
-            'correlations' : self._correlations,
-            'reindexing_ops' : self._reindexing_ops,
+            'correlations' : self.correlation,
             'sigma' : self.sigma,
         })
         return config
@@ -215,37 +189,18 @@ class MultiWilsonPrior(tfk.layers.Layer):
         config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
         return cls(**config)
 
+    def distribution(self, asu_id, hkl):
+        root = self.rac.gather(self.rac.is_root, asu_id, hkl)
+        centric = self.rac.gather(self.rac.centric, asu_id, hkl)
+        epsilon = self.rac.gather(self.rac.epsilon, asu_id, hkl)
+        correlation = tf.squeeze(tf.gather(self.correlation, asu_id), axis=-1)
 
-    def mean(self):
-        """
-        This is only for initialization of the surrogate!
-        """
-        return WilsonPrior(self.rac, self.sigma).mean()
-
-    def log_prob(self, z):
-        scale = self.scale #This is precomputed
-        loc = self.r * tf.gather(z, self.parent_ids, axis=-1)
-
-        # Mask any root nodes or missing parents
-        loc = tf.where(self.has_parent, loc, 0.)
-
-        ll  = tf.where(
-            self.centric,
-            FoldedNormal(loc, scale).log_prob(z),
-            Rice(loc, scale).log_prob(z),
-        )
-        wilson_p = tf.where(
-            self.centric,
-            self.p_centric.log_prob(z),
-            self.p_acentric.log_prob(z),
-        )
-
-        ll = tf.where(
-            self.is_root,
-            wilson_p,
-            ll,
-        )
-
-        return ll
-
+        sigma = self.sigma
+        if len(tf.shape(self.sigma)) > 0:
+            sigma = tf.squeeze(
+                self.rac.gather(self.sigma, asu_id, hkl),
+                axis=-1,
+            )
+        p = MultiWilsonDistribution(root, correlation, centric, epsilon, sigma)
+        return p
 

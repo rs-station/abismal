@@ -87,9 +87,15 @@ class VariationalMergingModel(tfk.models.Model):
 
             _q = self.surrogate_posterior.distribution(asu_id.flat_values, _hkl.flat_values)
             _p = self.prior.distribution(asu_id.flat_values, _hkl.flat_values)
-            _ipred = _q.sample(mc_samples)
 
-            _kl_div = self.surrogate_posterior.compute_kl_terms(_q, _p, samples=_ipred)
+            #We need these shenanigans to support multivariate posteriors
+            _z = _q.sample(mc_samples)
+            if _q.event_shape != []:
+                _ipred = _z[...,0]
+            else:
+                _ipred = _z
+
+            _kl_div = self.surrogate_posterior.compute_kl_terms(_q, _p, samples=_z)
             _kl_div = tf.RaggedTensor.from_row_splits(_kl_div[...,None], scale.row_splits)
 
             if self.surrogate_posterior.parameterization == 'structure_factor':

@@ -6,6 +6,7 @@ from reciprocalspaceship.utils import hkl_to_asu,is_absent
 from inspect import signature
 from reciprocalspaceship.decorators import spacegroupify,cellify
 import gemmi
+from abismal.symmetry.op import Op
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class ReciprocalASUCollection(tfk.layers.Layer):
@@ -44,7 +45,7 @@ class ReciprocalASUCollection(tfk.layers.Layer):
     def get_config(self):
         config = super().get_config()
         config.update(
-            {f'rasu_{i}' : v.get_config() for i,v in enumerate(self.reciprocal_asus)}
+            {f'rasu_{i}' : tfk.saving.serialize_keras_object(v) for i,v in enumerate(self.reciprocal_asus)}
         )
         return config
 
@@ -52,7 +53,7 @@ class ReciprocalASUCollection(tfk.layers.Layer):
     def from_config(cls, config):
         rasus = []
         keys = config.keys()
-        rasus = [ReciprocalASU(**v) for k,v in config.items() if k.startswith('rasu_')]
+        rasus = [tfk.saving.deserialize_keras_object(v) for k,v in config.items() if k.startswith('rasu_')]
         config = {k:v for k,v in config.items() if not k.startswith('rasu_')}
         return cls(*rasus, **config)
 
@@ -248,4 +249,36 @@ class ReciprocalASU(tfk.layers.Layer):
         idx = self._miller_ids(H)
         safe = tf.maximum(idx, 0)
         return tf.gather(tensor, safe)
+
+class ReciprocalASUGraph(ReciprocalASUCollection):
+    def __init__(self, *reciprocal_asus, parents=None, reindexing_ops=None, **kwargs):
+        super().__init__(*reciprocal_asus, **kwargs)
+        if parents is None:
+            parents = tf.range(len(reciprocal_asus))
+        self.parents = parents
+        self.reindexing_ops = reindexing_ops
+        self.parent_asu_id = tf.gather(parents, self.asu_id)
+        Hpa = []
+        is_root = []
+        for i,rasu in enumerate(self.reciprocal_asus):
+            op = 'x,y,z'
+            if reindexing_ops is not None:
+                op = reindexing_ops[i]
+            op = Op(op)
+            Hpa.append(op(rasu.Hunique))
+
+        Hpa = tf.concat(Hpa, axis=0)
+        self.parent_hkl = Hpa
+        self.is_root = self.parent_asu_id == self.asu_id
+        self.parent_miller_id = self._miller_ids(self.parent_asu_id[:,None], self.parent_hkl)
+        self.has_parent = (self.parent_miller_id >= 0) & (~self.is_root)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'parents' : self.parents,
+            'reindexing_ops' : self.reindexing_ops,
+        })
+        return config
+
 

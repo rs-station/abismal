@@ -39,7 +39,7 @@ def _is_dials_file(s):
 def run_abismal(parser):
     import tf_keras as tfk
     from abismal import __version__ as version
-    from abismal.symmetry import ReciprocalASU,ReciprocalASUCollection
+    from abismal.symmetry import ReciprocalASU,ReciprocalASUCollection,ReciprocalASUGraph
     from abismal.merging import VariationalMergingModel
     from abismal.callbacks import HistorySaver,MtzSaver,PhenixRunner,AnomalousPeakFinder
     from abismal.io import split_dataset_train_test,set_gpu
@@ -159,7 +159,12 @@ def run_abismal(parser):
             parser.dmin,
             anomalous=parser.anomalous,
         ))
-    rac = ReciprocalASUCollection(*rasu)
+    #rac = ReciprocalASUCollection(*rasu)
+    rac = ReciprocalASUGraph(
+        *rasu,
+        parents=parser.parents,
+        reindexing_ops=parser.reindexing_ops,
+    )
 
     reindexing_ops = ['x,y,z']
     if not parser.disable_index_disambiguation:
@@ -171,30 +176,45 @@ def run_abismal(parser):
         )
         reindexing_ops = reindexing_ops + [op.triplet() for op in ops] 
 
-    if parser.intensity_posterior:
+    if parser.parents is not None:
+        from abismal.prior.structure_factor.wilson import MultiWilsonPrior
+        from abismal.surrogate_posterior.structure_factor.folded_normal import MultivariateFoldedNormalPosterior
+        prior = MultiWilsonPrior(
+            rac, 
+            parser.prior_correlation, 
+        )
+        loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
+        scale_init = parser.init_scale * loc_init
+        surrogate_posterior = MultivariateFoldedNormalPosterior(
+            rac, 
+            loc_init,
+            scale_init,
+            epsilon=parser.epsilon,
+        )
+    elif parser.intensity_posterior:
+        raise NotImplementedError("The intensity posterior is unavailable in this version.")
         from abismal.surrogate_posterior.intensity import FoldedNormalPosterior
+        from abismal.prior.intensity.wilson import WilsonPrior
+        prior = WilsonPrior(rac)
+        loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
+        scale_init = parser.init_scale * loc_init
         surrogate_posterior = FoldedNormalPosterior(
             rac, 
-            kl_weight=parser.kl_weight,
+            loc_init,
+            scale_init,
             epsilon=parser.epsilon,
-            scale_factor=parser.init_scale,
         )
     else:
-        prior = None
-        if parser.parents is not None:
-            raise NotImplementedError("The Multivariate Wilson prior is unavailable in this version.")
-            from abismal.surrogate_posterior.structure_factor.wilson import MultiWilsonPrior
-            prior = MultiWilsonPrior(
-                rac, 
-                parser.parents, 
-                parser.prior_correlation, 
-                parser.reindexing_ops,
-            )
+        from abismal.surrogate_posterior.structure_factor import FoldedNormalPosterior
+        from abismal.prior.structure_factor.wilson import WilsonPrior
+        prior = WilsonPrior(rac)
+        loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
+        scale_init = parser.init_scale * loc_init
         surrogate_posterior = FoldedNormalPosterior(
             rac, 
-            kl_weight=parser.kl_weight,
+            loc_init,
+            scale_init,
             epsilon=parser.epsilon,
-            scale_factor=parser.init_scale,
         )
 
     scale_model = ImageScaler(
@@ -215,8 +235,10 @@ def run_abismal(parser):
     model = VariationalMergingModel(
         scale_model, 
         surrogate_posterior, 
+        prior=prior,
         likelihood=likelihood,
         mc_samples=parser.mc_samples,
+        kl_weight=parser.kl_weight,
         reindexing_ops=reindexing_ops,
     )
 
