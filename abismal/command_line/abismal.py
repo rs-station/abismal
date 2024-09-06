@@ -159,7 +159,7 @@ def run_abismal(parser):
             parser.dmin,
             anomalous=parser.anomalous,
         ))
-    #rac = ReciprocalASUCollection(*rasu)
+
     rac = ReciprocalASUGraph(
         *rasu,
         parents=parser.parents,
@@ -192,8 +192,7 @@ def run_abismal(parser):
             epsilon=parser.epsilon,
         )
     elif parser.intensity_posterior:
-        raise NotImplementedError("The intensity posterior is unavailable in this version.")
-        from abismal.surrogate_posterior.intensity import FoldedNormalPosterior
+        from abismal.surrogate_posterior.intensity import GammaPosterior
         from abismal.prior.intensity.wilson import WilsonPrior
         prior = WilsonPrior(rac)
         loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()

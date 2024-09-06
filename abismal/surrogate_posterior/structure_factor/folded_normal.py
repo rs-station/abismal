@@ -119,17 +119,6 @@ class MultivariateFoldedNormalPosterior(StructureFactorPosteriorBase):
         })
         return config
 
-    def _distribution(self, loc, scale, low):
-        f = FoldedNormal(
-            loc, 
-            scale, 
-        )
-        q = tfd.TransformedDistribution(
-            f, 
-            tfb.Shift(low),
-        )
-        return q
-
     def distribution(self, asu_id, hkl):
         loc_1 = self.rac.gather(self.loc, asu_id, hkl)
         scale_1 = self.rac.gather(self.scale, asu_id, hkl)
@@ -140,18 +129,18 @@ class MultivariateFoldedNormalPosterior(StructureFactorPosteriorBase):
         q = DoubleFoldedNormal(loc_1, scale_1, loc_2, scale_2, self.low)
         return q
 
-        from IPython import embed
-        embed(colors='linux')
-        XX
-        loc_1 = self.rac.gather(self.loc, asu_id, hkl)
-        scale_1 = self.rac.gather(self.scale, asu_id, hkl)
-        q = self._distribution(loc, scale, self.low)
-        return q
-
     def flat_distribution(self):
         """
         This is used for output of F,SIGF and is univariate
         """
-        q = self._distribution(self.loc, self.scale, self.low)
+        f = FoldedNormal(
+            self.loc, 
+            self.scale, 
+        )
+        q = tfd.TransformedDistribution(
+            f, 
+            tfb.Shift(self.low),
+        )
         return q
+
 
