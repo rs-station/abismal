@@ -24,10 +24,6 @@ source <(curl -s https://raw.githubusercontent.com/rs-station/careless/main/inst
 # Reactivate to update cuda paths
 conda activate $ENVNAME
 
-# Install rs version with parallel stream loading
-pip install git+https://github.com/rs-station/reciprocalspaceship@parstream
-pip install ray
-
 # Install abismal
 pip install abismal
 
