@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow_probability import distributions as tfd
 from abismal.prior.base import PriorBase
+import tf_keras as tfk
 
 
 def WilsonDistribution(centric, epsilon, sigma=1.):

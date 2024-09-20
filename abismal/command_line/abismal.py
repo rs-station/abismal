@@ -10,33 +10,8 @@ def main():
     set_gpu(parser.gpu_id)
     run_abismal(parser)
 
-
-# TODO: refactor this filetype control flow into abismal.io
-_file_endings = {
-    'refl' : ('.refl', '.pickle'),
-    'expt' : ('.expt', '.json'),
-    'stream' : ('.stream',),
-}
-
-def _is_file_type(s, endings):
-    for ending in endings:
-        if s.endswith(ending):
-            return True
-    return False
-
-def _is_stream_file(s):
-    return _is_file_type(s, _file_endings['stream'])
-
-def _is_refl_file(s):
-    return _is_file_type(s, _file_endings['refl'])
-
-def _is_expt_file(s):
-    return _is_file_type(s, _file_endings['expt'])
-
-def _is_dials_file(s):
-    return _is_refl_file(s) or _is_expt_file(s)
-
 def run_abismal(parser):
+    import tensorflow as tf
     import tf_keras as tfk
     from abismal import __version__ as version
     from abismal.symmetry import ReciprocalASU,ReciprocalASUCollection,ReciprocalASUGraph
@@ -58,6 +33,8 @@ def run_abismal(parser):
     if not exists(parser.out_dir):
         mkdir(parser.out_dir)
 
+    from abismal.io.manager import DataManager
+
     log_file = parser.out_dir + "/abismal.log"
     logger = logging.getLogger(__name__)
     logging.basicConfig(filename=log_file, level=logging.DEBUG)
@@ -67,96 +44,23 @@ def run_abismal(parser):
         logger.info(f"{k} : {v}")
     logger.info(str(vars(parser)))
 
-    cell = parser.cell
-    space_group = parser.space_group
-    asu_id = 0
-    if all([_is_stream_file(f) for f in parser.inputs]):
-        from abismal.io import StreamLoader
-        data = None
-        cell = parser.cell
+    dm = DataManager.from_parser(parser)
+    train,test = dm.get_train_test_splits()
 
-        for stream_file in parser.inputs:
-            loader = StreamLoader(
-                stream_file, 
-                cell=cell, 
-                dmin=parser.dmin, 
-                asu_id=asu_id, 
-                wavelength=parser.wavelength,
-            )
-            if parser.separate:
-                asu_id += 1
-            else:
-                asu_id = 1
-            if cell is None:
-                cell = loader.cell
-            _data = loader.get_dataset(
-                num_cpus=parser.num_cpus,
-                logging_level=parser.ray_log_level,
-            )
-            if data is None:
-                data = _data
-            else:
-                data = data.concatenate(_data)
-
-    elif all([_is_dials_file(f) for f in parser.inputs]):
-        from abismal.io import StillsLoader
-        expt_files = [f for f in parser.inputs if _is_expt_file(f)]
-        refl_files = [f for f in parser.inputs if _is_refl_file(f)]
-
-        data = None
-        if parser.separate:
-            for expt,refl in zip(expt_files, refl_files):
-                loader = StillsLoader([expt], [refl], space_group, cell, parser.dmin, asu_id)
-                asu_id += 1
-                _data = loader.get_dataset()
-                if data is None:
-                    data = _data
-                else:
-                    data = data.concatenate(_data)
-        else:
-            loader = StillsLoader(
-                expt_files, refl_files, space_group, cell, parser.dmin, asu_id=asu_id
-            )
-            data = loader.get_dataset()
-            asu_id += 1
-        if cell is None:
-            cell = loader.cell
-    else:
-        raise ValueError(
-            "Couldn't determine input file type. "
-            "DIALS reflection tables and CrystFEL streams are supported."
-        )
-    if space_group is None:
-        if hasattr(loader, 'spacegroup'):
-            space_group = loader.spacegroup
-        else:
-            space_group = 'P1'
-
-    # Gemmification
-    if not isinstance(cell, gemmi.UnitCell):
-        cell = gemmi.UnitCell(*cell)
-    if not isinstance(space_group, gemmi.SpaceGroup):
-        space_group = gemmi.SpaceGroup(space_group)
-
-    # Handle setting up the test fraction, shuffle buffer, batching, etc
-    test = None
-    if parser.test_fraction > 0.:
-        train,test = split_dataset_train_test(data, parser.test_fraction)
+    if test is not None:
         test  = test.cache().repeat().ragged_batch(parser.batch_size)
         test = test.prefetch(AUTOTUNE)
-    else:
-        train = data
     train = train.cache().repeat()
     if parser.shuffle_buffer_size > 0:
         train = train.shuffle(parser.shuffle_buffer_size)
     train = train.ragged_batch(parser.batch_size)
 
     rasu = []
-    for i in range(asu_id):
+    for i in range(dm.num_asus):
         rasu.append(ReciprocalASU(
-            cell,
-            space_group,
-            parser.dmin,
+            dm.cell,
+            dm.spacegroup,
+            dm.dmin,
             anomalous=parser.anomalous,
         ))
 
@@ -169,8 +73,8 @@ def run_abismal(parser):
     reindexing_ops = ['x,y,z']
     if not parser.disable_index_disambiguation:
         ops = gemmi.find_twin_laws(
-            cell,
-            space_group,
+            dm.cell,
+            dm.spacegroup,
             3.0,
             False
         )
@@ -192,11 +96,12 @@ def run_abismal(parser):
             epsilon=parser.epsilon,
         )
     elif parser.intensity_posterior:
-        from abismal.surrogate_posterior.intensity import GammaPosterior
+        from abismal.surrogate_posterior.intensity import FoldedNormalPosterior
         from abismal.prior.intensity.wilson import WilsonPrior
         prior = WilsonPrior(rac)
         loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
         scale_init = parser.init_scale * loc_init
+
         surrogate_posterior = FoldedNormalPosterior(
             rac, 
             loc_init,
@@ -300,7 +205,6 @@ def run_abismal(parser):
                 )
             callbacks.append(f)
 
-    train = train.prefetch(AUTOTUNE)
 
     if parser.debug:
         for x,y in train:
@@ -309,6 +213,7 @@ def run_abismal(parser):
 
     model.compile(opt, run_eagerly=parser.run_eagerly, jit_compile=parser.jit_compile)
 
+    train = train.prefetch(AUTOTUNE)
     history = model.fit(
         x=train, 
         epochs=parser.epochs, 
