@@ -51,8 +51,7 @@ unset PTXAS_DIR' >> $CONDA_PREFIX/etc/conda/deactivate.d/env_vars.sh
 # Reactivate to update cuda paths
 conda activate $ENVNAME
 
-# Install rs version with parallel stream loading
-pip install git+https://github.com/rs-station/reciprocalspaceship@parstream
+# Install ray
 pip install ray
 
 # Install abismal
