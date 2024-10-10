@@ -1,6 +1,6 @@
 from reciprocalspaceship.decorators import spacegroupify,cellify
 from abismal.io import split_dataset_train_test
-import pickle
+import yaml
 
 # TODO: refactor this filetype control flow into abismal.io
 _file_endings = {
@@ -44,6 +44,29 @@ class DataManager:
         self.spacegroup = spacegroup
         self.test_fraction = test_fraction
         self.num_asus = 0
+
+    def get_config(self):
+        conf = {
+            'dmin' : self.dmin,
+            'wavelength' : self.wavelength,
+            'inputs' : self.inputs,
+            'cell' : list(self.cell.parameters), 
+            'spacegroup' : self.spacegroup.xhm(),
+            'num_cpus' : self.num_cpus,
+            'separate' : self.separate,
+            'wavelength' : self.wavelength,
+            'ray_log_level' : self.ray_log_level,
+            'test_fraction' : self.test_fraction,
+            'num_asus': self.num_asus,
+        }
+        return conf
+
+    @classmethod
+    def from_config(cls, conf):
+        num_asus = conf.pop('num_asus')
+        result = cls(**conf)
+        result.num_asus = num_asus
+        return result
 
     @classmethod
     def from_parser(cls, parser):
@@ -160,10 +183,13 @@ class DataManager:
         return train, test
 
     def to_file(self, file_name):
-        with open(file_name, 'wb') as out:
-            pickle.dump(self, out)
+        conf = self.get_config()
+        with open(file_name, 'w') as out:
+            yaml.dump(conf, out)
 
-    def from_file(self, file_name):
-        with open(file_name, 'rb') as f:
-            dm = pickle.load(file_name)
+    @classmethod
+    def from_file(cls, file_name):
+        with open(file_name, 'r') as f:
+            conf = yaml.safe_load(f)
+        return cls.from_config(conf)
 
