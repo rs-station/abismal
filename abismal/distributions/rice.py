@@ -1,18 +1,41 @@
 import tensorflow as tf
+from tensorflow.python.ops import array_ops
+from tensorflow_probability.python.internal import dtype_util
 from tensorflow_probability.python.internal import special_math
 from tensorflow_probability import distributions as tfd
-from tensorflow_probability.python.internal import dtype_util
-import tensorflow_probability as tfp
-from tensorflow_probability import bijectors as tfb
-from tensorflow_probability.python.internal import tensor_util
-import numpy as np
-from tensorflow_probability.python.distributions import distribution
 from tensorflow_probability.python.internal import reparameterization
-from tensorflow_probability.python.distributions import kullback_leibler
-from tensorflow_probability.python.internal import parameter_properties
+from tensorflow_probability.python.internal import prefer_static as ps
+import numpy as np
 from tensorflow_probability.python.bijectors import exp as exp_bijector
+from tensorflow_probability.python.bijectors import absolute_value as abs_bijector
+from tensorflow_probability.python.internal import parameter_properties
+from tensorflow_probability.python.internal import samplers
+from tensorflow_probability import math as tfm
+from tensorflow_probability.python.internal import tensor_util
+from tensorflow_probability import math as tfm
+import math
 
-class Rice(distribution.AutoCompositeTensorDistribution):
+def rice_sample_gradients(z, nu, sigma):
+    nuzsig2 = nu*z / (sigma*sigma)
+    dzdnu = tf.math.bessel_i1e(nuzsig2) / tf.math.bessel_i0e(nuzsig2)
+    dzdsigma = (z - nu * dzdnu)/sigma
+    return dzdnu, dzdsigma
+
+@tf.custom_gradient
+def stateless_rice(shape, nu, sigma, seed):
+    z1 = tf.random.stateless_normal(shape, seed, mean=nu, stddev=sigma)
+    z2 = tf.random.stateless_normal(shape, seed, mean=0., stddev=sigma)
+    z = tf.sqrt(z1*z1 + z2*z2)
+    def grad(upstream):
+        dnu,dsigma = rice_sample_gradients(z, nu, sigma)
+        dnu = tf.reduce_sum(upstream * dnu, axis=0)
+        dsigma = tf.reduce_sum(upstream * dsigma, axis=0)
+        return None, dnu, dsigma, None
+    return z, grad
+
+
+class Rice(tfd.Distribution):
+    """The Rice distribution."""
     def __init__(self,
 		   nu,
 		   sigma,
@@ -27,13 +50,20 @@ class Rice(distribution.AutoCompositeTensorDistribution):
         with tf.name_scope(name) as name:
             self._nu = tensor_util.convert_nonref_to_tensor(nu)
             self._sigma = tensor_util.convert_nonref_to_tensor(sigma)
-        super(Rice, self).__init__(
-            dtype=dtype,
-            validate_args=validate_args,
-            allow_nan_stats=allow_nan_stats,
-            reparameterization_type=reparameterization.FULLY_REPARAMETERIZED,
-            parameters=parameters,
-            name=name)
+            super(Rice, self).__init__(
+                dtype=dtype,
+                validate_args=validate_args,
+                allow_nan_stats=allow_nan_stats,
+                reparameterization_type=reparameterization.FULLY_REPARAMETERIZED,
+                parameters=parameters,
+                name=name)
+
+    def _batch_shape_tensor(self, nu=None, sigma=None):
+        if nu is None:
+            nu = self.nu
+        if sigma is None:
+            sigma =self.sigma
+        return array_ops.shape(nu / sigma)
 
     @classmethod
     def _parameter_properties(cls, dtype, num_classes=None):
@@ -50,6 +80,12 @@ class Rice(distribution.AutoCompositeTensorDistribution):
         return pp
       # pylint: enable=g-long-lambda
 
+    def _event_shape_tensor(self):
+        return tf.constant([], dtype=tf.int32)
+
+    def _event_shape(self):
+        return tf.TensorShape([])
+
     @property
     def nu(self):
         return self._nu
@@ -62,15 +98,12 @@ class Rice(distribution.AutoCompositeTensorDistribution):
     def _pi(self):
         return tf.convert_to_tensor(np.pi, self.dtype)
 
-    def sample_square(self, sample_shape=(), seed=None, name='sample', **kwargs):
-        base_normal = tfd.Normal(0., self.sigma)
-        s1 = base_normal.sample(sample_shape=sample_shape, seed=seed, name=name, **kwargs)
-        s2 = base_normal.sample(sample_shape=sample_shape, seed=seed, name=name, **kwargs)
-        return tf.square(s1) + tf.square(s2 + self.nu)
-
     def _sample_n(self, n, seed=None):
-        sqr = self.sample_square(n, seed)
-        return tf.math.sqrt(sqr)
+        seed = samplers.sanitize_seed(seed)
+        nu = tf.convert_to_tensor(self.nu)
+        sigma = tf.convert_to_tensor(self.sigma)
+        shape = ps.concat([[n], self._batch_shape_tensor(nu=nu, sigma=sigma)], axis=0)
+        return stateless_rice(shape, nu, sigma, seed)
 
     def _log_bessel_i0(self, x):
         return tf.math.log(tf.math.bessel_i0e(x)) + tf.math.abs(x)
@@ -114,31 +147,4 @@ class Rice(distribution.AutoCompositeTensorDistribution):
     def _stddev(self):
         return tf.math.sqrt(self.variance())
 
-    @property
-    def _bivariate_normal(self):
-        loc   = tf.convert_to_tensor([1., 0.], dtype=self.dtype)[...,None,:] * self.nu[...,None] 
-        scale = tf.convert_to_tensor([1., 1.], dtype=self.dtype)[...,None,:] * self.sigma[...,None] 
-        mvn = tfd.MultivariateNormalDiag(loc, scale)
-        return mvn
 
-@kullback_leibler.RegisterKL(Rice, Rice)
-def _kl_rice_rice(q, p, name=None):
-    return q._bivariate_normal.kl_divergence(p._bivariate_normal)
-
-if __name__=="__main__":
-    n = 100
-    loc,scale = np.random.random((2, n)).astype('float32')
-    q = Rice(loc, scale)
-    p = Rice(0., 1.)
-
-    x = np.linspace(-10., 10., 1000)
-    u = q.mean()
-    s = q.stddev()
-    v = q.variance()
-
-    q.log_prob(x[:,None])
-    q.prob(x[:,None])
-    q.sample(n)
-
-    from IPython import embed
-    embed(colors='linux')
