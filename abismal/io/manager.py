@@ -1,5 +1,6 @@
 from reciprocalspaceship.decorators import spacegroupify,cellify
 from abismal.io import split_dataset_train_test
+import pickle
 
 # TODO: refactor this filetype control flow into abismal.io
 _file_endings = {
@@ -26,15 +27,13 @@ def _is_expt_file(s):
 def _is_dials_file(s):
     return _is_refl_file(s) or _is_expt_file(s)
 
-
 class DataManager:
     """
     A high-level class for managing I/O of reflection data.
     """
     def __init__(self, inputs, dmin, cell=None, spacegroup=None, 
             num_cpus=None, separate=False, wavelength=None, ray_log_level="ERROR",
-            test_fraction=0., 
-                 ):
+            test_fraction=0.):
         self.inputs = inputs
         self.dmin = dmin
         self.wavelength = wavelength
@@ -148,7 +147,6 @@ class DataManager:
 
         return data
 
-
     def get_train_test_splits(self, data=None):
         if data is None:
             data = self.get_dataset()
@@ -160,4 +158,12 @@ class DataManager:
         else:
             train = data
         return train, test
+
+    def to_file(self, file_name):
+        with open(file_name, 'wb') as out:
+            pickle.dump(self, out)
+
+    def from_file(self, file_name):
+        with open(file_name, 'rb') as f:
+            dm = pickle.load(file_name)
 
