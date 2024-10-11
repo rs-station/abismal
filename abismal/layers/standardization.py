@@ -79,7 +79,7 @@ class Standardize(tfk.layers.Layer):
             self._var,
             zero_debias_count=self.count,
             decay=self.decay,
-            axis=(0, 1),
+            axis=0, #TODO: if tf.rank(x) > 2, this should be (0, ... , tf.rank(x) - 2) i think
         )
 
     def standardize(self, data):
