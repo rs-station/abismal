@@ -50,6 +50,9 @@ class PosteriorBase(tfk.models.Model):
         raise NotImplementedError("Subclasses must implement a distribution method")
 
     def flat_distribution(self):
+        """
+        This method can be overloaded to avoid unnecessary "gather" operations and increase performance.
+        """
         q = self.distribution(
             self.rac.asu_id,
             self.rac.Hunique,
