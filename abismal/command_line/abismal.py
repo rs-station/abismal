@@ -46,6 +46,7 @@ def run_abismal(parser):
 
     dm = DataManager.from_parser(parser)
     train,test = dm.get_train_test_splits()
+    dm.to_file(parser.out_dir + "/datamanager.yml")
 
     if test is not None:
         test  = test.cache().repeat().ragged_batch(parser.batch_size)
@@ -101,7 +102,6 @@ def run_abismal(parser):
         prior = WilsonPrior(rac)
         loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
         scale_init = parser.init_scale * loc_init
-
         surrogate_posterior = FoldedNormalPosterior(
             rac, 
             loc_init,
@@ -109,12 +109,13 @@ def run_abismal(parser):
             epsilon=parser.epsilon,
         )
     else:
-        from abismal.surrogate_posterior.structure_factor import FoldedNormalPosterior
+        from abismal.surrogate_posterior.structure_factor import FoldedNormalPosterior as Posterior
+        #from abismal.surrogate_posterior.structure_factor.rice import RicePosterior as Posterior
         from abismal.prior.structure_factor.wilson import WilsonPrior
         prior = WilsonPrior(rac)
         loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
         scale_init = parser.init_scale * loc_init
-        surrogate_posterior = FoldedNormalPosterior(
+        surrogate_posterior = Posterior(
             rac, 
             loc_init,
             scale_init,
