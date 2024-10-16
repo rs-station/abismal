@@ -89,7 +89,6 @@ class ImageScaler(tfk.models.Model):
                     activation=self.activation,
                     kernel_initializer=kernel_initializer,
                 ) for i in range(mlp_depth)])
-
         if share_weights:
             self.scale_network = self.image_network
         else:
@@ -102,6 +101,7 @@ class ImageScaler(tfk.models.Model):
             ]) 
 
         self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
+        #self.output_gb = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
         self.standardize_intensity = Standardize(center=False)
         self.standardize_metadata = Standardize()
 
@@ -135,16 +135,25 @@ class ImageScaler(tfk.models.Model):
 
     def prior_function(self):
         p = tfd.Exponential(1.)
+        #p = FoldedNormal(1., 1.)
+        #p = FoldedNormal(1., 0.1)
         #scale = tf.sqrt(0.5 * np.pi)
         #p = tfd.HalfNormal(scale)
         #scale = math.sqrt(math.log(0.5 * (math.sqrt(5.) + 1.)))
         #scale = 1.
-        #p = tfd.LogNormal(0., scale)
+        #p = tfd.LogNormal(0., 1.)
+        #p = tfd.Normal(1.0, 1.0)
         return p
 
     def distribution_function(self, output):
         loc, scale = tf.unstack(output, axis=-1)
-        scale = tf.nn.softplus(scale) + self.epsilon
+        scale = tf.math.exp(scale) + self.epsilon
+
+        # NOTE: bijecting the loc parameter makes the NN get stuck at zero
+        # Uncommment this line with extreme caution
+        #loc = tf.math.exp(loc) + self.epsilon
+
+        #q = tfd.Normal(loc, scale)
         q = FoldedNormal(loc, scale)
         #q = tfd.LogNormal(loc, scale)
         return q
@@ -170,6 +179,7 @@ class ImageScaler(tfk.models.Model):
         self.standardize_metadata.build(metadata)
         self.pool.build(metadata[:-1] + [self.mlp_width])
         self.output_dense.build(metadata[:-1] + [self.mlp_width])
+        #self.output_gb.build(metadata[:-1] + [self.mlp_width])
 
     def call(self, inputs, mc_samples=32, training=None, **kwargs):
         (
@@ -228,9 +238,6 @@ class ImageScaler(tfk.models.Model):
         self.add_loss(self.kl_weight * kl_div)
         self.add_metric(kl_div, name='KL_Σ')
 
-        if self.standardize_intensity is not None:
-            z = z * tf.squeeze(self.standardize_intensity.std)
-
         if ragged_tensor.is_ragged(scale):
             z = tf.RaggedTensor.from_row_splits(
                 tf.transpose(z), metadata.row_splits
@@ -238,4 +245,19 @@ class ImageScaler(tfk.models.Model):
         else:
             z = tf.transpose(z)
 
-        return z
+        ## Traditional scalerators
+        #log_g,b = tf.unstack(self.output_gb(image), axis=-1)
+        #self.add_metric(tf.reduce_mean(b), 'Bfac')
+
+        #b = tf.math.exp(-b[...,None] * tf.math.reciprocal(tf.math.square(resolution)))
+        #g = tf.math.exp(log_g)
+        #if self.standardize_intensity is not None:
+        #    g = g * tf.squeeze(self.standardize_intensity.std)
+        #self.add_metric(tf.reduce_mean(g), 'Gfac')
+        #out = z * g[...,None] * b
+
+        if self.standardize_intensity is not None:
+            z = z * tf.squeeze(self.standardize_intensity.std)
+        out = z
+
+        return out
