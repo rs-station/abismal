@@ -273,6 +273,23 @@ class ReciprocalASUGraph(ReciprocalASUCollection):
         self.parent_miller_id = self._miller_ids(self.parent_asu_id[:,None], self.parent_hkl)
         self.has_parent = (self.parent_miller_id >= 0) & (~self.is_root)
 
+    @classmethod
+    def from_lists(
+        cls,
+        cells,
+        spacegroups,
+        dmins,
+        anomalous,
+        parents=None,
+        reindexing_ops=None,
+    ):
+        rasu = []
+        for i, (cell, sg, dmin, anom) in enumerate(zip(cells, spacegroups, dmins, anomalous)):
+            rasu.append(
+                ReciprocalASUCollection(cell, sg, dmin, anom)
+            )
+        return cls(rasu, parents, reindexing_ops)
+
     def get_config(self):
         config = super().get_config()
         config.update({
