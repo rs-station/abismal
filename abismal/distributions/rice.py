@@ -33,7 +33,6 @@ def stateless_rice(shape, nu, sigma, seed):
         return None, dnu, dsigma, None
     return z, grad
 
-
 class Rice(tfd.Distribution):
     """The Rice distribution."""
     def __init__(self,
