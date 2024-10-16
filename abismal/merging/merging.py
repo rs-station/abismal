@@ -56,7 +56,7 @@ class VariationalMergingModel(tfk.models.Model):
     def build(self, shapes):
         self.scale_model.build(shapes)
 
-    def call(self, inputs, mc_samples=None, training=None, **kwargs):
+    def _call_dense(self, inputs, mc_samples=None, training=None, **kwargs):
         if mc_samples is None:
             mc_samples = self.mc_samples
 
@@ -76,34 +76,22 @@ class VariationalMergingModel(tfk.models.Model):
             **kwargs
         )
 
+        q = self.surrogate_posterior.flat_distribution()
+        p = self.prior.flat_distribution()
+        z = q.sample(mc_samples)
+        kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
+
         ll = None
         ipred = None
-        kl_div = None
         hkl = None
 
         for op in self.reindexing_ops:
-            # Choose the best indexing solution for each image
             _hkl = tf.ragged.map_flat_values(op, hkl_in)
-
-            _q = self.surrogate_posterior.distribution(asu_id.flat_values, _hkl.flat_values)
-            _p = self.prior.distribution(asu_id.flat_values, _hkl.flat_values)
-
-            #We need these shenanigans to support multivariate posteriors
-            _z = _q.sample(mc_samples)
-            if _q.event_shape != []:
-                _ipred = _z[...,0]
-            else:
-                _ipred = _z
-
-            _kl_div = self.surrogate_posterior.compute_kl_terms(_q, _p, samples=_z)
-            _kl_div = tf.RaggedTensor.from_row_splits(_kl_div[...,None], scale.row_splits)
-
+            _ipred = self.surrogate_posterior.rac.gather(tf.transpose(z), asu_id, _hkl)
             if self.surrogate_posterior.parameterization == 'structure_factor':
                 _ipred = tf.square(_ipred)
-
-            _ipred = tf.transpose(_ipred)
-            _ipred = tf.RaggedTensor.from_row_splits(_ipred, scale.row_splits)
             _ipred = _ipred * scale
+
 
             _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
             _ll = tf.reduce_mean(_ll, [-1, -2], keepdims=True)
@@ -111,13 +99,11 @@ class VariationalMergingModel(tfk.models.Model):
             if ll is None:
                 ipred = _ipred
                 ll = _ll
-                kl_div = _kl_div
                 hkl = _hkl
             else:
                 idx =  _ll > ll
                 ipred = tf.where(idx, _ipred, ipred)
                 ll = tf.where(idx, _ll, ll)
-                kl_div = tf.where(idx, _kl_div, kl_div)
                 hkl = tf.where(idx, _hkl, hkl)
 
         if training:
@@ -141,6 +127,94 @@ class VariationalMergingModel(tfk.models.Model):
 
         ipred_avg = tf.reduce_mean(ipred, axis=-1)
         return ipred_avg
+
+    def _call_sparse(self, inputs, mc_samples=None, training=None, **kwargs):
+        if mc_samples is None:
+            mc_samples = self.mc_samples
+
+        (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = inputs
+
+        scale = self.scale_model(
+            inputs,
+            mc_samples=mc_samples, 
+            **kwargs
+        )
+
+        ll = None
+        ipred = None
+        hkl = None
+        kl_div = None
+
+        for op in self.reindexing_ops:
+            # Choose the best indexing solution for each image
+            _hkl = tf.ragged.map_flat_values(op, hkl_in)
+            _q = self.surrogate_posterior.distribution(asu_id.flat_values, _hkl.flat_values)
+            _p = self.prior.distribution(asu_id.flat_values, _hkl.flat_values)
+            _z = _q.sample(mc_samples)
+
+            kl_div = self.surrogate_posterior.compute_kl_terms(_q, _p, samples=_z)
+            ##We need these shenanigans to support multivariate posteriors
+            if _q.event_shape != []:
+                _ipred = _z[...,0]
+            else:
+                _ipred = _z
+
+            _kl_div = tf.RaggedTensor.from_row_splits(kl_div[...,None], scale.row_splits)
+            _ipred = tf.RaggedTensor.from_row_splits(tf.transpose(_ipred), scale.row_splits)
+
+            #_ipred  = self.surrogate_posterior.rac.gather(tf.transpose(z), asu_id, _hkl)
+            if self.surrogate_posterior.parameterization == 'structure_factor':
+                _ipred = tf.square(_ipred)
+            _ipred = _ipred * scale
+
+            _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
+            _ll = tf.reduce_mean(_ll, [-1, -2], keepdims=True)
+
+            if ll is None:
+                ipred = _ipred
+                ll = _ll
+                hkl = _hkl
+                kl_div = _kl_div
+            else:
+                idx =  _ll > ll
+                ipred = tf.where(idx, _ipred, ipred)
+                ll = tf.where(idx, _ll, ll)
+                hkl = tf.where(idx, _hkl, hkl)
+                kl_div = tf.where(idx, _kl_div, kl_div)
+
+        if training:
+            self.surrogate_posterior.register_seen(asu_id.flat_values, hkl.flat_values)
+
+        self.likelihood.register_metrics(
+            ipred.flat_values, 
+            iobs.flat_values, 
+            sigiobs.flat_values,
+        )
+
+        # This is the mean across mc samples and observations
+        ll = tf.reduce_mean(ll) 
+        kl_div = tf.reduce_mean(kl_div) 
+
+        self.add_metric(-ll, name='NLL')
+        self.add_loss(-ll)
+
+        self.add_metric(kl_div, name='KL')
+        self.add_loss(self.kl_weight * kl_div)
+
+        ipred_avg = tf.reduce_mean(ipred, axis=-1)
+        return ipred_avg
+
+    def call(self, inputs, mc_samples=None, training=None, **kwargs):
+        #return self._call_sparse(inputs, mc_samples, training, **kwargs)
+        return self._call_dense(inputs, mc_samples, training, **kwargs)
 
     #For production with super nan avoiding powers
     @tf.function
@@ -186,6 +260,17 @@ class VariationalMergingModel(tfk.models.Model):
             trainable_vars += ll_vars
             gradients += grad_ll
             metrics["|∇ll|"] = grad_ll_norm
+
+        p_vars = self.prior.trainable_variables
+        if len(p_vars) > 0:
+            grad_p = tape.gradient(loss, p_vars)
+            grad_p_norm = tf.sqrt(
+                tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_p])
+            )
+            trainable_vars += p_vars
+            gradients += grad_p
+            metrics["|∇p|"] = grad_p_norm
+
 
         gradients = [tf.where(tf.math.is_finite(g), g, 0.) for g in gradients]
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
