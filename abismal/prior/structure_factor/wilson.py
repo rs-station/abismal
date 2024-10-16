@@ -69,22 +69,35 @@ class WilsonPrior(PriorBase):
         })
         return config
 
+
     @classmethod
     def from_config(cls, config):
         config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
         return cls(**config)
 
-    def distribution(self, asu_id, hkl):
-        centric = self.rac.gather(self.rac.centric, asu_id, hkl)
-        epsilon = self.rac.gather(self.rac.epsilon, asu_id, hkl)
+    def _distribution(self, asu_id=None, hkl=None):
         sigma = self.sigma
-        if len(tf.shape(sigma)) > 0:
-            sigma = self.rac.gather(sigma, asu_id, hkl)
+        if asu_id is None:
+            centric = self.rac.centric
+            epsilon = self.rac.epsilon
+            asu_id = self.rac.asu_id
+        else:
+            centric = self.rac.gather(self.rac.centric, asu_id, hkl)
+            epsilon = self.rac.gather(self.rac.epsilon, asu_id, hkl)
+            if len(tf.shape(sigma)) > 0:
+                sigma = self.rac.gather(sigma, asu_id, hkl)
         p = WilsonDistribution(centric, epsilon, sigma)
         return p
 
+    def flat_distribution(self):
+        return self._distribution(asu_id=None, hkl=None)
+
+    def distribution(self, asu_id, hkl):
+        return self._distribution(asu_id, hkl)
+
 class MultiWilsonDistribution:
-    def __init__(self, is_root, correlation, centric, multiplicity, sigma=1.):
+    def __init__(self, is_root, correlation, centric, multiplicity, sigma=1., parent_id=None):
+        self.parent_id = parent_id #Convert this to a flat distribution
         self.is_root = is_root
         self.correlation = correlation
         self.centric = centric
@@ -103,7 +116,11 @@ class MultiWilsonDistribution:
         return loc
 
     def log_prob(self, z):
-        z_h, z_pa = tf.unstack(z, axis=-1)
+        if self.parent_id is not None:
+            z_h = z
+            z_pa = tf.gather(z, self.parent_id, axis=-1)
+        else:
+            z_h, z_pa = tf.unstack(z, axis=-1)
 
         #Single wilson case for root nodes
         ll_sw = WilsonDistribution(self.centric, self.multiplicity, self.sigma).log_prob(z_h)
@@ -189,18 +206,32 @@ class MultiWilsonPrior(tfk.layers.Layer):
         config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
         return cls(**config)
 
-    def distribution(self, asu_id, hkl):
-        root = self.rac.gather(self.rac.is_root, asu_id, hkl)
-        centric = self.rac.gather(self.rac.centric, asu_id, hkl)
-        epsilon = self.rac.gather(self.rac.epsilon, asu_id, hkl)
-        correlation = tf.squeeze(tf.gather(self.correlation, asu_id), axis=-1)
-
+    def _distribution(self, asu_id=None, hkl=None):
         sigma = self.sigma
-        if len(tf.shape(self.sigma)) > 0:
-            sigma = tf.squeeze(
-                self.rac.gather(self.sigma, asu_id, hkl),
-                axis=-1,
-            )
-        p = MultiWilsonDistribution(root, correlation, centric, epsilon, sigma)
+        if asu_id is None:
+            root = self.rac.is_root
+            centric = self.rac.centric
+            epsilon = self.rac.epsilon
+            correlation =self.correlation
+            parent_id = self.rac.parent_miller_id
+        else:
+            root = self.rac.gather(self.rac.is_root, asu_id, hkl)
+            centric = self.rac.gather(self.rac.centric, asu_id, hkl)
+            epsilon = self.rac.gather(self.rac.epsilon, asu_id, hkl)
+            correlation = tf.squeeze(tf.gather(self.correlation, asu_id), axis=-1)
+            parent_id = None
+            asu_id = self.rac.asu_id
+            hkl = self.rac.Hunique
+            if len(tf.shape(sigma)) > 0:
+                sigma = tf.squeeze(
+                    self.rac.gather(self.sigma, asu_id, hkl),
+                    axis=-1,
+                )
+        p = MultiWilsonDistribution(root, correlation, centric, epsilon, sigma, parent_id=parent_id)
         return p
 
+    def flat_distribution(self):
+        return self._distribution(asu_id=None, hkl=None)
+
+    def distribution(self, asu_id, hkl):
+        return self._distribution(asu_id, hkl)
