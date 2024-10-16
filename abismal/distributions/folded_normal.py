@@ -27,11 +27,11 @@ def folded_normal_sample_gradients(z, loc, scale):
 
     # This formula is dloc = N(z|-loc,scale) - N(z|loc,scale)
     dloc = p_b - p_a
-    dloc = dloc / dz
+    dloc = -dloc / dz
 
     # This formula is -[b * N(z|-loc, scale) + a * N(z|loc, scale)]
     dscale = -alpha * p_b - beta * p_a
-    dscale = dscale / dz
+    dscale = -dscale / dz
     return dloc, dscale
 
 @tf.custom_gradient
@@ -40,8 +40,8 @@ def stateless_folded_normal(shape, loc, scale, seed):
     z = tf.abs(z)
     def grad(upstream):
         dloc,dscale = folded_normal_sample_gradients(z, loc, scale)
-        dloc = tf.reduce_sum(-upstream * dloc, axis=0)
-        dscale = tf.reduce_sum(-upstream * dscale, axis=0)
+        dloc = tf.reduce_sum(upstream * dloc, axis=0)
+        dscale = tf.reduce_sum(upstream * dscale, axis=0)
         return None, dloc, dscale, None
     return z, grad
 
