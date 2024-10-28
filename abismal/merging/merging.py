@@ -14,7 +14,18 @@ from abismal.layers import Standardize
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class VariationalMergingModel(tfk.models.Model):
-    def __init__(self, scale_model, surrogate_posterior, prior, likelihood, mc_samples=1, kl_weight=1., epsilon=1e-6, reindexing_ops=None, **kwargs):
+    def __init__(
+            self, 
+            scale_model, 
+            surrogate_posterior, 
+            prior, 
+            likelihood, 
+            mc_samples=1, 
+            kl_weight=1., 
+            epsilon=1e-6, 
+            reindexing_ops=None, 
+            standardization_count_max=2_000,
+            **kwargs):
         super().__init__(**kwargs)
         self.epsilon = epsilon
         self.likelihood = likelihood
@@ -26,6 +37,8 @@ class VariationalMergingModel(tfk.models.Model):
         if reindexing_ops is None:
             reindexing_ops = ["x,y,z"]
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
+        self.standardize_intensity = Standardize(center=False, count_max=standardization_count_max)
+        self.standardize_metadata = Standardize(count_max=standardization_count_max)
 
     def get_config(self):
         ops = self.reindexing_ops
@@ -55,10 +68,47 @@ class VariationalMergingModel(tfk.models.Model):
 
     def build(self, shapes):
         self.scale_model.build(shapes)
+        self.standardize_intensity.build(shapes[-1])
+        self.standardize_metadata.build(shapes[-3])
+
+    def standardize_inputs(self, inputs):
+        (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = inputs
+        if self.standardize_intensity is not None:
+            iobs = tf.ragged.map_flat_values(
+                self.standardize_intensity, iobs) 
+            sigiobs = tf.ragged.map_flat_values(
+                self.standardize_intensity.standardize, sigiobs)
+        if self.standardize_metadata is not None:
+            metadata = tf.ragged.map_flat_values(
+                self.standardize_metadata, metadata)
+
+        self.add_metric(self.standardize_intensity.std, "Istd")
+        self.add_metric(self.standardize_intensity.count, "Icount")
+
+        out = (
+            asu_id,
+            hkl_in, resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) 
+
+        return out
 
     def _call_dense(self, inputs, mc_samples=None, training=None, **kwargs):
         if mc_samples is None:
             mc_samples = self.mc_samples
+
+        inputs = self.standardize_inputs(inputs)
 
         (
             asu_id,
@@ -91,7 +141,6 @@ class VariationalMergingModel(tfk.models.Model):
             if self.surrogate_posterior.parameterization == 'structure_factor':
                 _ipred = tf.square(_ipred)
             _ipred = _ipred * scale
-
 
             _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
             _ll = tf.reduce_mean(_ll, [-1, -2], keepdims=True)
