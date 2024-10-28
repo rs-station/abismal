@@ -6,11 +6,12 @@ from tensorflow_probability import stats as tfs
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class Standardize(tfk.layers.Layer):
-    def __init__(self, center=True, decay=0.999, epsilon=1e-6, **kwargs):
+    def __init__(self, center=True, decay=0.999, epsilon=1e-6, count_max=None, **kwargs):
         super().__init__(**kwargs)
         self.decay = decay
         self.center = center
         self.epsilon = epsilon
+        self.count_max = count_max
 
     def build(self, shape):
         #d = [1] * len(shape)
@@ -90,7 +91,7 @@ class Standardize(tfk.layers.Layer):
         return data / std
 
     def call(self, data, training=True):
-        if training:
+        if training and self.count <= self.count_max:
             self.update(data)
         return self.standardize(data)
 
