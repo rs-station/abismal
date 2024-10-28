@@ -16,6 +16,15 @@ from abismal.layers import *
 from abismal.distributions import FoldedNormal
 
 
+class DeltaDistribution():
+    def __init__(self, loc):
+        self.loc = loc
+
+    def sample(self, *args, **kwargs):
+        """Return a tensor that broadcasts as a sample"""
+        return self.loc[None,...]
+
+
 @tfk.saving.register_keras_serializable(package="abismal")
 class ImageScaler(tfk.models.Model):
     def __init__(
@@ -26,7 +35,7 @@ class ImageScaler(tfk.models.Model):
             activation="ReLU",
             kl_weight=1.,
             epsilon=1e-12,
-            num_image_samples=32,
+            num_image_samples=None,
             share_weights=True,
             seed=1234,
             **kwargs, 
@@ -45,12 +54,13 @@ class ImageScaler(tfk.models.Model):
         activation : str (optional)
             This is a Keras activation function with the default being "ReLU"
         kl_weight : float (optional)
-            The importance of the prior distribution on scales. 
+            The importance of the prior distribution on scales. If <=0, the model will use a delta distribution
+            for the posterior and no kl divergence will be calculated. 
         epsilon : float (optional)
             A small constant for numerical stability defaults to 1e-12. 
         num_image_samples : int (optional)
             The number of reflections to sample in order to create the image representation vectors. 
-            The default is 32 samples. 
+            No subsampling will be done if this is set to None which is the default. 
         share_weights : bool (optional)
             Whether or not share neural network weights between the image model and the scale model. 
             The default is True. 
@@ -100,10 +110,10 @@ class ImageScaler(tfk.models.Model):
                     ) for i in range(mlp_depth)
             ]) 
 
-        self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
-        #self.output_gb = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
-        self.standardize_intensity = Standardize(center=False)
-        self.standardize_metadata = Standardize()
+        if self.kl_weight > 0.:
+            self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
+        else:
+            self.output_dense = tfk.layers.Dense(1, kernel_initializer=kernel_initializer)
 
     def get_config(self):
         config = super().get_config()
@@ -135,27 +145,16 @@ class ImageScaler(tfk.models.Model):
 
     def prior_function(self):
         p = tfd.Exponential(1.)
-        #p = FoldedNormal(1., 1.)
-        #p = FoldedNormal(1., 0.1)
-        #scale = tf.sqrt(0.5 * np.pi)
-        #p = tfd.HalfNormal(scale)
-        #scale = math.sqrt(math.log(0.5 * (math.sqrt(5.) + 1.)))
-        #scale = 1.
-        #p = tfd.LogNormal(0., 1.)
-        #p = tfd.Normal(1.0, 1.0)
         return p
 
     def distribution_function(self, output):
-        loc, scale = tf.unstack(output, axis=-1)
-        scale = tf.math.exp(scale) + self.epsilon
-
-        # NOTE: bijecting the loc parameter makes the NN get stuck at zero
-        # Uncommment this line with extreme caution
-        #loc = tf.math.exp(loc) + self.epsilon
-
-        #q = tfd.Normal(loc, scale)
-        q = FoldedNormal(loc, scale)
-        #q = tfd.LogNormal(loc, scale)
+        if self.kl_weight > 0.:
+            loc, scale = tf.unstack(output, axis=-1)
+            scale = tf.math.exp(scale) + self.epsilon
+            q = FoldedNormal(loc, scale)
+            return q
+        loc = tf.squeeze(output, axis=-1)
+        q = DeltaDistribution(loc)
         return q
 
     def build(self, shapes):
@@ -168,18 +167,18 @@ class ImageScaler(tfk.models.Model):
             iobs,
             sigiobs,
         ) = shapes
+
+        dimage = metadata[-1] + 2
         self.input_image.build(
-            metadata[:-1] + [metadata[-1] + 2] #add columns for iobs/sigiobs
+            metadata[:-1] + [dimage] #add columns for iobs/sigiobs
         )
+
         self.input_scale.build(metadata)
         self.image_network.build(metadata[:-1] + [self.mlp_width])
         if not self.share_weights:
             self.scale_network.build(metadata[:-1] + [self.mlp_width])
-        self.standardize_intensity.build(iobs)
-        self.standardize_metadata.build(metadata)
         self.pool.build(metadata[:-1] + [self.mlp_width])
         self.output_dense.build(metadata[:-1] + [self.mlp_width])
-        #self.output_gb.build(metadata[:-1] + [self.mlp_width])
 
     def call(self, inputs, mc_samples=32, training=None, **kwargs):
         (
@@ -191,21 +190,14 @@ class ImageScaler(tfk.models.Model):
             iobs,
             sigiobs,
         ) = inputs
-
-        if self.standardize_intensity is not None:
-            iobs = tf.ragged.map_flat_values(
-                self.standardize_intensity, iobs)
-            sigiobs = tf.ragged.map_flat_values(
-                self.standardize_intensity.standardize, sigiobs)
-        if self.standardize_metadata is not None:
-            metadata = tf.ragged.map_flat_values(
-                self.standardize_metadata, metadata)
-
         scale = metadata
-        image = [iobs, sigiobs, metadata]
+        image = [metadata, iobs, sigiobs]
 
         image = tf.concat(image, axis=-1)
-        image = ImageScaler.sample_refls(image, self.num_image_samples)
+
+        if self.num_image_samples is not None:
+            #Subsample reflections per image 
+            image = ImageScaler.sample_refls(image, self.num_image_samples)
 
         image = self.input_image(image)
 
@@ -223,20 +215,20 @@ class ImageScaler(tfk.models.Model):
         else:
             q = self.distribution_function(scale)
 
-        z = q.sample(mc_samples)
+        z = q.sample(mc_samples) 
 
-        p = self.prior_function()
+        if self.kl_weight > 0.:
+            p = self.prior_function()
+            try:
+                kl_div = q.kl_divergence(p)
+            except NotImplementedError:
+                q_z = q.log_prob(z)
+                p_z = p.log_prob(z)
+                kl_div = q_z - p_z
 
-        try:
-            kl_div = q.kl_divergence(p)
-        except NotImplementedError:
-            q_z = q.log_prob(z)
-            p_z = p.log_prob(z)
-            kl_div = q_z - p_z
-
-        kl_div = tf.reduce_mean(kl_div)
-        self.add_loss(self.kl_weight * kl_div)
-        self.add_metric(kl_div, name='KL_Σ')
+            kl_div = tf.reduce_mean(kl_div)
+            self.add_loss(self.kl_weight * kl_div)
+            self.add_metric(kl_div, name='KL_Σ')
 
         if ragged_tensor.is_ragged(scale):
             z = tf.RaggedTensor.from_row_splits(
@@ -245,19 +237,5 @@ class ImageScaler(tfk.models.Model):
         else:
             z = tf.transpose(z)
 
-        ## Traditional scalerators
-        #log_g,b = tf.unstack(self.output_gb(image), axis=-1)
-        #self.add_metric(tf.reduce_mean(b), 'Bfac')
+        return z
 
-        #b = tf.math.exp(-b[...,None] * tf.math.reciprocal(tf.math.square(resolution)))
-        #g = tf.math.exp(log_g)
-        #if self.standardize_intensity is not None:
-        #    g = g * tf.squeeze(self.standardize_intensity.std)
-        #self.add_metric(tf.reduce_mean(g), 'Gfac')
-        #out = z * g[...,None] * b
-
-        if self.standardize_intensity is not None:
-            z = z * tf.squeeze(self.standardize_intensity.std)
-        out = z
-
-        return out
