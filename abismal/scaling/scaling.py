@@ -13,7 +13,7 @@ from tensorflow.python.ops.ragged import ragged_tensor
 import tf_keras as tfk
 
 from abismal.layers import *
-from abismal.distributions import FoldedNormal
+from abismal.distributions import FoldedNormal,Rice
 
 
 class DeltaDistribution():
@@ -32,7 +32,7 @@ class ImageScaler(tfk.models.Model):
             mlp_width=32, 
             mlp_depth=20, 
             hidden_units=None,
-            activation="ReLU",
+            activation="leaky_relu",
             kl_weight=1.,
             epsilon=1e-12,
             num_image_samples=None,
@@ -52,7 +52,7 @@ class ImageScaler(tfk.models.Model):
         hidden_units : int (optional)
             This defaults to 2*mlp_width
         activation : str (optional)
-            This is a Keras activation function with the default being "ReLU"
+            This is a Keras activation function with the default being "leaky_relu"
         kl_weight : float (optional)
             The importance of the prior distribution on scales. If <=0, the model will use a delta distribution
             for the posterior and no kl divergence will be calculated. 
@@ -61,7 +61,7 @@ class ImageScaler(tfk.models.Model):
         num_image_samples : int (optional)
             The number of reflections to sample in order to create the image representation vectors. 
             No subsampling will be done if this is set to None which is the default. 
-        share_weights : bool (optional)
+        share_weghts : bool (optional)
             Whether or not share neural network weights between the image model and the scale model. 
             The default is True. 
         seed : int (optional)
@@ -145,15 +145,25 @@ class ImageScaler(tfk.models.Model):
 
     def prior_function(self):
         p = tfd.Exponential(1.)
+        #p = tfd.Laplace(1., 1.)
         return p
+
+    def bijector_function(self, x):
+        return tf.nn.softplus(x) + self.epsilon
 
     def distribution_function(self, output):
         if self.kl_weight > 0.:
             loc, scale = tf.unstack(output, axis=-1)
-            scale = tf.math.exp(scale) + self.epsilon
+            loc = self.bijector_function(loc)
+            scale = self.bijector_function(scale)
             q = FoldedNormal(loc, scale)
+
+            self.add_metric(tf.reduce_mean(loc), name='Σ_loc')
+            self.add_metric(tf.reduce_mean(scale), name='Σ_scale')
             return q
         loc = tf.squeeze(output, axis=-1)
+        loc = self.bijector_function(loc)
+        self.add_metric(tf.reduce_mean(loc), name='Σ_loc')
         q = DeltaDistribution(loc)
         return q
 
@@ -237,5 +247,7 @@ class ImageScaler(tfk.models.Model):
         else:
             z = tf.transpose(z)
 
+        self.add_metric(tf.math.reduce_mean(z), name='Σ_mean')
+        self.add_metric(tf.math.reduce_std(z), name='Σ_std')
         return z
 
