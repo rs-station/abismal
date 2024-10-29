@@ -26,8 +26,8 @@ args_and_kwargs=(
         (
             "--activation",
         ),{
-            "help": "The name of the activation function used in the scale model. The default is 'relu'",
-            "default": "relu",
+            "help": "The name of the activation function used in the scale model. The default is 'leaky_relu'",
+            "default": "leaky_relu",
             "type": str,
         }
     ),
