@@ -8,7 +8,5 @@ def getVersionNumber():
 
 __version__ = getVersionNumber()
 
-from os import environ
-environ['TF_CPP_MIN_LOG_LEVEL'] = environ.get("TF_CPP_MIN_LOG_LEVEL", "3")
-
+from abismal.ragged import quiet
 from abismal import callbacks,distributions,io,layers,likelihood,merging,optimizers,scaling,surrogate_posterior,symmetry

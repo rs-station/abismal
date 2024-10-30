@@ -48,7 +48,7 @@ class LocationScale(tfk.layers.Layer):
         )
 
     def register_metrics(self, ipred, iobs, sigiobs):
-        likelihood = self._likelihood(iobs, sigiobs)
+        #likelihood = self._likelihood(iobs, sigiobs)
 
         # This is the mean ipred across the posterior mc samples
         iobs = iobs * tf.ones_like(ipred)
@@ -63,15 +63,15 @@ class LocationScale(tfk.layers.Layer):
         cc = tf.squeeze(cc)
         self.add_metric(cc, name='CCpred')
 
-        cdf = likelihood.cdf(ipred)
-        f = tf.reduce_mean(
-            tf.where(
-                (cdf >= 0.025)&(cdf <= 0.975),
-                1.,
-                0.,
-            )
-        )
-        self.add_metric(f, "C95")
+        #cdf = likelihood.cdf(ipred)
+        #f = tf.reduce_mean(
+        #    tf.where(
+        #        (cdf >= 0.025)&(cdf <= 0.975),
+        #        1.,
+        #        0.,
+        #    )
+        #)
+        #self.add_metric(f, "C95")
 
         resid = ipred - iobs
         r2 = tf.square(resid)

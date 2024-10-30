@@ -47,8 +47,9 @@ args_and_kwargs = (
         (
             "--sample-reflections-per-image",
         ),{
-            "help": "The number of reflections which will be sampled in order to calculate the image representation with default 32.",
-            "default": 32,
+            "help": "Optionally subsample the reflections going into the encoder. This can decrease memory usage."
+                    "By default use all reflections.",
+            "default": None,
             "type": int,
         }
     ),

@@ -4,15 +4,20 @@ import tf_keras as tfk
 from tensorflow_probability import stats as tfs
 
 
+@tfk.saving.register_keras_serializable(package="abismal")
 class Standardize(tfk.layers.Layer):
-    def __init__(self, center=True, decay=0.999, epsilon=1e-3):
-        super().__init__()
+    def __init__(self, center=True, decay=0.999, epsilon=1e-6, count_max=None, **kwargs):
+        super().__init__(**kwargs)
         self.decay = decay
         self.center = center
         self.epsilon = epsilon
+        self.count_max = count_max
 
     def build(self, shape):
+        #d = [1] * len(shape)
+        #d[-1] = shape[-1]
         d = shape[-1]
+
         self._mean = self.add_weight(
             shape=d,
             initializer='zeros',
@@ -30,10 +35,19 @@ class Standardize(tfk.layers.Layer):
         self.count = self.add_weight(
             shape = (),
             initializer = 'zeros',
-            dtype=tf.int32,
+            dtype=tf.int64,
             trainable=False,
             name='zero_debias_count',
         )
+
+    def get_config(self):
+        conf = super().get_config()
+        conf.update({
+            'center' : self.center,
+            'decay' : self.decay,
+            'epsilon' : self.epsilon,
+        })
+        return conf
 
     def _debiased_mean_variance(self):
         mean,var = tfs.moving_mean_variance_zero_debiased(
@@ -66,7 +80,7 @@ class Standardize(tfk.layers.Layer):
             self._var,
             zero_debias_count=self.count,
             decay=self.decay,
-            axis=-2,
+            axis=0, #TODO: if tf.rank(x) > 2, this should be (0, ... , tf.rank(x) - 2) i think
         )
 
     def standardize(self, data):
@@ -77,7 +91,7 @@ class Standardize(tfk.layers.Layer):
         return data / std
 
     def call(self, data, training=True):
-        if training:
+        if training and self.count <= self.count_max:
             self.update(data)
         return self.standardize(data)
 

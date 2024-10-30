@@ -21,7 +21,7 @@ class FeedForward(tfk.layers.Layer):
         **kwargs
         ):
         """
-        This is a ResNet version 2 style nonlinearity. It implements the following
+        This is a ResNet version 2 style feedforward layer. It implements the following
 
         ```
         out = dropout(linear(activation(hidden_linear(activation(layer_norm(in)))))) + in
@@ -65,6 +65,12 @@ class FeedForward(tfk.layers.Layer):
 
         self.ff1 = tfk.layers.Dense(self.hidden_units, kernel_initializer=self.kernel_initializer, **kwargs)
         self.ff2 = tfk.layers.Dense(self.units, kernel_initializer=self.kernel_initializer, **kwargs)
+
+        self.ff1.build(shape)
+        self.ff2.build(shape[:-1] + [self.hidden_units])
+
+        if self.normalize is not None:
+            self.normalize.build(shape)
 
     def call(self, X, **kwargs):
         out = X

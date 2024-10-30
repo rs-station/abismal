@@ -6,10 +6,12 @@ from reciprocalspaceship.utils import hkl_to_asu,is_absent
 from inspect import signature
 from reciprocalspaceship.decorators import spacegroupify,cellify
 import gemmi
+from abismal.symmetry.op import Op
 
+@tfk.saving.register_keras_serializable(package="abismal")
 class ReciprocalASUCollection(tfk.layers.Layer):
-    def __init__(self, *reciprocal_asus):
-        super().__init__()
+    def __init__(self, *reciprocal_asus, **kwargs):
+        super().__init__(**kwargs)
         self.reciprocal_asus = reciprocal_asus
         asu_ids,dHKL,centric,epsilon = [],[],[],[]
         Hunique = []
@@ -38,6 +40,22 @@ class ReciprocalASUCollection(tfk.layers.Layer):
             h,k,l = rasu.Hall.T
             self.miller_id[asu_id *np.ones_like(h),h,k,l] = rasu.miller_id[h,k,l] + offset
             offset = offset + rasu.asu_size
+        self.built = True
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(
+            {f'rasu_{i}' : tfk.saving.serialize_keras_object(v) for i,v in enumerate(self.reciprocal_asus)}
+        )
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        rasus = []
+        keys = config.keys()
+        rasus = [tfk.saving.deserialize_keras_object(v) for k,v in config.items() if k.startswith('rasu_')]
+        config = {k:v for k,v in config.items() if not k.startswith('rasu_')}
+        return cls(*rasus, **config)
 
     def _ensure_in_range(self, H):
         """ Cast any out of bounds indices to [0,0,0] """
@@ -92,10 +110,11 @@ class ReciprocalASUCollection(tfk.layers.Layer):
     def __len__(self):
         return len(self.reciprocal_asus)
 
+@tfk.saving.register_keras_serializable(package="abismal")
 class ReciprocalASU(tfk.layers.Layer):
     @cellify
     @spacegroupify
-    def __init__(self, cell, spacegroup, dmin, anomalous=True):
+    def __init__(self, cell, spacegroup, dmin, anomalous=True, **kwargs):
         """
         Base Layer that remaps observed miller indices to the reciprocal asu.
         This class enables indexing of per reflection variables from tf.
@@ -124,7 +143,7 @@ class ReciprocalASU(tfk.layers.Layer):
         anomalous : bool
             If true, treat Friedel mates as non-redudant
         """
-        super().__init__()
+        super().__init__(**kwargs)
         self.anomalous = anomalous
         self._cell = cell.parameters
         self._spacegroup = spacegroup.xhm()
@@ -154,6 +173,17 @@ class ReciprocalASU(tfk.layers.Layer):
         self.dHKL = cell.calculate_d_array(self.Hunique).astype(np.float32)
         self.epsilon = go.epsilon_factor_array(self.Hunique).astype(np.float32)
         self.centric = go.centric_flag_array(self.Hunique).astype(bool)
+        self.built = True #This object is not lazy
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'cell' : self.cell.parameters,
+            'spacegroup' : self.spacegroup.xhm(),
+            'dmin' : self.dmin,
+            'anomalous' : self.anomalous,
+        })
+        return config
 
     @property
     def spacegroup(self):
@@ -219,4 +249,53 @@ class ReciprocalASU(tfk.layers.Layer):
         idx = self._miller_ids(H)
         safe = tf.maximum(idx, 0)
         return tf.gather(tensor, safe)
+
+class ReciprocalASUGraph(ReciprocalASUCollection):
+    def __init__(self, *reciprocal_asus, parents=None, reindexing_ops=None, **kwargs):
+        super().__init__(*reciprocal_asus, **kwargs)
+        if parents is None:
+            parents = tf.range(len(reciprocal_asus))
+        self.parents = parents
+        self.reindexing_ops = reindexing_ops
+        self.parent_asu_id = tf.gather(parents, self.asu_id)
+        Hpa = []
+        is_root = []
+        for i,rasu in enumerate(self.reciprocal_asus):
+            op = 'x,y,z'
+            if reindexing_ops is not None:
+                op = reindexing_ops[i]
+            op = Op(op)
+            Hpa.append(op(rasu.Hunique))
+
+        Hpa = tf.concat(Hpa, axis=0)
+        self.parent_hkl = Hpa
+        self.is_root = self.parent_asu_id == self.asu_id
+        self.parent_miller_id = self._miller_ids(self.parent_asu_id[:,None], self.parent_hkl)
+        self.has_parent = (self.parent_miller_id >= 0) & (~self.is_root)
+
+    @classmethod
+    def from_lists(
+        cls,
+        cells,
+        spacegroups,
+        dmins,
+        anomalous,
+        parents=None,
+        reindexing_ops=None,
+    ):
+        rasu = []
+        for i, (cell, sg, dmin, anom) in enumerate(zip(cells, spacegroups, dmins, anomalous)):
+            rasu.append(
+                ReciprocalASUCollection(cell, sg, dmin, anom)
+            )
+        return cls(rasu, parents, reindexing_ops)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'parents' : self.parents,
+            'reindexing_ops' : self.reindexing_ops,
+        })
+        return config
+
 

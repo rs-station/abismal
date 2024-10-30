@@ -7,3 +7,8 @@ class NormalLikelihood(LocationScale):
     def _likelihood(self, iobs, sigiobs):
         return tfd.Normal(iobs, sigiobs)
 
+class LeastSquaresLikelihood(LocationScale):
+    def _likelihood(self, iobs, sigiobs):
+        scale = tf.reduce_mean(sigiobs)
+        return tfd.Normal(iobs, scale)
+

@@ -72,9 +72,9 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
         I = tf.convert_to_tensor(I[None,:,None])
         d = tf.convert_to_tensor(d[None,:,None])
         SigI = tf.convert_to_tensor(SigI[None,:,None])
-        hkl = tf.convert_to_tensor(hkl[None,:,:], dtype='int32')
+        hkl = tf.convert_to_tensor(hkl[None,:,:], dtype='int64')
         metadata = tf.convert_to_tensor(metadata[None,:,:])
-        asu = tf.ones_like(I, dtype='int32') * self.asu_id
+        asu = tf.ones_like(I, dtype='int64') * self.asu_id
         wavelength = tf.ones_like(I) * wavelength
 
         data = ((asu, hkl, d, wavelength, metadata, I, SigI), (I,))

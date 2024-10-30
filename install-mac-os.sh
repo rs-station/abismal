@@ -21,10 +21,6 @@ pip install tensorflow==$TF_VERSION
 pip install tensorflow-probability[tf]==$TFP_VERSION
 pip install tensorflow-metal
 
-# Install rs version with parallel stream loading
-pip install git+https://github.com/rs-station/reciprocalspaceship@parstream
-pip install ray
-
 # Install abismal
 pip install abismal
 

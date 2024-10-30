@@ -8,13 +8,12 @@ from tensorflow_probability import bijectors as tfb
 import tf_keras as tfk
 
 class PosteriorBase(tfk.models.Model):
-    def __init__(self, rac, epsilon=1e-12, kl_weight=1., **kwargs):
+    def __init__(self, rac, epsilon=1e-12, **kwargs):
         """
         rac : ReciprocalASUCollection
         """
         super().__init__(**kwargs)
         self.epsilon = epsilon
-        self.kl_weight = kl_weight
         self.rac = rac
         self.seen = self.add_weight(
             shape=self.rac.asu_size,
@@ -23,6 +22,19 @@ class PosteriorBase(tfk.models.Model):
             trainable=False,
             name="hkl_tracker",
         )
+        self.built = True #This model is not built lazily and doesn't have self.call
+
+    def get_config(self):
+        config = {
+            'rac' : tfk.saving.serialize_keras_object(self.rac),
+            'epsilon' : self.epsilon,
+        }
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
+        return cls(**config)
 
     def register_seen(self, asu_id, hkl):
         unique,_ = tf.unique(tf.reshape(self.rac._miller_ids(asu_id, hkl), [-1]))
@@ -34,45 +46,37 @@ class PosteriorBase(tfk.models.Model):
         )
         self.seen.assign(self.seen | seen_batch)
 
+    def distribution(self, asu_id, hkl):
+        raise NotImplementedError("Subclasses must implement a distribution method")
+
     def flat_distribution(self):
-        raise NotImplementedError("Subclasses must implement a flat_distribution method")
-
-    def flat_prior(self):
-        raise NotImplementedError("Subclasses must implement a flat_prior method")
-
-    def to_datasets(self, seen=True):
         """
-        Parameters
-        ----------
-        seen : bool (optional)
-            Only include reflections seen during training. Defaults to True. 
+        This method can be overloaded to avoid unnecessary "gather" operations and increase performance.
         """
-        raise NotImplementedError("Subclasses must implement a to_datasets method")
+        q = self.distribution(
+            self.rac.asu_id,
+            self.rac.Hunique,
+        )
+        return q
 
     def mean(self, asu_id, hkl):
-        q = self.flat_distribution
+        q = self.flat_distribution()
         mean = self.rac.gather(q.mean(), asu_id, hkl)
         return mean
 
     def stddev(self, asu_id, hkl):
-        q = self.flat_distribution
+        q = self.flat_distribution()
         stddev = self.rac.gather(q.stddev(), asu_id, hkl)
         return stddev
 
-    def register_kl(self, samples=None, asu_id=None, hkl=None, training=None):
-        """
-        this method will always try to use an analytical kl divergence. failing
-        that, the samples will be used
-        """
-        if training:
-            q,p = self.flat_distribution(), self.flat_prior()
-            try:
-                kl_div = q.kl_divergence(p)
-            except NotImplementedError:
-                kl_div = q.log_prob(samples) - p.log_prob(samples)
-            kl_div = tf.reduce_mean(kl_div)
-            self.add_metric(kl_div, name='KL')
-            self.add_loss(self.kl_weight * kl_div)
+    def compute_kl_terms(self, q, p, samples=None):
+        try:
+            kl_div = q.kl_divergence(p)
+        except NotImplementedError:
+            kl_div = q.log_prob(samples) - p.log_prob(samples)
+            kl_div = tf.reduce_mean(kl_div, axis=0)
+
+        return kl_div
 
     def get_flat_fsigf(self):
         msg = """
@@ -113,6 +117,12 @@ class PosteriorBase(tfk.models.Model):
                 'F' : rs.DataSeries(F, dtype='F'),
                 'SIGF' : rs.DataSeries(SIGF, dtype='Q'),
             })
+
+            sqrt_mult = np.sqrt(self.rac.epsilon)
+            data.update({
+                'E' : rs.DataSeries(F / sqrt_mult, dtype='E'),
+                'SIGE' : rs.DataSeries(SIGF / sqrt_mult, dtype='Q'),
+            })
         except NotImplementedError:
             has_fsigf = False
 
@@ -143,6 +153,11 @@ class PosteriorBase(tfk.models.Model):
                         'SIGF(+)',
                         'F(-)',
                         'SIGF(-)',
+                        # There's a bug with anomalous E-values
+                        #'E(+)', 
+                        #'SIGE(+)',
+                        #'E(-)',
+                        #'SIGE(-)',
                     ]
                 if has_isigi:
                     keys += [

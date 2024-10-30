@@ -106,21 +106,6 @@ class RiceWoolfson(distribution.AutoCompositeTensorDistribution):
             self._acentric_distribution.stddev(),
         )
 
-    def sample_intensities(self, sample_shape=(), seed=None, name='sample', **kwargs):
-        return tf.where(
-            self.centric,
-            self._centric_distribution.sample_square(sample_shape=sample_shape, seed=seed, name=name, **kwargs),
-            self._acentric_distribution.sample_square(sample_shape=sample_shape, seed=seed, name=name, **kwargs),
-        )
-
-@kullback_leibler.RegisterKL(RiceWoolfson, RiceWoolfson)
-def _kl_rice_rice_woolfson(q, p, name=None):
-    return tf.where(
-        q.centric,
-        q._centric_distribution.kl_divergence(p._centric_distribution),
-        q._acentric_distribution.kl_divergence(p._acentric_distribution),
-    )
-
 
 
 if __name__=="__main__":

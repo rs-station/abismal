@@ -3,37 +3,78 @@ import reciprocalspaceship as rs
 import tensorflow as tf
 import tensorflow_probability as tfp
 import gemmi
-from abismal.layers.standardization import Standardize
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 from abismal.symmetry import Op
 import tf_keras as tfk
-from IPython import embed
+from abismal.layers import Standardize
 
 
+@tfk.saving.register_keras_serializable(package="abismal")
 class VariationalMergingModel(tfk.models.Model):
-    def __init__(self, scale_model, surrogate_posterior, likelihood, mc_samples=1, eps=1e-6, reindexing_ops=None):
-        super().__init__()
-        self.eps = eps
+    def __init__(
+            self, 
+            scale_model, 
+            surrogate_posterior, 
+            prior, 
+            likelihood, 
+            mc_samples=1, 
+            kl_weight=1., 
+            epsilon=1e-6, 
+            reindexing_ops=None, 
+            standardization_count_max=2_000,
+            **kwargs):
+        super().__init__(**kwargs)
+        self.epsilon = epsilon
         self.likelihood = likelihood
+        self.prior = prior
         self.scale_model = scale_model
         self.surrogate_posterior = surrogate_posterior
         self.mc_samples = mc_samples
+        self.kl_weight = kl_weight
         if reindexing_ops is None:
             reindexing_ops = ["x,y,z"]
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
-        self.standardize_intensity = Standardize(center=False)
-        self.standardize_metadata = Standardize()
+        self.standardize_intensity = Standardize(center=False, count_max=standardization_count_max)
+        self.standardize_metadata = Standardize(count_max=standardization_count_max)
 
-    def call(self, inputs, mc_samples=None, **kwargs):
-        if mc_samples is None:
-            mc_samples = self.mc_samples
+    def get_config(self):
+        ops = self.reindexing_ops
+        if ops is not None:
+            ops = [op.gemmi_op.triplet() for op in self.reindexing_ops]
+        config = super().get_config()
 
+        config.update({
+            'scale_model' : self.scale_model,
+            'surrogate_posterior' : self.surrogate_posterior,
+            'prior' : self.prior,
+            'likelihood' : self.likelihood, 
+            'mc_samples' : self.mc_samples,
+            'kl_weight' : 1.,
+            'epsilon' : self.epsilon,
+            'reindexing_ops' : ops,
+        })
+        for k in ['scale_model', 'surrogate_posterior', 'likelihood', 'prior']:
+            config[k] = tfk.saving.serialize_keras_object(config[k])
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        for k in ['scale_model', 'surrogate_posterior', 'likelihood']:
+            config[k] = tfk.saving.deserialize_keras_object(config[k])
+        return cls(**config)
+
+    def build(self, shapes):
+        self.scale_model.build(shapes)
+        self.standardize_intensity.build(shapes[-1])
+        self.standardize_metadata.build(shapes[-3])
+
+    def standardize_inputs(self, inputs):
         (
             asu_id,
-            hkl,
+            hkl_in,
             resolution,
             wavelength,
             metadata,
@@ -41,76 +82,188 @@ class VariationalMergingModel(tfk.models.Model):
             sigiobs,
         ) = inputs
         if self.standardize_intensity is not None:
-            iobs = tf.ragged.map_flat_values(self.standardize_intensity, iobs)
-            sigiobs = tf.ragged.map_flat_values(self.standardize_intensity.standardize, sigiobs)
+            iobs = tf.ragged.map_flat_values(
+                self.standardize_intensity, iobs) 
+            sigiobs = tf.ragged.map_flat_values(
+                self.standardize_intensity.standardize, sigiobs)
         if self.standardize_metadata is not None:
-            metadata = tf.ragged.map_flat_values(self.standardize_metadata, metadata)
+            metadata = tf.ragged.map_flat_values(
+                self.standardize_metadata, metadata)
 
-        training = kwargs.get('training', None)
-        ll = None
-        ipred = None
+        self.add_metric(self.standardize_intensity.std, "Istd")
+        self.add_metric(self.standardize_intensity.count, "Icount")
 
-        q = self.surrogate_posterior.flat_distribution()
-        ipred = q.sample(mc_samples)
-
-        kl_div = self.surrogate_posterior.register_kl(ipred, asu_id, hkl, training)
-
-        if self.surrogate_posterior.parameterization == 'structure_factor':
-            ipred = tf.square(ipred)
-
-        if training:
-            self.surrogate_posterior.register_seen(asu_id, hkl)
-
-        ipred = tf.transpose(ipred)
-        ipred_scaled = None
-
-        _inputs = (
+        out = (
             asu_id,
-            hkl,
-            resolution,
+            hkl_in, resolution,
             wavelength,
             metadata,
             iobs,
             sigiobs,
         ) 
+
+        return out
+
+    def _call_dense(self, inputs, mc_samples=None, training=None, **kwargs):
+        if mc_samples is None:
+            mc_samples = self.mc_samples
+
+        inputs = self.standardize_inputs(inputs)
+
+        (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = inputs
+
         scale = self.scale_model(
-            _inputs, 
+            inputs,
             mc_samples=mc_samples, 
             **kwargs
         )
 
-        for op in self.reindexing_ops:
-            # Choose the best indexing solution for each image
-            _hkl = tf.ragged.map_flat_values(op, hkl)
+        q = self.surrogate_posterior.flat_distribution()
+        p = self.prior.flat_distribution()
+        z = q.sample(mc_samples)
+        kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
 
-            _ipred = self.surrogate_posterior.rac.gather(ipred, asu_id, _hkl)
+        ll = None
+        ipred = None
+        hkl = None
+
+        for op in self.reindexing_ops:
+            _hkl = tf.ragged.map_flat_values(op, hkl_in)
+            _ipred = self.surrogate_posterior.rac.gather(tf.transpose(z), asu_id, _hkl)
+            if self.surrogate_posterior.parameterization == 'structure_factor':
+                _ipred = tf.square(_ipred)
             _ipred = _ipred * scale
 
             _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
             _ll = tf.reduce_mean(_ll, [-1, -2], keepdims=True)
 
             if ll is None:
-                ipred_scaled = _ipred
+                ipred = _ipred
                 ll = _ll
+                hkl = _hkl
             else:
                 idx =  _ll > ll
-                ipred_scaled = tf.where(idx, _ipred, ipred_scaled)
+                ipred = tf.where(idx, _ipred, ipred)
                 ll = tf.where(idx, _ll, ll)
+                hkl = tf.where(idx, _hkl, hkl)
+
+        if training:
+            self.surrogate_posterior.register_seen(asu_id.flat_values, hkl.flat_values)
 
         self.likelihood.register_metrics(
-            ipred_scaled.flat_values, 
+            ipred.flat_values, 
             iobs.flat_values, 
             sigiobs.flat_values,
         )
 
         # This is the mean across mc samples and observations
         ll = tf.reduce_mean(ll) 
+        kl_div = tf.reduce_mean(kl_div) 
 
         self.add_metric(-ll, name='NLL')
         self.add_loss(-ll)
 
-        ipred_avg = tf.reduce_mean(ipred_scaled, axis=-1)
+        self.add_metric(kl_div, name='KL')
+        self.add_loss(self.kl_weight * kl_div)
+
+        ipred_avg = tf.reduce_mean(ipred, axis=-1)
         return ipred_avg
+
+    def _call_sparse(self, inputs, mc_samples=None, training=None, **kwargs):
+        if mc_samples is None:
+            mc_samples = self.mc_samples
+
+        (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = inputs
+
+        scale = self.scale_model(
+            inputs,
+            mc_samples=mc_samples, 
+            **kwargs
+        )
+
+        ll = None
+        ipred = None
+        hkl = None
+        kl_div = None
+
+        for op in self.reindexing_ops:
+            # Choose the best indexing solution for each image
+            _hkl = tf.ragged.map_flat_values(op, hkl_in)
+            _q = self.surrogate_posterior.distribution(asu_id.flat_values, _hkl.flat_values)
+            _p = self.prior.distribution(asu_id.flat_values, _hkl.flat_values)
+            _z = _q.sample(mc_samples)
+
+            kl_div = self.surrogate_posterior.compute_kl_terms(_q, _p, samples=_z)
+            ##We need these shenanigans to support multivariate posteriors
+            if _q.event_shape != []:
+                _ipred = _z[...,0]
+            else:
+                _ipred = _z
+
+            _kl_div = tf.RaggedTensor.from_row_splits(kl_div[...,None], scale.row_splits)
+            _ipred = tf.RaggedTensor.from_row_splits(tf.transpose(_ipred), scale.row_splits)
+
+            #_ipred  = self.surrogate_posterior.rac.gather(tf.transpose(z), asu_id, _hkl)
+            if self.surrogate_posterior.parameterization == 'structure_factor':
+                _ipred = tf.square(_ipred)
+            _ipred = _ipred * scale
+
+            _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
+            _ll = tf.reduce_mean(_ll, [-1, -2], keepdims=True)
+
+            if ll is None:
+                ipred = _ipred
+                ll = _ll
+                hkl = _hkl
+                kl_div = _kl_div
+            else:
+                idx =  _ll > ll
+                ipred = tf.where(idx, _ipred, ipred)
+                ll = tf.where(idx, _ll, ll)
+                hkl = tf.where(idx, _hkl, hkl)
+                kl_div = tf.where(idx, _kl_div, kl_div)
+
+        if training:
+            self.surrogate_posterior.register_seen(asu_id.flat_values, hkl.flat_values)
+
+        self.likelihood.register_metrics(
+            ipred.flat_values, 
+            iobs.flat_values, 
+            sigiobs.flat_values,
+        )
+
+        # This is the mean across mc samples and observations
+        ll = tf.reduce_mean(ll) 
+        kl_div = tf.reduce_mean(kl_div) 
+
+        self.add_metric(-ll, name='NLL')
+        self.add_loss(-ll)
+
+        self.add_metric(kl_div, name='KL')
+        self.add_loss(self.kl_weight * kl_div)
+
+        ipred_avg = tf.reduce_mean(ipred, axis=-1)
+        return ipred_avg
+
+    def call(self, inputs, mc_samples=None, training=None, **kwargs):
+        #return self._call_sparse(inputs, mc_samples, training, **kwargs)
+        return self._call_dense(inputs, mc_samples, training, **kwargs)
 
     #For production with super nan avoiding powers
     @tf.function
@@ -157,12 +310,22 @@ class VariationalMergingModel(tfk.models.Model):
             gradients += grad_ll
             metrics["|∇ll|"] = grad_ll_norm
 
+        p_vars = self.prior.trainable_variables
+        if len(p_vars) > 0:
+            grad_p = tape.gradient(loss, p_vars)
+            grad_p_norm = tf.sqrt(
+                tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_p])
+            )
+            trainable_vars += p_vars
+            gradients += grad_p
+            metrics["|∇p|"] = grad_p_norm
+
+
         gradients = [tf.where(tf.math.is_finite(g), g, 0.) for g in gradients]
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
 
         # Update metrics (includes the metric that tracks the loss)
         self.compiled_metrics.update_state(y, y_pred)
-
 
         # Return a dict mapping metric names to current value
         return metrics

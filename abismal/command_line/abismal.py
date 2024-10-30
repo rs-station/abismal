@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 def main():
+    from abismal.ragged import quiet
     from abismal.command_line.parser import parser
     parser = parser.parse_args()
 
@@ -9,41 +10,16 @@ def main():
     set_gpu(parser.gpu_id)
     run_abismal(parser)
 
-
-# TODO: refactor this filetype control flow into abismal.io
-_file_endings = {
-    'refl' : ('.refl', '.pickle'),
-    'expt' : ('.expt', '.json'),
-    'stream' : ('.stream',),
-}
-
-def _is_file_type(s, endings):
-    for ending in endings:
-        if s.endswith(ending):
-            return True
-    return False
-
-def _is_stream_file(s):
-    return _is_file_type(s, _file_endings['stream'])
-
-def _is_refl_file(s):
-    return _is_file_type(s, _file_endings['refl'])
-
-def _is_expt_file(s):
-    return _is_file_type(s, _file_endings['expt'])
-
-def _is_dials_file(s):
-    return _is_refl_file(s) or _is_expt_file(s)
-
 def run_abismal(parser):
+    import tensorflow as tf
+    import tf_keras as tfk
     from abismal import __version__ as version
-    from abismal.symmetry import ReciprocalASU,ReciprocalASUCollection
+    from abismal.symmetry import ReciprocalASU,ReciprocalASUCollection,ReciprocalASUGraph
     from abismal.merging import VariationalMergingModel
     from abismal.callbacks import HistorySaver,MtzSaver,PhenixRunner,AnomalousPeakFinder
     from abismal.io import split_dataset_train_test,set_gpu
     from abismal.scaling import ImageScaler
     from abismal.surrogate_posterior.structure_factor import FoldedNormalPosterior
-    from abismal.surrogate_posterior.intensity import GammaPosterior
     from tf_keras.optimizers import Adam
     from tf_keras.callbacks import ModelCheckpoint
     import gemmi
@@ -51,9 +27,13 @@ def run_abismal(parser):
     import logging
     from os.path import exists
     from os import mkdir
+    from abismal.likelihood import StudentTLikelihood
+    from abismal.likelihood import NormalLikelihood
 
     if not exists(parser.out_dir):
         mkdir(parser.out_dir)
+
+    from abismal.io.manager import DataManager
 
     log_file = parser.out_dir + "/abismal.log"
     logger = logging.getLogger(__name__)
@@ -64,131 +44,82 @@ def run_abismal(parser):
         logger.info(f"{k} : {v}")
     logger.info(str(vars(parser)))
 
-    cell = parser.cell
-    space_group = parser.space_group
-    asu_id = 0
-    if all([_is_stream_file(f) for f in parser.inputs]):
-        from abismal.io import StreamLoader
-        data = None
-        cell = parser.cell
+    dm = DataManager.from_parser(parser)
+    train,test = dm.get_train_test_splits()
+    dm.to_file(parser.out_dir + "/datamanager.yml")
 
-        for stream_file in parser.inputs:
-            loader = StreamLoader(
-                stream_file, 
-                cell=cell, 
-                dmin=parser.dmin, 
-                asu_id=asu_id, 
-                wavelength=parser.wavelength,
-            )
-            if parser.separate:
-                asu_id += 1
-            if cell is None:
-                cell = loader.cell
-            _data = loader.get_dataset(
-                num_cpus=parser.num_cpus,
-                logging_level=parser.ray_log_level,
-            )
-            if data is None:
-                data = _data
-            else:
-                data = data.concatenate(_data)
-
-    elif all([_is_dials_file(f) for f in parser.inputs]):
-        from abismal.io import StillsLoader
-        expt_files = [f for f in parser.inputs if _is_expt_file(f)]
-        refl_files = [f for f in parser.inputs if _is_refl_file(f)]
-
-        data = None
-        if parser.separate:
-            for expt,refl in zip(expt_files, refl_files):
-                loader = StillsLoader([expt], [refl], space_group, cell, parser.dmin, asu_id)
-                asu_id += 1
-                _data = loader.get_dataset()
-                if data is None:
-                    data = _data
-                else:
-                    data = data.concatenate(_data)
-        else:
-            loader = StillsLoader(
-                expt_files, refl_files, space_group, cell, parser.dmin, asu_id=asu_id
-            )
-            data = loader.get_dataset()
-            asu_id += 1
-        if cell is None:
-            cell = loader.cell
-    else:
-        raise ValueError(
-            "Couldn't determine input file type. "
-            "DIALS reflection tables and CrystFEL streams are supported."
-        )
-    if space_group is None:
-        if hasattr(loader, 'spacegroup'):
-            space_group = loader.spacegroup
-        else:
-            space_group = 'P1'
-
-    # Gemmification
-    if not isinstance(cell, gemmi.UnitCell):
-        cell = gemmi.UnitCell(*cell)
-    if not isinstance(space_group, gemmi.SpaceGroup):
-        space_group = gemmi.SpaceGroup(space_group)
-
-    # Handle setting up the test fraction, shuffle buffer, batching, etc
-    test = None
-    if parser.test_fraction > 0.:
-        train,test = split_dataset_train_test(data, parser.test_fraction)
+    if test is not None:
         test  = test.cache().repeat().ragged_batch(parser.batch_size)
         test = test.prefetch(AUTOTUNE)
-    else:
-        train = data
     train = train.cache().repeat()
     if parser.shuffle_buffer_size > 0:
         train = train.shuffle(parser.shuffle_buffer_size)
     train = train.ragged_batch(parser.batch_size)
 
     rasu = []
-    for i in range(asu_id):
+    for i in range(dm.num_asus):
         rasu.append(ReciprocalASU(
-            cell,
-            space_group,
-            parser.dmin,
+            dm.cell,
+            dm.spacegroup,
+            dm.dmin,
             anomalous=parser.anomalous,
         ))
-    rac = ReciprocalASUCollection(*rasu)
+
+    rac = ReciprocalASUGraph(
+        *rasu,
+        parents=parser.parents,
+        reindexing_ops=parser.reindexing_ops,
+    )
 
     reindexing_ops = ['x,y,z']
     if not parser.disable_index_disambiguation:
         ops = gemmi.find_twin_laws(
-            cell,
-            space_group,
+            dm.cell,
+            dm.spacegroup,
             3.0,
             False
         )
         reindexing_ops = reindexing_ops + [op.triplet() for op in ops] 
 
-    if parser.intensity_posterior:
-        surrogate_posterior = GammaPosterior(
+    if parser.parents is not None:
+        from abismal.prior.structure_factor.wilson import MultiWilsonPrior
+        from abismal.surrogate_posterior.structure_factor.folded_normal import MultivariateFoldedNormalPosterior
+        prior = MultiWilsonPrior(
             rac, 
-            kl_weight=parser.kl_weight,
-            epsilon=parser.epsilon,
-            scale_factor=parser.init_scale,
+            parser.prior_correlation, 
         )
-    else:
-        prior = None
-        if parser.parents is not None:
-            from abismal.surrogate_posterior.structure_factor.wilson import MultiWilsonPrior
-            prior = MultiWilsonPrior(
-                rac, 
-                parser.parents, 
-                parser.prior_correlation, 
-                parser.reindexing_ops,
-            )
+        loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
+        scale_init = parser.init_scale * loc_init
+        surrogate_posterior = MultivariateFoldedNormalPosterior(
+            rac, 
+            loc_init,
+            scale_init,
+            epsilon=parser.epsilon,
+        )
+    elif parser.intensity_posterior:
+        from abismal.surrogate_posterior.intensity import FoldedNormalPosterior
+        from abismal.prior.intensity.wilson import WilsonPrior
+        prior = WilsonPrior(rac)
+        loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
+        scale_init = parser.init_scale * loc_init
         surrogate_posterior = FoldedNormalPosterior(
             rac, 
-            kl_weight=parser.kl_weight,
+            loc_init,
+            scale_init,
             epsilon=parser.epsilon,
-            scale_factor=parser.init_scale,
-            prior=prior
+        )
+    else:
+        from abismal.surrogate_posterior.structure_factor import FoldedNormalPosterior as Posterior
+        #from abismal.surrogate_posterior.structure_factor.rice import RicePosterior as Posterior
+        from abismal.prior.structure_factor.wilson import WilsonPrior
+        prior = WilsonPrior(rac)
+        loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
+        scale_init = parser.init_scale * loc_init
+        surrogate_posterior = Posterior(
+            rac, 
+            loc_init,
+            scale_init,
+            epsilon=parser.epsilon,
         )
 
     scale_model = ImageScaler(
@@ -197,51 +128,67 @@ def run_abismal(parser):
         hidden_units=parser.d_model * 2,
         activation=parser.activation,
         kl_weight=parser.scale_kl_weight,
-        eps=parser.epsilon,
+        epsilon=parser.epsilon,
         num_image_samples=parser.sample_reflections_per_image,
     )
 
     if parser.studentt_dof is not None:
-        from abismal.likelihood import StudentTLikelihood
         likelihood = StudentTLikelihood(parser.studentt_dof)
     else:
-        from abismal.likelihood import NormalLikelihood
         likelihood = NormalLikelihood()
 
     model = VariationalMergingModel(
         scale_model, 
         surrogate_posterior, 
+        prior=prior,
         likelihood=likelihood,
         mc_samples=parser.mc_samples,
+        kl_weight=parser.kl_weight,
         reindexing_ops=reindexing_ops,
     )
 
     if parser.learning_rate_final is not None:
-        from tf_keras.optimizers.schedules import PolynomialDecay
-        learning_rate = PolynomialDecay(
-            parser.learning_rate,
-            parser.epochs * parser.steps_per_epoch,
-            end_learning_rate=parser.learning_rate_final,
-        )
+        from tf_keras.optimizers.schedules import PiecewiseConstantDecay
+        steps = parser.steps_per_epoch * parser.epochs
+        boundaries = [ steps // 2 ]
+        values = [ parser.learning_rate, parser.learning_rate_final ]
+        learning_rate = PiecewiseConstantDecay(boundaries, values)
+        #from tf_keras.optimizers.schedules import PolynomialDecay
+        #learning_rate = PolynomialDecay(
+        #    parser.learning_rate,
+        #    parser.epochs * parser.steps_per_epoch,
+        #    end_learning_rate=parser.learning_rate_final,
+        #)
     else:
         learning_rate = parser.learning_rate
 
-    opt = Adam(
-        parser.learning_rate, 
-        parser.beta_1, 
-        parser.beta_2, 
-        global_clipnorm=parser.global_clipnorm, 
-        clipnorm=parser.clipnorm, 
-        clipvalue=parser.clip, 
-        epsilon=parser.adam_epsilon, 
-        amsgrad=parser.amsgrad
-    )
 
-    
+    if parser.use_wadam:
+        opt = WAdam(
+            parser.learning_rate, 
+            parser.beta_1, 
+            global_clipnorm=parser.global_clipnorm, 
+            clipnorm=parser.clipnorm, 
+            clipvalue=parser.clip, 
+            epsilon=parser.adam_epsilon, 
+        )
+    else:
+        from abismal.optimizers.wadam import WAdam
+        opt = Adam(
+            parser.learning_rate, 
+            parser.beta_1, 
+            parser.beta_2, 
+            global_clipnorm=parser.global_clipnorm, 
+            clipnorm=parser.clipnorm, 
+            clipvalue=parser.clip, 
+            epsilon=parser.adam_epsilon, 
+            amsgrad=parser.amsgrad
+        )
+
     mtz_saver = MtzSaver(parser.out_dir, parser.anomalous)
     history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id)
     weight_saver  = ModelCheckpoint(
-        filepath=f'{parser.out_dir}/abismal.weights.h5', save_weights_only=True, verbose=1)
+        filepath=f'{parser.out_dir}/model.keras', verbose=1)
 
     callbacks = [
         mtz_saver,
@@ -264,9 +211,15 @@ def run_abismal(parser):
                 )
             callbacks.append(f)
 
-    train = train.prefetch(AUTOTUNE)
 
-    model.compile(opt, run_eagerly=parser.run_eagerly)
+    if parser.debug:
+        for x,y in train:
+            break
+        model([i[:3,:5] for i in x])
+
+    model.compile(opt, run_eagerly=parser.run_eagerly, jit_compile=parser.jit_compile)
+
+    train = train.prefetch(AUTOTUNE)
     history = model.fit(
         x=train, 
         epochs=parser.epochs, 
@@ -275,6 +228,10 @@ def run_abismal(parser):
         callbacks=callbacks, 
         validation_data=test
     )
+
+    if parser.debug:
+        from IPython import embed
+        embed(colors='linux')
 
 if __name__=='__main__':
     main()
