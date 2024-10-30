@@ -24,6 +24,9 @@ source <(curl -s https://raw.githubusercontent.com/rs-station/careless/main/inst
 # Reactivate to update cuda paths
 conda activate $ENVNAME
 
+# Install ray
+pip install ray
+
 # Install abismal
 pip install abismal
 
