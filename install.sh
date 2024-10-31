@@ -1,7 +1,5 @@
 ENVNAME=abismal
 PY_VERSION=3.11
-TFP_VERSION=0.24.0
-TF_VERSION=2.16.1
 
 conda activate base
 
