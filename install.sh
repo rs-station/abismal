@@ -1,30 +1,5 @@
-ENVNAME=abismal
-PY_VERSION=3.11
+# Sort the dependencies
+source <(curl -s https://raw.githubusercontent.com/rs-station/abismal/main/pre-install.sh)
 
-conda activate base
-
-result=$(conda create -n $ENVNAME python=$PY_VERSION 3>&2 2>&1 1>&3)
-
-echo $result
-if [[ $result == *"CondaSystemExit"* ]]; then
-    echo "User aborted anaconda env creation. Exiting... "
-    return
-fi
-
-conda activate $ENVNAME
-pip install --upgrade pip
-
-conda install -c conda-forge dials -y
-
-# Install TensorFlow Probability
-source <(curl -s https://raw.githubusercontent.com/rs-station/careless/main/install-tfp.sh)
-
-# Reactivate to update cuda paths
-conda activate $ENVNAME
-
-# Install ray
-pip install ray
-
-# Install abismal
+# Install abismal release
 pip install abismal
-
