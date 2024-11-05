@@ -1,6 +1,5 @@
 from abismal.surrogate_posterior import IntensityPosteriorBase
 import numpy as np
-import reciprocalspaceship as rs
 import tensorflow as tf
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import math as tfm

@@ -1,7 +1,6 @@
 import math
 import numpy as np
 import tensorflow as tf
-import reciprocalspaceship as rs
 from abismal.layers import Standardize
 from abismal.distributions import TruncatedNormal,FoldedNormal
 from tensorflow_probability import distributions as tfd

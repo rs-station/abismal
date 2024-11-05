@@ -1,5 +1,4 @@
 import numpy as np
-import reciprocalspaceship as rs
 import tensorflow as tf
 from abismal.distributions import FoldedNormal,Rice
 from tensorflow_probability import distributions as tfd

@@ -1,3 +1,4 @@
+import reciprocalspaceship as rs
 # Version number for reciprocalspaceship
 def getVersionNumber():
     import pkg_resources

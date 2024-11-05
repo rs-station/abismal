@@ -1,5 +1,4 @@
 import numpy as np
-import reciprocalspaceship as rs
 import tensorflow as tf
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import util as tfu

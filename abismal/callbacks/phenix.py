@@ -1,4 +1,3 @@
-import reciprocalspaceship as rs
 import tf_keras as tfk
 import tensorflow as tf
 from os.path import exists,dirname,abspath

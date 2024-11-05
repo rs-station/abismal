@@ -1,5 +1,4 @@
 import numpy as np
-import reciprocalspaceship as rs
 import tensorflow as tf
 import tensorflow_probability as tfp
 import gemmi
