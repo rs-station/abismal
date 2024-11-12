@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "abismal"
+authors=[
+    {name="Kevin M. Dalton", email="kmdalton@slac.stanford.edu"}
+]
+description = "Stochastic merging for diffraction data."
+readme = "README.md"
+dynamic = ["version"]
+requires-python = ">= 3.9,<3.13"
+dependencies = [
+    "reciprocalspaceship>=0.9.16",
+    "tqdm",
+    "tensorflow-probability[tf]==0.25",
+    "tensorflow==2.18.0",
+    "matplotlib",
+    "seaborn",
+    "rs-booster",
+    "ray",
+]
+
+license={text = "MIT"}
+
+[project.optional-dependencies]
+dev = [
+    "pytest", 
+    "pytest-cov",
+    "pytest-xdist",
+]
+cuda = [
+    "tensorflow[and-cuda]==2.18.0",
+]
+
+[project.urls]
+Repository = "https://github.com/rs-station/abismal"
+Issues = "https://github.com/rs-station/abismal/issues"
+
+[project.scripts]
+abismal = "abismal.command_line.abismal:main"
+
+[tool.pytest.ini_options]
+addopts = "-n auto"
+testpaths = [
+    "tests",
+]
+
+[tool.setuptools.dynamic]
+version = {file = "absimal/VERSION"}
