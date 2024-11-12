@@ -48,4 +48,4 @@ testpaths = [
 ]
 
 [tool.setuptools.dynamic]
-version = {file = "absimal/VERSION"}
+version = {file = "abismal/VERSION"}
