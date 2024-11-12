@@ -1,6 +1,18 @@
 title = "TensorFlow options"
 description = "Options dictating how and what resources will be used by TF"
 
+from argparse import _StoreTrueAction
+class ListDevicesAction(_StoreTrueAction):
+    def __call__(self, *args, **kwargs):
+        import tensorflow as tf
+        print("###############################################")
+        print("# TensorFlow can access the following devices #")
+        print("###############################################")
+        for dev in tf.config.list_physical_devices():
+            print(f" - {dev.device_type}: {dev.name}")
+        from sys import exit
+        exit()
+
 args_and_kwargs = (
     (
         (
@@ -48,4 +60,14 @@ args_and_kwargs = (
             "action" : "store_true",
         }
     ),
+
+    (
+        (
+            "--list-devices",
+        ),{
+            "help": "List accelerator devices and exit.",
+            "action" : ListDevicesAction,
+        }
+    ),
 )
+
