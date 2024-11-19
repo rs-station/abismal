@@ -31,7 +31,7 @@ class ImageScaler(tfk.models.Model):
             mlp_width=32, 
             mlp_depth=20, 
             hidden_units=None,
-            activation="leaky_relu",
+            activation="LeakyReLU",
             kl_weight=1.,
             epsilon=1e-12,
             num_image_samples=None,
@@ -143,8 +143,8 @@ class ImageScaler(tfk.models.Model):
         return out
 
     def prior_function(self):
-        p = tfd.Exponential(1.)
-        #p = tfd.Laplace(1., 1.)
+        #p = tfd.Exponential(1.)
+        p = tfd.Laplace(0., 1.)
         return p
 
     def bijector_function(self, x):
@@ -153,9 +153,8 @@ class ImageScaler(tfk.models.Model):
     def distribution_function(self, output):
         if self.kl_weight > 0.:
             loc, scale = tf.unstack(output, axis=-1)
-            loc = self.bijector_function(loc)
             scale = self.bijector_function(scale)
-            q = FoldedNormal(loc, scale)
+            q = tfd.Normal(loc, scale)
 
             self.add_metric(tf.reduce_mean(loc), name='Σ_loc')
             self.add_metric(tf.reduce_mean(scale), name='Σ_scale')
