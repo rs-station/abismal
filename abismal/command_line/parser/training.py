@@ -8,7 +8,7 @@ args_and_kwargs = (
             "--mc-samples",
         ),{
             "help": "The number of monte carlo samples used to estimate gradients with default 256.",
-            "default": 256,
+            "default": 32,
             "type": int,
         }
     ),
