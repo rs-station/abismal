@@ -143,8 +143,8 @@ class ImageScaler(tfk.models.Model):
         return out
 
     def prior_function(self):
-        #p = tfd.Exponential(1.)
-        p = tfd.Laplace(0., 1.)
+        p = tfd.Exponential(1.)
+        #p = tfd.Laplace(0., 1.)
         return p
 
     def bijector_function(self, x):
@@ -154,7 +154,7 @@ class ImageScaler(tfk.models.Model):
         if self.kl_weight > 0.:
             loc, scale = tf.unstack(output, axis=-1)
             scale = self.bijector_function(scale)
-            q = tfd.Normal(loc, scale)
+            q = tfd.LogNormal(loc, scale)
 
             self.add_metric(tf.reduce_mean(loc), name='Σ_loc')
             self.add_metric(tf.reduce_mean(scale), name='Σ_scale')
