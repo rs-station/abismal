@@ -6,12 +6,16 @@ Scaling and merging for large diffraction datasets using stochastic variational 
 This project is under development. 
 
 
-# Installation
-For the CPU version, run 
-
+# Installation with NVIDIA CUDA Support
 ```bash
+conda create -yn abismal -c conda-forge dials
+conda activate dials
 pip install --upgrade pip
-pip install git+https://github.com/rs-station/abismal
+pip install abismal[cuda]@git+https://github.com/rs-station/abismal.git
+```
+Test the installation with
+```bash
+abismal --list-devices
 ```
 
 For NVIDIA CUDA support, we recommend you use the anaconda python distribution. The following will create a new conda environment and install abismal:
