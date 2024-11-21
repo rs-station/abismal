@@ -9,7 +9,7 @@ This project is under development.
 # Installation with NVIDIA CUDA Support
 ```bash
 conda create -yn abismal -c conda-forge dials
-conda activate dials
+conda activate abismal
 pip install --upgrade pip
 pip install abismal[cuda]@git+https://github.com/rs-station/abismal.git
 ```
