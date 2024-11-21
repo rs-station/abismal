@@ -11,12 +11,13 @@ def main():
     run_abismal(parser)
 
 def run_abismal(parser):
+    import math
     import tensorflow as tf
     import tf_keras as tfk
     from abismal import __version__ as version
     from abismal.symmetry import ReciprocalASU,ReciprocalASUCollection,ReciprocalASUGraph
     from abismal.merging import VariationalMergingModel
-    from abismal.callbacks import HistorySaver,MtzSaver,PhenixRunner,AnomalousPeakFinder
+    from abismal.callbacks import HistorySaver,MtzSaver,PhenixRunner,AnomalousPeakFinder,WeightSaver
     from abismal.io import split_dataset_train_test,set_gpu
     from abismal.scaling import ImageScaler
     from abismal.surrogate_posterior.structure_factor import FoldedNormalPosterior
@@ -187,8 +188,7 @@ def run_abismal(parser):
 
     mtz_saver = MtzSaver(parser.out_dir, parser.anomalous)
     history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id)
-    weight_saver  = ModelCheckpoint(
-        filepath=f'{parser.out_dir}/model.keras', verbose=1)
+    weight_saver  = WeightSaver(parser.out_dir, parser.epochs)
 
     callbacks = [
         mtz_saver,
