@@ -46,11 +46,16 @@ class DoubleFoldedNormal:
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class MultivariateFoldedNormalPosterior(StructureFactorPosteriorBase):
-    def __init__(self, rac, loc_init, scale_init, epsilon=1e-12, **kwargs):
+    def __init__(self, rac, loc_init=None, scale_init=None, epsilon=1e-12, **kwargs):
         super().__init__(rac, epsilon=epsilon, **kwargs)
         self.low = self.epsilon
         self._loc_init = loc_init
         self._scale_init = scale_init
+
+        if loc_init is None:
+            loc_init = tf.ones(rac.asu_size)
+        if scale_init is None:
+            scale_init = 0.01 * tf.ones(rac.asu_size)
 
         self.loc = tfu.TransformedVariable(
             loc_init,
@@ -65,14 +70,6 @@ class MultivariateFoldedNormalPosterior(StructureFactorPosteriorBase):
             ]),
         )
         self.built = True
-
-    def get_config(self):
-        config = super().get_config()
-        config.update({
-            'loc_init' : self._loc_init,
-            'scale_init' : self._scale_init,
-        })
-        return config
 
     def distribution(self, asu_id, hkl):
         loc_1 = self.rac.gather(self.loc, asu_id, hkl)

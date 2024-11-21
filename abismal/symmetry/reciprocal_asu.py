@@ -250,6 +250,7 @@ class ReciprocalASU(tfk.layers.Layer):
         safe = tf.maximum(idx, 0)
         return tf.gather(tensor, safe)
 
+@tfk.saving.register_keras_serializable(package="abismal")
 class ReciprocalASUGraph(ReciprocalASUCollection):
     def __init__(self, *reciprocal_asus, parents=None, reindexing_ops=None, **kwargs):
         super().__init__(*reciprocal_asus, **kwargs)
@@ -293,7 +294,7 @@ class ReciprocalASUGraph(ReciprocalASUCollection):
     def get_config(self):
         config = super().get_config()
         config.update({
-            'parents' : self.parents,
+            'parents' : [int(i) for i in self.parents],
             'reindexing_ops' : self.reindexing_ops,
         })
         return config
