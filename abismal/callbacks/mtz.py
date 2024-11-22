@@ -4,7 +4,7 @@ from os.path import exists,dirname,abspath
 from os import mkdir
 
 class MtzSaver(tfk.callbacks.Callback):
-    def __init__(self, output_directory, anomalous=True, *args, **kwargs):
+    def __init__(self, output_directory, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.output_directory = abspath(output_directory)
 
