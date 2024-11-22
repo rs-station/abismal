@@ -61,7 +61,7 @@ class VariationalMergingModel(tfk.models.Model):
 
     @classmethod
     def from_config(cls, config):
-        for k in ['scale_model', 'surrogate_posterior', 'likelihood']:
+        for k in ['scale_model', 'surrogate_posterior', 'likelihood', 'prior']:
             config[k] = tfk.saving.deserialize_keras_object(config[k])
         return cls(**config)
 
@@ -69,6 +69,7 @@ class VariationalMergingModel(tfk.models.Model):
         self.scale_model.build(shapes)
         self.standardize_intensity.build(shapes[-1])
         self.standardize_metadata.build(shapes[-3])
+        self.built = True
 
     def standardize_inputs(self, inputs):
         (
