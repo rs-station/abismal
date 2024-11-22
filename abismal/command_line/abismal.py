@@ -186,7 +186,7 @@ def run_abismal(parser):
             amsgrad=parser.amsgrad
         )
 
-    mtz_saver = MtzSaver(parser.out_dir, parser.anomalous)
+    mtz_saver = MtzSaver(parser.out_dir)
     history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id)
     weight_saver  = WeightSaver(parser.out_dir, parser.epochs)
 
