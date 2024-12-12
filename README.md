@@ -18,11 +18,3 @@ Test the installation with
 abismal --list-devices
 ```
 
-For NVIDIA CUDA support, we recommend you use the anaconda python distribution. The following will create a new conda environment and install abismal:
-
-```bash
-source <(curl -s https://raw.githubusercontent.com/rs-station/abismal/main/install.sh)
-```
-
-You can now use abismal with GPU acceleration by running `conda activate abismal`
-
