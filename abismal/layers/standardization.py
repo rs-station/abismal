@@ -12,10 +12,12 @@ class Standardize(tfk.layers.Layer):
         self.center = center
         self.epsilon = epsilon
         self.count_max = count_max
+        self.count = None
 
     def build(self, shape):
-        #d = [1] * len(shape)
-        #d[-1] = shape[-1]
+        #Check if already built
+        if self.count is not None:
+            return
         d = shape[-1]
 
         self._mean = self.add_weight(
@@ -74,15 +76,14 @@ class Standardize(tfk.layers.Layer):
         return tf.clip_by_value(s, self.epsilon, np.inf)
 
     def update(self, x):
-        if self.trainable:
-            tfs.assign_moving_mean_variance(
-                x,
-                self._mean,
-                self._var,
-                zero_debias_count=self.count,
-                decay=self.decay,
-                axis=0, #TODO: if tf.rank(x) > 2, this should be (0, ... , tf.rank(x) - 2) i think
-            )
+        tfs.assign_moving_mean_variance(
+            x,
+            self._mean,
+            self._var,
+            zero_debias_count=self.count,
+            decay=self.decay,
+            axis=0, #TODO: if tf.rank(x) > 2, this should be (0, ... , tf.rank(x) - 2) i think
+        )
 
     def standardize(self, data):
         mean,var = self._debiased_mean_variance()
@@ -91,10 +92,9 @@ class Standardize(tfk.layers.Layer):
             return (data - mean) / std
         return data / std
 
-    def call(self, data, training=True):
-        if self.count >= self.count_max:
+    def call(self, data, training=None):
+        if training and (self.count <= self.count_max):
             self.update(data)
-
         return self.standardize(data)
 
 

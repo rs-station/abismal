@@ -66,12 +66,14 @@ class VariationalMergingModel(tfk.models.Model):
         return cls(**config)
 
     def build(self, shapes):
+        if self.built:
+            return
         self.scale_model.build(shapes)
         self.standardize_intensity.build(shapes[-1])
         self.standardize_metadata.build(shapes[-3])
         self.built = True
 
-    def standardize_inputs(self, inputs):
+    def standardize_inputs(self, inputs, training=None):
         (
             asu_id,
             hkl_in,
@@ -83,12 +85,12 @@ class VariationalMergingModel(tfk.models.Model):
         ) = inputs
         if self.standardize_intensity is not None:
             iobs = tf.ragged.map_flat_values(
-                self.standardize_intensity, iobs) 
+                self.standardize_intensity, iobs, training=training) 
             sigiobs = tf.ragged.map_flat_values(
                 self.standardize_intensity.standardize, sigiobs)
         if self.standardize_metadata is not None:
             metadata = tf.ragged.map_flat_values(
-                self.standardize_metadata, metadata)
+                self.standardize_metadata, metadata, training=training)
 
         self.add_metric(self.standardize_intensity.std, "Istd")
         self.add_metric(self.standardize_intensity.count, "Icount")
@@ -104,11 +106,11 @@ class VariationalMergingModel(tfk.models.Model):
 
         return out
 
-    def _call_dense(self, inputs, mc_samples=None, training=None, **kwargs):
+    def call(self, inputs, mc_samples=None, training=None, **kwargs):
         if mc_samples is None:
             mc_samples = self.mc_samples
 
-        inputs = self.standardize_inputs(inputs)
+        inputs = self.standardize_inputs(inputs, training=training)
 
         (
             asu_id,
@@ -177,93 +179,6 @@ class VariationalMergingModel(tfk.models.Model):
         ipred_avg = tf.reduce_mean(ipred, axis=-1)
         return ipred_avg
 
-    def _call_sparse(self, inputs, mc_samples=None, training=None, **kwargs):
-        if mc_samples is None:
-            mc_samples = self.mc_samples
-
-        (
-            asu_id,
-            hkl_in,
-            resolution,
-            wavelength,
-            metadata,
-            iobs,
-            sigiobs,
-        ) = inputs
-
-        scale = self.scale_model(
-            inputs,
-            mc_samples=mc_samples, 
-            **kwargs
-        )
-
-        ll = None
-        ipred = None
-        hkl = None
-        kl_div = None
-
-        for op in self.reindexing_ops:
-            # Choose the best indexing solution for each image
-            _hkl = tf.ragged.map_flat_values(op, hkl_in)
-            _q = self.surrogate_posterior.distribution(asu_id.flat_values, _hkl.flat_values)
-            _p = self.prior.distribution(asu_id.flat_values, _hkl.flat_values)
-            _z = _q.sample(mc_samples)
-
-            kl_div = self.surrogate_posterior.compute_kl_terms(_q, _p, samples=_z)
-            ##We need these shenanigans to support multivariate posteriors
-            if _q.event_shape != []:
-                _ipred = _z[...,0]
-            else:
-                _ipred = _z
-
-            _kl_div = tf.RaggedTensor.from_row_splits(kl_div[...,None], scale.row_splits)
-            _ipred = tf.RaggedTensor.from_row_splits(tf.transpose(_ipred), scale.row_splits)
-
-            #_ipred  = self.surrogate_posterior.rac.gather(tf.transpose(z), asu_id, _hkl)
-            if self.surrogate_posterior.parameterization == 'structure_factor':
-                _ipred = tf.square(_ipred)
-            _ipred = _ipred * scale
-
-            _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
-            _ll = tf.reduce_mean(_ll, [-1, -2], keepdims=True)
-
-            if ll is None:
-                ipred = _ipred
-                ll = _ll
-                hkl = _hkl
-                kl_div = _kl_div
-            else:
-                idx =  _ll > ll
-                ipred = tf.where(idx, _ipred, ipred)
-                ll = tf.where(idx, _ll, ll)
-                hkl = tf.where(idx, _hkl, hkl)
-                kl_div = tf.where(idx, _kl_div, kl_div)
-
-        if training:
-            self.surrogate_posterior.register_seen(asu_id.flat_values, hkl.flat_values)
-
-        self.likelihood.register_metrics(
-            ipred.flat_values, 
-            iobs.flat_values, 
-            sigiobs.flat_values,
-        )
-
-        # This is the mean across mc samples and observations
-        ll = tf.reduce_mean(ll) 
-        kl_div = tf.reduce_mean(kl_div) 
-
-        self.add_metric(-ll, name='NLL')
-        self.add_loss(-ll)
-
-        self.add_metric(kl_div, name='KL')
-        self.add_loss(self.kl_weight * kl_div)
-
-        ipred_avg = tf.reduce_mean(ipred, axis=-1)
-        return ipred_avg
-
-    def call(self, inputs, mc_samples=None, training=None, **kwargs):
-        #return self._call_sparse(inputs, mc_samples, training, **kwargs)
-        return self._call_dense(inputs, mc_samples, training, **kwargs)
 
     #For production with super nan avoiding powers
     @tf.function

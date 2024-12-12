@@ -17,64 +17,72 @@ def main():
         "model_file", help="A .keras file from an abismal run",
     )
     parser.add_argument(
-        "structure_factor_model", help="An optional .keras file from which to initialize the structure factors file from an abismal run", default=None,
+        "--sf-init", help="An optional .keras file from which to initialize the structure factors file from an abismal run", default=None, required=False
     )
     parser.add_argument(
-        "--epochs", help="How many gradient descent epochs to run", type=int, default=30,
+        "--epochs", help="How many gradient descent epochs to run", type=int, default=30, required=False
     )
     parser.add_argument(
-        "--steps-per-epoch", help="How many steps per epoch", type=int, default=1_000,
+        "--steps-per-epoch", help="How many steps per epoch", type=int, default=1_000, required=False
     )
     parser.add_argument(
-        "--batch-size", help="Number of images considered in each gradient step", type=int, default=100,
+        "--batch-size", help="Number of images considered in each gradient step", type=int, default=100, required=False
+    )
+    parser.add_argument(
+        "--repeats", help="Number of random repeats to conduct. Default is one.", type=int, default=1, required=False
     )
     parser = parser.parse_args()
+    refls = []
 
+    for repeat in range(parser.repeats):
+        dm = DataManager.from_file(parser.datamanager_yml)
+        dm.test_fraction = 0.5
+        half1,half2 = dm.get_train_test_splits()
 
-    dm = DataManager.from_file(parser.datamanager_yml)
-    dm.test_fraction = 0.5
-    half1,half2 = dm.get_train_test_splits()
+        for half_id,half in enumerate([half1, half2]):
+            half = half.cache().repeat().ragged_batch(parser.batch_size)
 
-    for i,half in enumerate([half1, half2]):
-        half = half.cache().repeat().ragged_batch(parser.batch_size)
-        model = tfk.saving.load_model(parser.model_file)
-        if parser.structure_factor_model is not None:
-            sf_model = tfk.saving.load_model(parser.structure_factor_model)
-            model.surrogate_posterior.set_weights(
-                sf_model.surrogate_posterior.get_weights())
+            model = tfk.saving.load_model(parser.model_file)
+            if parser.sf_init is not None:
+                sf_model = tfk.saving.load_model(parser.sf_init)
+                model.surrogate_posterior.set_weights(
+                    sf_model.surrogate_posterior.get_weights())
 
-        model.standardize_intensity.trainable = False
-        model.standardize_metadata.trainable = False
-        model.likelihood.trainable = False
-        model.scale_model.trainable = False
-        model.prior.trainable = False
+            model.trainable = False
+            model.surrogate_posterior.trainable = True
 
-        #Need to update this to 
-        model.compile(model.optimizer)
+            #Reset optimizer state to remove frozen variables
+            opt = model.optimizer.from_config(model.optimizer.get_config()) 
 
-        callbacks = [
-            MtzSaver(f"half_{i+1}"),
-        ]
-        history = model.fit(
-            x=half, 
-            epochs=parser.epochs, 
-            steps_per_epoch=parser.steps_per_epoch, 
-            callbacks=callbacks, 
-        )
+            #Now re-compile to re-initialize the optimizer momenta
+            model.compile(opt)
 
-        ref = tfk.saving.load_model(parser.model_file)
-        import numpy as np
-        unsame = []
-        for w1,w2 in zip(ref.weights, model.weights):
-            if w1.dtype in ('float32', 'float64'):
-                same = np.allclose(w1, w2)
-                if not same:
-                    unsame.append(w1)
+            callbacks = [
+                MtzSaver(f"half_{half_id+1}"),
+            ]
+            history = model.fit(
+                x=half, 
+                epochs=parser.epochs, 
+                steps_per_epoch=parser.steps_per_epoch, 
+                callbacks=callbacks, 
+            )
 
+            for asu_id,(asu,ds) in enumerate(zip(model.surrogate_posterior.rac, model.surrogate_posterior.to_datasets())):
+                if asu.anomalous:
+                    ds = ds.stack_anomalous().dropna()
+                ds = ds.reset_index()
+                #Make compatible with careless
+                ds = ds.rename(columns={
+                    'SIGF' : 'SigF',
+                    'SIGI' : 'SigI',
+                 })
+                ds['repeat'] = repeat
+                ds['asu_id'] = asu_id
+                ds['half'] = half_id
+                refls.append(ds)
 
-        from IPython import embed
-        embed(colors='linux')
-        XX
-
-    from IPython import embed
-    embed(colors='linux')
+    import reciprocalspaceship as rs
+    refls = rs.concat(refls, check_isomorphous=False).infer_mtz_dtypes()
+    refls.write_mtz("abismal_xval.mtz")
+    for asu_id,ds in refls.groupby('asu_id'):
+        ds.write_mtz(f"abismal_xval_{asu_id}.mtz")
