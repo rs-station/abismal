@@ -84,14 +84,14 @@ def run_abismal(parser):
 
     if parser.parents is not None:
         from abismal.prior.structure_factor.wilson import MultiWilsonPrior
-        from abismal.surrogate_posterior.structure_factor.folded_normal import MultivariateFoldedNormalPosterior
+        from abismal.surrogate_posterior.structure_factor.folded_normal import FoldedNormalPosterior
         prior = MultiWilsonPrior(
             rac, 
             parser.prior_correlation, 
         )
         loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
         scale_init = parser.init_scale * loc_init
-        surrogate_posterior = MultivariateFoldedNormalPosterior(
+        surrogate_posterior = FoldedNormalPosterior(
             rac, 
             loc_init,
             scale_init,
@@ -165,6 +165,7 @@ def run_abismal(parser):
 
 
     if parser.use_wadam:
+        from abismal.optimizers.wadam import WAdam
         opt = WAdam(
             parser.learning_rate, 
             parser.beta_1, 
@@ -174,7 +175,6 @@ def run_abismal(parser):
             epsilon=parser.adam_epsilon, 
         )
     else:
-        from abismal.optimizers.wadam import WAdam
         opt = Adam(
             parser.learning_rate, 
             parser.beta_1, 

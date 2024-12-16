@@ -7,6 +7,7 @@ _file_endings = {
     'refl' : ('.refl', '.pickle'),
     'expt' : ('.expt', '.json'),
     'stream' : ('.stream',),
+    'mtz' : ('.mtz',),
 }
 
 def _is_file_type(s, endings):
@@ -23,6 +24,9 @@ def _is_refl_file(s):
 
 def _is_expt_file(s):
     return _is_file_type(s, _file_endings['expt'])
+
+def _is_mtz_file(s):
+    return _is_file_type(s, _file_endings['mtz'])
 
 def _is_dials_file(s):
     return _is_refl_file(s) or _is_expt_file(s)
@@ -118,8 +122,6 @@ class DataManager:
                 )
                 if self.separate:
                     asu_id += 1
-                else:
-                    asu_id = 1
                 if self.cell is None:
                     self.cell = loader.cell
                 _data = loader.get_dataset(
@@ -151,13 +153,27 @@ class DataManager:
                     expt_files, refl_files, self.spacegroup, self.cell, self.dmin, asu_id=asu_id
                 )
                 data = loader.get_dataset()
-                asu_id += 1
             if self.cell is None:
                 self.cell = loader.cell
+        elif all([_is_mtz_file(f) for f in self.inputs]):
+            from abismal.io import MTZLoader
+            data = None
+            for mtz in self.inputs:
+                loader = MTZLoader(mtz, dmin=self.dmin, cell=self.cell, spacegroup=self.spacegroup, asu_id=asu_id)
+                if self.separate:
+                    asu_id += 1
+                _data = loader.get_dataset()
+                if data is None:
+                    data = _data
+                else:
+                    data = data.concatenate(_data)
+            if self.cell is None:
+                self.cell = loader.cell
+
         else:
             raise ValueError(
                 "Couldn't determine input file type. "
-                "DIALS reflection tables and CrystFEL streams are supported. "
+                "MTZs, DIALS reflection tables, and CrystFEL streams are supported. "
                 "Mixing filetypes is not supported."
             )
         if self.spacegroup is None:
@@ -166,7 +182,7 @@ class DataManager:
             else:
                 self.spacegroup = 'P1'
 
-        self.num_asus = asu_id
+        self.num_asus = asu_id + 1
 
         return data
 
