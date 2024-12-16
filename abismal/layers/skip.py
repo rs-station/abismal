@@ -56,14 +56,15 @@ class FeedForward(tfk.layers.Layer):
             self.normalize = None
 
         self.activation = tfk.activations.get(activation)
+        self.use_bias = True
 
     def build(self, shape, **kwargs):
         self.units = shape[-1]
         if self.hidden_units is None:
             self.hidden_units = 2 * self.units
 
-        self.ff1 = tfk.layers.Dense(self.hidden_units, kernel_initializer=self.kernel_initializer, **kwargs)
-        self.ff2 = tfk.layers.Dense(self.units, kernel_initializer=self.kernel_initializer, **kwargs)
+        self.ff1 = tfk.layers.Dense(self.hidden_units, kernel_initializer=self.kernel_initializer, use_bias=self.use_bias, **kwargs)
+        self.ff2 = tfk.layers.Dense(self.units, kernel_initializer=self.kernel_initializer, use_bias=self.use_bias, **kwargs)
 
         self.ff1.build(shape)
         self.ff2.build(shape[:-1] + [self.hidden_units])
