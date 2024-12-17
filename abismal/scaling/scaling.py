@@ -86,9 +86,9 @@ class ImageScaler(tfk.models.Model):
         )
 
         self.input_image = tfk.layers.Dense(
-                mlp_width, kernel_initializer=kernel_initializer, use_bias=True)
+                mlp_width, kernel_initializer=kernel_initializer, use_bias=False)
         self.input_scale = tfk.layers.Dense(
-                mlp_width, kernel_initializer=kernel_initializer, use_bias=True)
+                mlp_width, kernel_initializer=kernel_initializer, use_bias=False)
 
         self.pool = Average(axis=-2)
 
@@ -143,7 +143,7 @@ class ImageScaler(tfk.models.Model):
         return out
 
     def prior_function(self):
-        p = tfd.Laplace(0., 1.)
+        p = tfd.Cauchy(0., 1.)
         return p
 
     def bijector_function(self, x):
@@ -212,6 +212,8 @@ class ImageScaler(tfk.models.Model):
 
         image = self.image_network(image)
         image = self.pool(image)
+        self.add_metric(tf.math.reduce_mean(image), "Image")
+        self.add_metric(tf.math.reduce_std(image), "ImageStd")
         scale = scale + image
 
         scale = tf.ragged.map_flat_values(self.scale_network, scale)
