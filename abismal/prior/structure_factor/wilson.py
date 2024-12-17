@@ -195,7 +195,7 @@ class MultiWilsonPrior(tfk.layers.Layer):
         config = super().get_config()
         config.update({
             'rac' : tfk.saving.serialize_keras_object(self.rac),
-            'correlations' : self.correlation,
+            'correlation' : self.correlation,
             'sigma' : self.sigma,
         })
         return config
