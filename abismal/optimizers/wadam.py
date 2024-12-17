@@ -76,31 +76,11 @@ class WAdam(tfk.optimizers.Optimizer):
         beta_power = tf.pow(tf.cast(self.beta, variable.dtype), local_step)
         alpha = lr / (1 - beta_power)
 
-        if isinstance(gradient, tf.IndexedSlices):
-            raise NotImplementedError("No sparse gradient implementation yet!")
-            # Sparse gradients.
-            m.assign_add(-m * (1 - self.beta_1))
-            m.scatter_add(
-                tf.IndexedSlices(
-                    gradient.values * (1 - self.beta_1), gradient.indices
-                )
-            )
-            v.assign_add(-v * (1 - self.beta_2))
-            v.scatter_add(
-                tf.IndexedSlices(
-                    tf.square(gradient.values) * (1 - self.beta_2),
-                    gradient.indices,
-                )
-            )
-            variable.assign_sub((m * alpha) / (tf.sqrt(v) + self.epsilon))
-        else:
-            # Dense gradients.
-            g = gradient
-            delta = g - m
-            m.assign_add((beta - 1.) * m + (1. - beta) * delta)
-            v.assign_add((beta - 1.) * v + (1. - beta) * delta * (g - m))
-            #variable.assign_sub((m * alpha) / (tf.sqrt(v + m*m) + self.epsilon))
-            variable.assign_sub((m * alpha) / (tf.sqrt(v) + self.epsilon))
+        g = gradient
+        delta = g - m
+        m.assign_add((1. - beta) * delta)
+        v.assign_add((beta - 1.) * v + (1. - beta) * delta * (g - m))
+        variable.assign_sub((m * alpha) / (tf.sqrt(v) + self.epsilon))
 
     def get_config(self):
         config = super().get_config()
