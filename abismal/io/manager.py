@@ -182,7 +182,9 @@ class DataManager:
             else:
                 self.spacegroup = 'P1'
 
-        self.num_asus = asu_id + 1
+        self.num_asus = asu_id
+        if not self.separate:
+            self.num_asus = self.num_asus + 1
 
         return data
 

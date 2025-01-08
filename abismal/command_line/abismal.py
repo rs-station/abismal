@@ -169,6 +169,7 @@ def run_abismal(parser):
         opt = WAdam(
             parser.learning_rate, 
             parser.beta_1, 
+            parser.beta_2, 
             global_clipnorm=parser.global_clipnorm, 
             clipnorm=parser.clipnorm, 
             clipvalue=parser.clip, 
@@ -188,7 +189,7 @@ def run_abismal(parser):
 
     mtz_saver = MtzSaver(parser.out_dir)
     history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id)
-    weight_saver  = WeightSaver(parser.out_dir, parser.epochs)
+    weight_saver  = WeightSaver(parser.out_dir)
 
     callbacks = [
         mtz_saver,

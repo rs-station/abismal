@@ -8,7 +8,8 @@ class WAdam(tfk.optimizers.Optimizer):
     def __init__(
         self,
         learning_rate=0.001,
-        beta=0.9,
+        beta_1=0.9,
+        beta_2=0.9,
         epsilon=1e-12,
         weight_decay=None,
         clipnorm=None,
@@ -34,7 +35,8 @@ class WAdam(tfk.optimizers.Optimizer):
             **kwargs
         )
         self._learning_rate = self._build_learning_rate(learning_rate)
-        self.beta = beta
+        self.beta_1 = beta_1
+        self.beta_2 = beta_2
         self.epsilon = epsilon
 
     def build(self, var_list):
@@ -67,19 +69,21 @@ class WAdam(tfk.optimizers.Optimizer):
         """Update step given gradient and the associated model variable."""
         lr = tf.cast(self.learning_rate, variable.dtype)
         local_step = tf.cast(self.iterations + 1, variable.dtype)
-        beta = tf.cast(self.beta, variable.dtype)
+        beta_1 = tf.cast(self.beta_1, variable.dtype)
+        beta_2 = tf.cast(self.beta_2, variable.dtype)
 
         var_key = self._var_key(variable)
         m = self._momentums[self._index_dict[var_key]]
         v = self._velocities[self._index_dict[var_key]]
 
-        beta_power = tf.pow(tf.cast(self.beta, variable.dtype), local_step)
-        alpha = lr / (1 - beta_power)
+        beta_1_power = tf.pow(beta_1, local_step)
+        beta_2_power = tf.pow(beta_2, local_step)
+        alpha = lr * tf.sqrt(1 - beta_2_power) / (1 - beta_1_power)
 
         g = gradient
         delta = g - m
-        m.assign_add((1. - beta) * delta)
-        v.assign_add((beta - 1.) * v + (1. - beta) * delta * (g - m))
+        m.assign_add((1. - beta_1) * delta)
+        v.assign_add((beta_2 - 1.) * v + (1. - beta_2) * delta * (g - m))
         variable.assign_sub((m * alpha) / (tf.sqrt(v) + self.epsilon))
 
     def get_config(self):
@@ -90,7 +94,8 @@ class WAdam(tfk.optimizers.Optimizer):
                 "learning_rate": self._serialize_hyperparameter(
                     self._learning_rate
                 ),
-                "beta": self.beta,
+                "beta_1": self.beta_1,
+                "beta_2": self.beta_2,
                 "epsilon": self.epsilon,
             }
         )

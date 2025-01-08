@@ -187,15 +187,19 @@ class MultiWilsonPrior(tfk.layers.Layer):
         """
         super().__init__(**kwargs)
         self.rac = rac
-        self.correlation = tf.gather(correlation, self.rac.asu_id)
+        self._correlation = correlation
         self.sigma = sigma
         self.built = True #This is always true
+
+    @property
+    def correlation(self):
+        return tf.gather(self._correlation, self.rac.asu_id)
 
     def get_config(self):
         config = super().get_config()
         config.update({
             'rac' : tfk.saving.serialize_keras_object(self.rac),
-            'correlation' : self.correlation,
+            'correlation' : self._correlation,
             'sigma' : self.sigma,
         })
         return config
