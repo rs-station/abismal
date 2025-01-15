@@ -38,10 +38,13 @@ def friedelize_stream(file, spacegroup):
     base = file.removesuffix('.stream')
     plus = base + '_plus.stream'
     minus = base + '_minus.stream'
-    with open(file) as f, open(plus, 'w') as p, open(minus, 'w') as m:
-        for line in file:
+    in_refl_list = False
+    with iter(open(file)) as f, open(plus, 'w') as p, open(minus, 'w') as m:
+        for line in f:
             if line.startswith(refl_start):
                 in_refl_list = True
+                p.write(line);m.write(line)
+                line = next(f)
                 p.write(line);m.write(line)
                 continue
             if line.startswith(refl_end):
@@ -84,25 +87,4 @@ def main():
     parser = parser.parse_args()
     for file in parser.input_file:
         friedelize(file, parser.spacegroup)
-
-if __name__=="__main__":
-    n = 10
-    hkl = np.mgrid[-n:n+1,-n:n+1,-n:n+1]
-    hkl = hkl.reshape((3, -1)).T
-
-    correct = []
-
-    groups = list(gemmi.spacegroup_table_itb())
-    for sg in groups:
-        absent = rs.utils.is_absent(hkl, sg)
-        h =  hkl[~absent]
-        ref = is_friedel_plus(h, sg)
-        test = is_friedel_plus(h, 1)
-        x = ref == test
-        correct.append(x)
-        if np.all(x):
-            print(sg.xhm())
-
-    from IPython import embed
-    embed(colors='linux')
 
