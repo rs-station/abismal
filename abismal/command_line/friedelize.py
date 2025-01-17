@@ -1,6 +1,7 @@
 """
 Split various reflection files into two files -- one for each Friedel mate.
 Multiple files can be processed with the same call. .mtz, .stream, and .refl are all supported. 
+Centrics are retained in the "_plus" file. 
 
 Example:
 The following will take the input stream file and create two new files (cxidb_61_plus.stream and cxidb_61_minus.stream).
@@ -18,7 +19,8 @@ import gemmi
 def is_friedel_plus(hkls, spacegroup):
     _,isym = rs.utils.hkl_to_asu(hkls, spacegroup)
     fplus = (isym % 2) == 1
-    return fplus
+    centric = rs.utils.is_centric(hkls, spacegroup)
+    return fplus | centric
 
 def friedelize_mtz(file_name, spacegroup=None):
     mtz = rs.read_mtz(file_name)
@@ -56,7 +58,9 @@ def friedelize_stream(file_name, spacegroup=1):
                 continue
             hkl = [int(i) for i in line.split()[:3]]
             _,isym = rasu.to_asu(hkl, go)
-            is_plus = (isym % 2) == 1
+            fplus = (isym % 2) == 1
+            centric = go.centric_flag_array([hkl])[0]
+            is_plus = fplus | centric
             if is_plus:
                 p.write(line)
             else:
