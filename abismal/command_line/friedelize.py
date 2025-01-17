@@ -29,11 +29,13 @@ def friedelize_mtz(file_name, spacegroup=None):
     mtz[fplus].write_mtz(base + '_plus.mtz')
     mtz[~fplus].write_mtz(base + '_minus.mtz')
 
-def friedelize_stream(file_name, spacegroup):
+@spacegroupify
+def friedelize_stream(file_name, spacegroup=1):
     refl_start = "Reflections measured after indexing"
     refl_end = "End of reflections"
-    if spacegroup is None:
-        spacegroup = gemmi.SpaceGroup(1)
+
+    go = spacegroup.operations()
+    rasu = gemmi.ReciprocalAsu(spacegroup)
 
     base = file_name.removesuffix('.stream')
     plus = base + '_plus.stream'
@@ -53,7 +55,8 @@ def friedelize_stream(file_name, spacegroup):
                 p.write(line);m.write(line)
                 continue
             hkl = [int(i) for i in line.split()[:3]]
-            is_plus = np.squeeze(is_friedel_plus([hkl], spacegroup))
+            _,isym = rasu.to_asu(hkl, go)
+            is_plus = (isym % 2) == 1
             if is_plus:
                 p.write(line)
             else:
@@ -87,4 +90,3 @@ def main():
     parser = parser.parse_args()
     for file_name in parser.input_file:
         friedelize(file_name, parser.spacegroup)
-
