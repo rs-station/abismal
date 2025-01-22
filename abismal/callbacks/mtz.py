@@ -18,4 +18,16 @@ class MtzSaver(tfk.callbacks.Callback):
         for asu_id,data in enumerate(self.model.surrogate_posterior.to_datasets(seen=seen)):
             data.write_mtz(f"{self.output_directory}/asu_{asu_id}_epoch_{epoch+1}.mtz")
 
+class FriedelMtzSaver(MtzSaver):
+    """
+    Save friedelized inputs into a single mtz.
+    """
+    def save_mtz(self, epoch, seen=True):
+        ds_plus,ds_minus = self.model.surrogate_posterior.to_datasets(seen=seen)
+        data = rs.concat((
+            ds_plus,
+            ds_minus.apply_symop('-x,-y,-z'),
+        )).unstack_anomalous()
+        data.write_mtz(f"{self.output_directory}/asu_0_epoch_{epoch+1}.mtz")
+
 

@@ -17,7 +17,7 @@ def run_abismal(parser):
     from abismal import __version__ as version
     from abismal.symmetry import ReciprocalASU,ReciprocalASUCollection,ReciprocalASUGraph
     from abismal.merging import VariationalMergingModel
-    from abismal.callbacks import HistorySaver,MtzSaver,PhenixRunner,AnomalousPeakFinder,WeightSaver
+    from abismal.callbacks import HistorySaver,MtzSaver,FriedelMtzSaver,PhenixRunner,AnomalousPeakFinder,WeightSaver
     from abismal.io import split_dataset_train_test,set_gpu
     from abismal.scaling import ImageScaler
     from abismal.surrogate_posterior.structure_factor import FoldedNormalPosterior
@@ -58,12 +58,13 @@ def run_abismal(parser):
     train = train.ragged_batch(parser.batch_size)
 
     rasu = []
+    anomalous = False if parser.friedelize else parser.anomalous
     for i in range(dm.num_asus):
         rasu.append(ReciprocalASU(
             dm.cell,
             dm.spacegroup,
             dm.dmin,
-            anomalous=parser.anomalous,
+            anomalous=anomalous,
         ))
 
     rac = ReciprocalASUGraph(
@@ -187,7 +188,10 @@ def run_abismal(parser):
             amsgrad=parser.amsgrad
         )
 
-    mtz_saver = MtzSaver(parser.out_dir)
+    if parser.friedelize:
+        mtz_saver = FriedelMtzSaver(parser.out_dir)
+    else:
+        mtz_saver = MtzSaver(parser.out_dir)
     history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id)
     weight_saver  = WeightSaver(parser.out_dir)
 
