@@ -1,5 +1,7 @@
 from reciprocalspaceship.decorators import spacegroupify,cellify
 from abismal.io import split_dataset_train_test
+import reciprocalspaceship as rs
+import tensorflow as tf
 import yaml
 
 # TODO: refactor this filetype control flow into abismal.io
@@ -37,7 +39,10 @@ class DataManager:
     """
     def __init__(self, inputs, dmin, cell=None, spacegroup=None, 
             num_cpus=None, separate=False, wavelength=None, ray_log_level="ERROR",
-            test_fraction=0.):
+            test_fraction=0., friedelize=False):
+        if friedelize and separate:
+            raise ValueError("Cannot combine --friedelize and --separate")
+
         self.inputs = inputs
         self.dmin = dmin
         self.wavelength = wavelength
@@ -48,6 +53,7 @@ class DataManager:
         self.spacegroup = spacegroup
         self.test_fraction = test_fraction
         self.num_asus = 0
+        self.friedelize = friedelize
 
     def get_config(self):
         conf = {
@@ -62,6 +68,7 @@ class DataManager:
             'ray_log_level' : self.ray_log_level,
             'test_fraction' : self.test_fraction,
             'num_asus': self.num_asus,
+            'friedelize' : self.friedelize,
         }
         return conf
 
@@ -84,6 +91,7 @@ class DataManager:
             wavelength = parser.wavelength,
             ray_log_level = parser.ray_log_level,
             test_fraction = parser.test_fraction,
+            friedelize = parser.friedelize,
         )
 
     @property
@@ -185,6 +193,8 @@ class DataManager:
         self.num_asus = asu_id
         if not self.separate:
             self.num_asus = self.num_asus + 1
+        if self.friedelize:
+            self.num_asus = 2
 
         return data
 
@@ -194,6 +204,23 @@ class DataManager:
 
         # Handle setting up the test fraction, shuffle buffer, batching, etc
         test = None
+        if self.friedelize:
+            from abismal.symmetry import ReciprocalASU
+            rasu = ReciprocalASU(self.cell, self.spacegroup, self.dmin, anomalous=True)
+            _,isym = rs.utils.hkl_to_asu(rasu.Hunique, self.spacegroup)
+            centric = rs.utils.is_centric(rasu.Hunique, self.spacegroup)
+            fplus = (isym % 2) == 1
+            fplus = fplus | centric
+            def friedelize_datum(x, y):
+                asu_id, hkl = x[:2]
+                is_plus = rasu.gather(fplus, hkl)
+                asu_id = tf.where(is_plus[...,None], 0, 1)
+                friedelized = (
+                    (asu_id,) + x[1:],
+                    y,
+                )
+                return friedelized
+            data = data.map(friedelize_datum)
         if self.test_fraction > 0.:
             train,test = split_dataset_train_test(data, self.test_fraction)
         else:
