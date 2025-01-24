@@ -54,7 +54,7 @@ args_and_kwargs=(
 
     (
         (
-            "--friedelize",
+            "--separate-friedel-mates",
         ),{
         "help": "Separate the Friedel mates into ASU ID 0 (plus) and 1 (minus). "
                 "This option is not compatible with --separate. ",

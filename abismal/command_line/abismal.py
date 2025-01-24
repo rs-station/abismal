@@ -58,7 +58,7 @@ def run_abismal(parser):
     train = train.ragged_batch(parser.batch_size)
 
     rasu = []
-    anomalous = False if parser.friedelize else parser.anomalous
+    anomalous = False if parser.separate_friedel_mates else parser.anomalous
     for i in range(dm.num_asus):
         rasu.append(ReciprocalASU(
             dm.cell,
@@ -188,7 +188,7 @@ def run_abismal(parser):
             amsgrad=parser.amsgrad
         )
 
-    if parser.friedelize:
+    if parser.separate_friedel_mates:
         mtz_saver = FriedelMtzSaver(parser.out_dir)
     else:
         mtz_saver = MtzSaver(parser.out_dir)

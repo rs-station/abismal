@@ -39,9 +39,9 @@ class DataManager:
     """
     def __init__(self, inputs, dmin, cell=None, spacegroup=None, 
             num_cpus=None, separate=False, wavelength=None, ray_log_level="ERROR",
-            test_fraction=0., friedelize=False):
-        if friedelize and separate:
-            raise ValueError("Cannot combine --friedelize and --separate")
+            test_fraction=0., separate_friedel_mates=False):
+        if separate_friedel_mates and separate:
+            raise ValueError("Cannot combine --separate-friedel-mates and --separate")
 
         self.inputs = inputs
         self.dmin = dmin
@@ -53,7 +53,7 @@ class DataManager:
         self.spacegroup = spacegroup
         self.test_fraction = test_fraction
         self.num_asus = 0
-        self.friedelize = friedelize
+        self.separate_friedel_mates = separate_friedel_mates
 
     def get_config(self):
         conf = {
@@ -68,7 +68,7 @@ class DataManager:
             'ray_log_level' : self.ray_log_level,
             'test_fraction' : self.test_fraction,
             'num_asus': self.num_asus,
-            'friedelize' : self.friedelize,
+            'separate_friedel_mates' : self.separate_friedel_mates,
         }
         return conf
 
@@ -91,7 +91,7 @@ class DataManager:
             wavelength = parser.wavelength,
             ray_log_level = parser.ray_log_level,
             test_fraction = parser.test_fraction,
-            friedelize = parser.friedelize,
+            separate_friedel_mates = parser.separate_friedel_mates,
         )
 
     @property
@@ -193,7 +193,7 @@ class DataManager:
         self.num_asus = asu_id
         if not self.separate:
             self.num_asus = self.num_asus + 1
-        if self.friedelize:
+        if self.separate_friedel_mates:
             self.num_asus = 2
 
         return data
@@ -204,7 +204,7 @@ class DataManager:
 
         # Handle setting up the test fraction, shuffle buffer, batching, etc
         test = None
-        if self.friedelize:
+        if self.separate_friedel_mates:
             from abismal.symmetry import ReciprocalASU
             rasu = ReciprocalASU(self.cell, self.spacegroup, self.dmin, anomalous=True)
             _,isym = rs.utils.hkl_to_asu(rasu.Hunique, self.spacegroup)
