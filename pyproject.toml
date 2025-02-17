@@ -42,6 +42,7 @@ Issues = "https://github.com/rs-station/abismal/issues"
 abismal = "abismal.command_line.abismal:main"
 "abismal.cchalf" = "abismal.command_line.cchalf:main"
 "abismal.friedelize" = "abismal.command_line.friedelize:main"
+"abismal.plot_history" = "abismal.command_line.plot_history:main"
 
 [tool.pytest.ini_options]
 addopts = "-n auto"
