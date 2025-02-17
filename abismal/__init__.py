@@ -14,5 +14,6 @@ def getVersionNumber():
 
 __version__ = getVersionNumber() 
 
+import pandas as pd
 from abismal.ragged import quiet
 from abismal import callbacks,distributions,io,layers,likelihood,merging,optimizers,scaling,surrogate_posterior,symmetry
