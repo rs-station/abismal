@@ -82,7 +82,7 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
 
     def _parse_chunk(self, *args, **kwargs):
         data = super()._parse_chunk(*args, **kwargs)
-        return [self._convert_to_tf(pl, data['wavelength']) for pl in data['peak_lists']]
+        return [self._convert_to_tf(pl, data['wavelength']) for pl in data['peak_lists'] if len(pl) > 0]
 
     def get_dataset(self, peak_list_columns=None, **ray_kwargs):
         """
