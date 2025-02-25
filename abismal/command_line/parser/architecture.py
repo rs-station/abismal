@@ -7,7 +7,7 @@ args_and_kwargs=(
             "--d-model",
         ),{
         "help": "The number of channels in the model with default 32.",
-        "default" : 32,
+        "default" : 256,
         "type": int,
         }
     ),
@@ -17,7 +17,7 @@ args_and_kwargs=(
             "--layers",
         ),{
             "help": "The number of feedfoward layers with default 20.",
-            "default": 20,
+            "default": 5,
             "type": int,
         }
     ),
