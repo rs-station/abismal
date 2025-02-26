@@ -99,17 +99,32 @@ def run_abismal(parser):
             epsilon=parser.epsilon,
         )
     elif parser.intensity_posterior:
-        from abismal.surrogate_posterior.intensity import FoldedNormalPosterior
-        from abismal.prior.intensity.wilson import WilsonPrior
-        prior = WilsonPrior(rac)
-        loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
-        scale_init = parser.init_scale * loc_init
-        surrogate_posterior = FoldedNormalPosterior(
-            rac, 
-            loc_init,
-            scale_init,
-            epsilon=parser.epsilon,
-        )
+        if parser.empirical_prior:
+            from abismal.prior.intensity.empirical import EmpiricalPrior
+            from abismal.surrogate_posterior.intensity import NormalPosterior
+            prior = EmpiricalPrior(rac)
+            logger.info("Selecting empirical prior. Pre-training prior for 1 epoch.")
+            prior.train(train, None, parser.steps_per_epoch)
+            loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
+            scale_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).stddev()
+            surrogate_posterior = NormalPosterior(
+                rac, 
+                loc_init,
+                scale_init,
+                epsilon=parser.epsilon,
+            )
+        else:
+            from abismal.surrogate_posterior.intensity import FoldedNormalPosterior
+            from abismal.prior.intensity.wilson import WilsonPrior
+            prior = WilsonPrior(rac)
+            loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
+            scale_init = parser.init_scale * loc_init
+            surrogate_posterior = FoldedNormalPosterior(
+                rac, 
+                loc_init,
+                scale_init,
+                epsilon=parser.epsilon,
+            )
     else:
         from abismal.surrogate_posterior.structure_factor import FoldedNormalPosterior as Posterior
         #from abismal.surrogate_posterior.structure_factor.rice import RicePosterior as Posterior

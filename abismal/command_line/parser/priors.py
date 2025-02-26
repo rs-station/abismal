@@ -62,4 +62,13 @@ args_and_kwargs = (
             "type": list_of_ops,
         }
     ),
+
+    (
+        (
+            "--empirical-prior",
+        ),{
+            "help": 'Estimate the prior distribution from the data.' ,
+            "action": "store_true",
+        }
+    ),
 )
