@@ -132,6 +132,7 @@ def run_abismal(parser):
         kl_weight=parser.scale_kl_weight,
         epsilon=parser.epsilon,
         num_image_samples=parser.sample_reflections_per_image,
+        prior_name=parser.scale_prior,
     )
 
     if parser.studentt_dof is not None:

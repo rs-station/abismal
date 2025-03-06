@@ -26,6 +26,11 @@ class DeltaDistribution():
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class ImageScaler(tfk.models.Model):
+    prior_dict = {
+        'cauchy' : lambda _: tfd.Cauchy(0., 1.),
+        'laplace' : lambda _: tfd.Laplace(0., 1.),
+        'normal' : lambda _: tfd.Normal(0., 1.),
+    }
     def __init__(
             self, 
             mlp_width=32, 
@@ -36,6 +41,7 @@ class ImageScaler(tfk.models.Model):
             epsilon=1e-12,
             num_image_samples=None,
             share_weights=True,
+            prior_name='cauchy',
             seed=1234,
             **kwargs, 
         ):
@@ -65,6 +71,8 @@ class ImageScaler(tfk.models.Model):
             The default is True. 
         seed : int (optional)
             An int or tf random seed for initialization. 
+        prior_name : str (optional)
+            The scale prior to use. See the self.prior_dict attribute for a list of current priors.
         """
         super().__init__(**kwargs)
         self.kl_weight = kl_weight
@@ -75,6 +83,7 @@ class ImageScaler(tfk.models.Model):
         self.activation = activation
         self.share_weights = share_weights
         self.seed = seed
+        self.prior_name = prior_name.lower()
 
         self.hidden_units = hidden_units
         if self.hidden_units is None:
@@ -126,6 +135,7 @@ class ImageScaler(tfk.models.Model):
             'num_image_samples' : self.num_image_samples,
             'share_weights' : self.share_weights,
             'seed' : self.seed,
+            'prior_name' : self.prior_name,
         })
         return config
 
@@ -143,8 +153,7 @@ class ImageScaler(tfk.models.Model):
         return out
 
     def prior_function(self):
-        p = tfd.Cauchy(0., 1.)
-        return p
+        return self.prior_dict[self.prior_name]()
 
     def bijector_function(self, x):
         return tf.nn.softplus(x) + self.epsilon

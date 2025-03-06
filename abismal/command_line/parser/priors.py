@@ -62,4 +62,15 @@ args_and_kwargs = (
             "type": list_of_ops,
         }
     ),
+
+    (
+        (
+            "--scale-prior",
+        ),{
+            "help": "The scale prior to use. Normal, Cauchy, and Laplace are supported. "
+                    "Cauchy is the defalt",
+            "default": 'Cauchy',
+            "type": str,
+        }
+    ),
 )
