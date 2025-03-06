@@ -41,8 +41,8 @@ def run_abismal(parser):
     logging.basicConfig(filename=log_file, level=logging.DEBUG)
     logger.info(f"Starting abismal, version {version}")
     logger.info("Running with the following options... ")
-    for k,v in vars(parser).items():
-        logger.info(f"{k} : {v}")
+    msg = '\n'.join([f"{k}: {v}" for k,v in vars(parser).items()])
+    logger.info(f"Run parameters: \n" + msg)
     logger.info(str(vars(parser)))
 
     dm = DataManager.from_parser(parser)

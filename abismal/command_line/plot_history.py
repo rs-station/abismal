@@ -53,16 +53,17 @@ default_keys = [
 #    "val_Σ_std"
 ]
 
-def run(parser):
-    keys = parser.keys
+def plot_history(csv_file, keys=None):
+    df = pd.read_csv(csv_file)
     if keys is None:
-        keys = default_keys
-    df = pd.read_csv(parser.csv_file)
+        keys = [k for k in default_keys if k in df]
     for k in keys:
         val_keys = []
         if f'val_{k}' in df:
             val_keys.append(f'val_{k}')
         keys = keys + val_keys
+    if 'Epoch' not in keys:
+        keys.append('Epoch')
 
     #Filter by keys
     df = df[keys] 
@@ -83,13 +84,13 @@ def run(parser):
     )
     plt.semilogy()
     plt.grid(which='both', axis='both', ls='-.')
-    plt.show()
 
 def main():
     parser = ArgumentParser(__doc__)
     parser.add_argument("csv_file", help="A history csv file from an abismal run.")
     parser.add_argument("--keys", nargs='+', default=None, help="Keys you want to plot.")
     parser = parser.parse_args()
-    run(parser)
+    plot_history(parser.csv_file, parser.keys)
+    plt.show()
 
 
