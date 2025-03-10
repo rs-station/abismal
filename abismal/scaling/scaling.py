@@ -23,13 +23,14 @@ class DeltaDistribution():
         """Return a tensor that broadcasts as a sample"""
         return self.loc[None,...]
 
-
 @tfk.saving.register_keras_serializable(package="abismal")
 class ImageScaler(tfk.models.Model):
     prior_dict = {
-        'cauchy' : lambda _: tfd.Cauchy(0., 1.),
-        'laplace' : lambda _: tfd.Laplace(0., 1.),
-        'normal' : lambda _: tfd.Normal(0., 1.),
+        'cauchy' : lambda : tfd.Cauchy(0., 1.),
+        'laplace' : lambda : tfd.Laplace(0., 1.),
+        'normal' : lambda : tfd.Normal(0., 1.),
+        'halfnormal' : lambda : tfd.HalfNormal(1.),
+        'exponential' : lambda : tfd.Exponential(1.),
     }
     def __init__(
             self, 
@@ -42,6 +43,7 @@ class ImageScaler(tfk.models.Model):
             num_image_samples=None,
             share_weights=True,
             prior_name='cauchy',
+            posterior_name='cauchy',
             seed=1234,
             **kwargs, 
         ):
@@ -73,6 +75,9 @@ class ImageScaler(tfk.models.Model):
             An int or tf random seed for initialization. 
         prior_name : str (optional)
             The scale prior to use. See the self.prior_dict attribute for a list of current priors.
+        posterior_name : str (optional)
+            The posterior parameterization to use. Curently, normal, foldednormal, and gamma are supported.
+            Normal is the default. The prior must have the same support as the posterior. 
         """
         super().__init__(**kwargs)
         self.kl_weight = kl_weight
@@ -84,6 +89,7 @@ class ImageScaler(tfk.models.Model):
         self.share_weights = share_weights
         self.seed = seed
         self.prior_name = prior_name.lower()
+        self.posterior_name = posterior_name.lower()
 
         self.hidden_units = hidden_units
         if self.hidden_units is None:
@@ -136,6 +142,7 @@ class ImageScaler(tfk.models.Model):
             'share_weights' : self.share_weights,
             'seed' : self.seed,
             'prior_name' : self.prior_name,
+            'posterior_name' : self.posterior_name,
         })
         return config
 
@@ -158,19 +165,37 @@ class ImageScaler(tfk.models.Model):
     def bijector_function(self, x):
         return tf.nn.softplus(x) + self.epsilon
 
-    def distribution_function(self, output):
-        if self.kl_weight > 0.:
-            loc, scale = tf.unstack(output, axis=-1)
-            scale = self.bijector_function(scale)
-            q = tfd.Normal(loc, scale)
+    def normal_posterior(self, output):
+        loc, scale = tf.unstack(output, axis=-1)
+        scale = self.bijector_function(scale)
+        q = tfd.Normal(loc, scale)
+        return q
 
-            self.add_metric(tf.reduce_mean(loc), name='Σ_loc')
-            self.add_metric(tf.reduce_mean(scale), name='Σ_scale')
-            return q
+    def folded_normal_posterior(self, output):
+        output = self.bijector_function(output)
+        loc, scale = tf.unstack(output, axis=-1)
+        q = FoldedNormal(loc, scale)
+        return q
+
+    def gamma_posterior(self, output):
+        output = self.bijector_function(output)
+        loc, scale = tf.unstack(output, axis=-1)
+        q = tfd.Gamma(loc, scale)
+        return q
+
+    def delta_posterior(self, output):
         loc = tf.squeeze(output, axis=-1)
-        self.add_metric(tf.reduce_mean(loc), name='Σ_loc')
         q = DeltaDistribution(loc)
         return q
+
+    def distribution_function(self, output):
+        posterior_dict = {
+            'normal' : self.normal_posterior,
+            'gamma' : self.gamma_posterior,
+            'foldednormal' : self.folded_normal_posterior,
+            'delta' : self.delta_posterior,
+        }
+        return posterior_dict[self.posterior_name](output)
 
     def build(self, shapes):
         (
@@ -235,7 +260,7 @@ class ImageScaler(tfk.models.Model):
 
         z = q.sample(mc_samples) 
 
-        if self.kl_weight > 0.:
+        if not isinstance(q, DeltaDistribution):
             p = self.prior_function()
             try:
                 kl_div = q.kl_divergence(p)

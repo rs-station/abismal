@@ -23,13 +23,41 @@ args_and_kwargs = (
 
     (
         (
-            "--intensity-posterior",
+            "--posterior-type",
         ),{
-            "help": "Use a gamma-distributed posterior over intensities instead of the"
-                    "default FoldedNormal over structure factors.",
-            "action": 'store_true',
+            "help": "What type of posterior parameterization to use. The "
+                    "default is structure_factor.",
+            "type": str.lower,
+            "default": "structure_factor",
+            "choices" : ['structure_factor', 'intensity'],
         }
     ),
+
+    (
+        (
+            "--posterior-distribution",
+        ),{
+            "help": "Define the type of posterior distribution. "
+                    "The default is foldednormal. ",
+            "type": str.lower,
+            "default" : "foldednormal",
+            "choices" : ["foldednormal", "rice", "gamma"],
+        }
+    ),
+
+
+    (
+        (
+            "--scale-posterior-distribution",
+        ),{
+            "help": "Define the type of posterior distribution for scales. "
+                    "The default is normal. ",
+            "type": str.lower,
+            "default" : "normal",
+            "choices" : ["normal", "foldednormal", "gamma", "delta"],
+        }
+    ),
+
 
     (
         (

@@ -67,10 +67,11 @@ args_and_kwargs = (
         (
             "--scale-prior",
         ),{
-            "help": "The scale prior to use. Normal, Cauchy, and Laplace are supported. "
+            "help": "The scale prior to use.  "
                     "Cauchy is the defalt",
             "default": 'Cauchy',
-            "type": str,
+            "type": str.lower,
+            "choices" : ["cauchy", "laplace", "normal", "halfnormal", "exponential"],
         }
     ),
 )

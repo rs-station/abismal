@@ -1,4 +1,5 @@
 from abismal.surrogate_posterior import IntensityPosteriorBase
+from abismal.surrogate_posterior.gamma import GammaPosteriorBase
 import numpy as np
 import tensorflow as tf
 from tensorflow_probability import distributions as tfd
@@ -10,53 +11,11 @@ import tf_keras as tfk
 
 
 @tfk.saving.register_keras_serializable(package="abismal")
-class GammaPosterior(IntensityPosteriorBase):
-    def __init__(self, rac, rate_init, conc_init,  eps=1e-12, concentration_min=0., **kwargs):
-        super().__init__(rac, **kwargs)
-        self.rac = rac
-
-        #For serialization
-        self._rate_init = rate_init
-        self._conc_init = conc_init
-
-        self.rate = tfu.TransformedVariable(
-            rate_init,
-            tfb.Chain([
-                tfb.Shift(eps), 
-                tfb.Exp(),
-            ]),
-        )
-
-        #Concentration should remain above one to prevent change in curvature
-        self.concentration = tfu.TransformedVariable(
-            conc_init,
-            tfb.Chain([
-                tfb.Shift(concentration_min + eps), 
-                tfb.Exp(),
-            ]),
-        )
-        self.built=True
-
-    def get_config(self):
-        config = super().get_config()
-        config.update({
-            'rac' : self.rac,
-            'epsilon' : self.epsilon,
-            'rate_init' : self._rate_init,
-            'conc_init' : self._conc_init,
-        })
-        return config
-
-    def distribution(self, asu_id, hkl):
-        concentration = self.rac.gather(self.concentration, asu_id, hkl)
-        rate = self.rac.gather(self.rate, asu_id, hkl)
-        q = tfd.Gamma(concentration, rate)
-        return q
-
-    def flat_distribution(self):
-        return tfd.Gamma(self.concentration, self.rate)
-
-# This is experimental still. 
+class GammaPosterior(GammaPosteriorBase, IntensityPosteriorBase):
+    """
+    An intensity surrogate posterior parameterized by a gamma distribution.
+    """
+    # This is experimental still. 
     def get_flat_fsigf(q, eps=1e-6):
         """
         Compute the mean and standard deviation of the square root of a gamma distribution.
