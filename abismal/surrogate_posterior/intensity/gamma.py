@@ -13,30 +13,28 @@ import tf_keras as tfk
 @tfk.saving.register_keras_serializable(package="abismal")
 class GammaPosterior(GammaPosteriorBase, IntensityPosteriorBase):
     """
-    An intensity surrogate posterior parameterized by a gamma distribution.
+    an intensity surrogate posterior parameterized by a gamma distribution.
     """
-    # This is experimental still. 
-    def get_flat_fsigf(q, eps=1e-6):
+    def get_flat_fsigf(self):
         """
-        Compute the mean and standard deviation of the square root of a gamma distribution.
+        the square root of a gamma distribution is the nakagami distribution. 
+        compute the mean and standard deviation of the square root of a gamma distribution.
+        see [https://en.wikipedia.org/wiki/nakagami_distribution#random_variate_generation]. 
         """
-        alpha = q.concentration
-        beta  = q.rate
-        omega = alpha / beta
-
-        log_mean_sqrt_beta = tf.math.lgamma(alpha + 0.5) - tf.math.lgamma(alpha) #log(mean * beta**0.5)
-        mean = tf.math.exp(log_mean_sqrt_beta) / tf.sqrt(beta)
-
-        num = alpha - tf.math.exp(2.* log_mean_sqrt_beta)
-        var = tf.where(
-            alpha > 1e4,
-            0.25/beta, #The limit is 0.25 for num
-            num/beta,
+        q = self.flat_distribution()
+        conc = q.concentration
+        rate  = q.rate
+        m = conc
+        omega = conc / rate
+        ldiff = -tfm.log_gamma_difference(0.5, conc)
+        mean = tf.math.exp(
+            ldiff - 0.5*tf.math.log(rate)
         )
-
+        var = (conc - tf.math.exp(2.* ldiff)) / rate
+        std = tf.math.sqrt(var)
+        var = tf.where(var <= 0., self.epsilon * self.epsilon, var)
         std = tf.math.sqrt(var)
         return mean,std
-
 
 
 if __name__=="__main__":

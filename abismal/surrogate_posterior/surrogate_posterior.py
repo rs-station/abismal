@@ -201,9 +201,12 @@ class IntensityPosteriorBase(PosteriorBase):
         return I, SIGI
 
     def get_flat_fsigf(self):
-        msg = """
-        Subclasses may implement get_flat_fsigf if the parameterization allows
-        if the moments of the square root of the intensity distribution are known.
         """
-        raise NotImplementedError(msg)
+        This method is approximate. It is based on simple uncertainty propagation.
+        Subclasses may choose to implement analytical expressions where available.
+        """
+        I, SIGI = self.get_flat_isigi()
+        F = tf.math.sqrt(I)
+        SIGF = tf.math.abs(F * 0.5 * SIGI / I)
+        return F, SIGF
 
