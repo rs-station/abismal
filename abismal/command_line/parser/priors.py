@@ -65,7 +65,19 @@ args_and_kwargs = (
 
     (
         (
-            "--scale-prior",
+            "--prior-distribution",
+        ),{
+            "help": "The prior to use for structure factors or intensities.  "
+                    "Wilson is the defalt",
+            "default": 'Wilson',
+            "type": str.lower,
+            "choices" : ["wilson", "normal"],
+        }
+    ),
+
+    (
+        (
+            "--scale-prior-distribution",
         ),{
             "help": "The scale prior to use.  "
                     "Cauchy is the defalt",

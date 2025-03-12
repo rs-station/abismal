@@ -41,7 +41,7 @@ args_and_kwargs = (
                     "The default is foldednormal. ",
             "type": str.lower,
             "default" : "foldednormal",
-            "choices" : ["foldednormal", "rice", "gamma"],
+            "choices" : ["normal", "foldednormal", "rice", "gamma"],
         }
     ),
 

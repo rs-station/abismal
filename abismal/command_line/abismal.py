@@ -83,21 +83,28 @@ def run_abismal(parser):
         )
         reindexing_ops = reindexing_ops + [op.triplet() for op in ops] 
 
-    if parser.parents is not None:
-        from abismal.prior.structure_factor.wilson import MultiWilsonPrior
-        prior = MultiWilsonPrior(
-            rac, 
-            parser.prior_correlation, 
-        )
-    elif parser.posterior_type == 'intensity':
-        from abismal.prior.intensity.wilson import WilsonPrior
-        prior = WilsonPrior(rac)
-    else:
-        from abismal.prior.structure_factor.wilson import WilsonPrior
-        prior = WilsonPrior(rac)
+    if parser.prior_distribution == 'wilson':
+        if parser.parents is not None:
+            from abismal.prior.structure_factor.wilson import MultiWilsonPrior
+            prior = MultiWilsonPrior(
+                rac, 
+                parser.prior_correlation, 
+            )
+        elif parser.posterior_type == 'intensity':
+            from abismal.prior.intensity.wilson import WilsonPrior
+            prior = WilsonPrior(rac)
+        else:
+            from abismal.prior.structure_factor.wilson import WilsonPrior
+            prior = WilsonPrior(rac)
+        loc_init = prior.flat_distribution().mean()
+        scale_init = parser.init_scale * loc_init
+    elif parser.prior_distribution == 'normal':
+        from abismal.prior.normal import NormalPrior
+        prior = NormalPrior(rac)
+        loc_init = tf.ones_like(prior.flat_distribution().mean())
+        scale_init = parser.init_scale * loc_init
 
-    loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
-    scale_init = parser.init_scale * loc_init
+    #loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
     if parser.posterior_type == 'intensity':
         if parser.posterior_distribution == 'foldednormal':
             from abismal.surrogate_posterior.intensity import FoldedNormalPosterior as Posterior
@@ -105,11 +112,15 @@ def run_abismal(parser):
         #    from abismal.surrogate_posterior.intensity.rice import RicePosterior as Posterior
         elif parser.posterior_distribution == 'gamma':
             from abismal.surrogate_posterior.intensity.gamma import GammaPosterior as Posterior
+        elif parser.posterior_distribution == 'normal':
+            from abismal.surrogate_posterior.intensity.normal import NormalPosterior as Posterior
     elif parser.posterior_type == 'structure_factor':
         if parser.posterior_distribution == 'foldednormal':
             from abismal.surrogate_posterior.structure_factor.folded_normal import FoldedNormalPosterior as Posterior
         elif parser.posterior_distribution == 'rice':
             from abismal.surrogate_posterior.structure_factor.rice import RicePosterior as Posterior
+        elif parser.posterior_distribution == 'normal':
+            from abismal.surrogate_posterior.structure_factor.normal import NormalPosterior as Posterior
 
     surrogate_posterior = Posterior(
         rac, 
@@ -126,7 +137,7 @@ def run_abismal(parser):
         kl_weight=parser.scale_kl_weight,
         epsilon=parser.epsilon,
         num_image_samples=parser.sample_reflections_per_image,
-        prior_name=parser.scale_prior,
+        prior_name=parser.scale_prior_distribution,
         posterior_name=parser.scale_posterior_distribution,
     )
 
