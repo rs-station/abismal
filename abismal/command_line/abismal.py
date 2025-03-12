@@ -42,8 +42,6 @@ def run_abismal(parser):
     logger.info(f"Starting abismal, version {version}")
     logger.info("Running with the following options... ")
     msg = '\n'.join([f"{k}: {v}" for k,v in vars(parser).items()])
-    logger.info(f"Run parameters: \n" + msg)
-    logger.info(str(vars(parser)))
 
     dm = DataManager.from_parser(parser)
     train,test = dm.get_train_test_splits()
