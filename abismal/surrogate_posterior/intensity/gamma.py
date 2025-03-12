@@ -24,9 +24,10 @@ class GammaPosterior(GammaPosteriorBase, IntensityPosteriorBase):
         q = self.flat_distribution()
         conc = q.concentration
         rate  = q.rate
-        m = conc
-        omega = conc / rate
+
+        # log_gamma(conc + 0.5) - log_gamma(conc)
         ldiff = -tfm.log_gamma_difference(0.5, conc)
+
         mean = tf.math.exp(
             ldiff - 0.5*tf.math.log(rate)
         )
