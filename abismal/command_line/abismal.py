@@ -236,7 +236,8 @@ def run_abismal(parser):
         steps_per_epoch=parser.steps_per_epoch, 
         validation_steps=parser.validation_steps, 
         callbacks=callbacks, 
-        validation_data=test
+        validation_data=test,
+        verbose=parser.keras_verbosity,
     )
 
     if parser.debug:

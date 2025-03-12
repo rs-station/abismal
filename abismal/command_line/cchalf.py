@@ -31,6 +31,9 @@ def main():
     parser.add_argument(
         "--repeats", help="Number of random repeats to conduct. Default is one.", type=int, default=1, required=False
     )
+    parser.add_argument(
+        "--keras-verbosity", help="Keras Model.fit verbose level. See docs for more info: https://keras.io/2.18/api/models/model_training_apis/#fit-method", type=int, default=1, choices=[0, 1, 2,]
+    )
     parser = parser.parse_args()
     refls = []
 
@@ -65,6 +68,7 @@ def main():
                 epochs=parser.epochs, 
                 steps_per_epoch=parser.steps_per_epoch, 
                 callbacks=callbacks, 
+                verbose=parser.keras_verbosity,
             )
 
             for asu_id,(asu,ds) in enumerate(zip(model.surrogate_posterior.rac, model.surrogate_posterior.to_datasets())):
