@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+
 def main():
     from abismal.ragged import quiet
     from abismal.command_line.parser import parser
@@ -40,24 +41,32 @@ def run_abismal(parser):
     logger = logging.getLogger(__name__)
     logging.basicConfig(filename=log_file, level=logging.DEBUG)
     logger.info(f"Starting abismal, version {version}")
+    msg = '\n'.join([f"  {k}: {v}" for k,v in vars(parser).items()])
     logger.info("Running with the following options... ")
-    msg = '\n'.join([f"{k}: {v}" for k,v in vars(parser).items()])
+    logger.info(msg)
 
+    logger.info("Configuring data input")
     dm = DataManager.from_parser(parser)
     train,test = dm.get_train_test_splits()
-    dm.to_file(parser.out_dir + "/datamanager.yml")
+    dm_file = parser.out_dir + "/datamanager.yml"
+    dm.to_file(dm_file)
+    logger.info(f"Data manager config written to: {dm_file}")
 
     if test is not None:
+        logger.info("There is a test set for validation")
         test  = test.cache().repeat().ragged_batch(parser.batch_size)
         test = test.prefetch(AUTOTUNE)
     train = train.cache().repeat()
     if parser.shuffle_buffer_size > 0:
+        logger.info("There is a shuffle buffer to randomize train-time inputs")
         train = train.shuffle(parser.shuffle_buffer_size)
     train = train.ragged_batch(parser.batch_size)
 
     rasu = []
     anomalous = False if parser.separate_friedel_mates else parser.anomalous
+    logger.info(f"Data are anomalous (True/False): {anomalous}")
     for i in range(dm.num_asus):
+        logger.info(f"Adding asu ID: {i}")
         rasu.append(ReciprocalASU(
             dm.cell,
             dm.spacegroup,
@@ -65,6 +74,7 @@ def run_abismal(parser):
             anomalous=anomalous,
         ))
 
+    logger.info("Combining reciprocal ASUs as collection")
     rac = ReciprocalASUGraph(
         *rasu,
         parents=parser.parents,
@@ -80,6 +90,7 @@ def run_abismal(parser):
             False
         )
         reindexing_ops = reindexing_ops + [op.triplet() for op in ops] 
+        logger.info(f"Adding disambiguation operators: {reindexing_ops}")
 
     if parser.prior_distribution == 'wilson':
         if parser.parents is not None:
@@ -106,8 +117,8 @@ def run_abismal(parser):
     if parser.posterior_type == 'intensity':
         if parser.posterior_distribution == 'foldednormal':
             from abismal.surrogate_posterior.intensity import FoldedNormalPosterior as Posterior
-        #elif parser.posterior_distribution == 'rice':
-        #    from abismal.surrogate_posterior.intensity.rice import RicePosterior as Posterior
+        elif parser.posterior_distribution == 'rice':
+            raise ValueError("Rice distributed intensity posteriors are not supported.")
         elif parser.posterior_distribution == 'gamma':
             from abismal.surrogate_posterior.intensity.gamma import GammaPosterior as Posterior
         elif parser.posterior_distribution == 'normal':
@@ -152,6 +163,7 @@ def run_abismal(parser):
         mc_samples=parser.mc_samples,
         kl_weight=parser.kl_weight,
         reindexing_ops=reindexing_ops,
+        standardization_count_max=parser.standardization_count_max,
     )
 
     if parser.learning_rate_final is not None:

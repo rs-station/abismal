@@ -4,7 +4,6 @@ from tensorflow_probability import distributions as tfd
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 import tf_keras as tfk
-from abismal.distributions import FoldedNormal as FoldedNormal
 from abismal.surrogate_posterior import StructureFactorPosteriorBase
 
 

@@ -93,8 +93,11 @@ class Standardize(tfk.layers.Layer):
         return data / std
 
     def call(self, data, training=None):
-        if training and (self.count <= self.count_max):
-            self.update(data)
+        if training:
+            if self.count_max is None:
+                self.update(data)
+            elif self.count <= self.count_max:
+                self.update(data)
         return self.standardize(data)
 
 

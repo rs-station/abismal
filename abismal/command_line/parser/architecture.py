@@ -1,6 +1,14 @@
 title = "Architecture"
 description = "Arguments affecting the model architecture and dimensions"
 
+def int_or_none_type(x):
+    if x.lower() == 'none':
+        return None
+    x = int(x)
+    if x <= 0:
+        return None
+    return x
+
 args_and_kwargs=(
     (
         (
@@ -39,6 +47,19 @@ args_and_kwargs=(
             "help": "A small constant for numerical stability.",
             "default": 1e-12,
             "type": float,
+        }
+    ),
+
+    (
+        (
+            "--standardization-count-max",
+        ),{
+            "help": "Abismal uses Welford's algorithm to calculate the standard deviation of intensities. "
+                    "After one pass over the data, updating the standard deviation may introduce noise. "
+                    "So, typically the value is frozen after a number of steps specified by this parameter. "
+                    "The default is 2000 steps, and 0 or None is interpreted as never freezing.",
+            "default": 2000,
+            "type": int_or_none_type,
         }
     ),
 )
