@@ -163,6 +163,7 @@ def run_abismal(parser):
         mc_samples=parser.mc_samples,
         kl_weight=parser.kl_weight,
         reindexing_ops=reindexing_ops,
+        standardization_decay=parser.standardization_decay,
         standardization_count_max=parser.standardization_count_max,
     )
 

@@ -57,9 +57,22 @@ args_and_kwargs=(
             "help": "Abismal uses Welford's algorithm to calculate the standard deviation of intensities. "
                     "After one pass over the data, updating the standard deviation may introduce noise. "
                     "So, typically the value is frozen after a number of steps specified by this parameter. "
-                    "The default is 2000 steps, and 0 or None is interpreted as never freezing.",
-            "default": 2000,
+                    "0 or None is interpreted as never freezing and is the default.",
+            "default": None,
             "type": int_or_none_type,
+        }
+    ),
+
+    (
+        (
+            "--standardization-decay",
+        ),{
+            "help": "Abismal uses Welford's algorithm to calculate the standard deviation of intensities. "
+                    "The estimates are updated based on an exponentially decaying average. "
+                    "This setting controls how quickly the exponential falls off and the model 'forgets' previous observations. "
+                    "The default is 0.999 which corresponds to about 1000 steps for the decay half life.",
+            "default": 0.999,
+            "type": float,
         }
     ),
 )

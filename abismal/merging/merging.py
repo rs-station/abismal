@@ -23,7 +23,8 @@ class VariationalMergingModel(tfk.models.Model):
             kl_weight=1., 
             epsilon=1e-6, 
             reindexing_ops=None, 
-            standardization_count_max=2_000,
+            standardization_decay=0.999,
+            standardization_count_max=None,
             **kwargs):
         super().__init__(**kwargs)
         self.epsilon = epsilon
@@ -36,8 +37,15 @@ class VariationalMergingModel(tfk.models.Model):
         if reindexing_ops is None:
             reindexing_ops = ["x,y,z"]
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
-        self.standardize_intensity = Standardize(center=False, count_max=standardization_count_max)
-        self.standardize_metadata = Standardize(count_max=standardization_count_max)
+        self.standardize_intensity = Standardize(
+            center=False, 
+            decay=standardization_decay, 
+            count_max=standardization_count_max
+        )
+        self.standardize_metadata = Standardize(
+            count_max=standardization_count_max, 
+            decay=standardization_decay
+        )
 
     def get_config(self):
         ops = self.reindexing_ops
