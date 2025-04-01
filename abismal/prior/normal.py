@@ -44,3 +44,12 @@ class NormalPrior(PriorBase):
         scale = self.scale * tf.ones(self.rac.asu_size)
         return tfd.Normal(loc, scale)
 
+
+@tfk.saving.register_keras_serializable(package="abismal")
+class MultivariateNormalPrior(NormalPrior):
+    """Multivariate normal distributed prior."""
+    def flat_distribution(self):
+        loc = self.loc * tf.ones(self.rac.asu_size)
+        scale = self.scale * tf.ones(self.rac.asu_size)
+        return tfd.MultivariateNormalDiag(loc, scale)
+

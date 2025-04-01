@@ -112,8 +112,16 @@ def run_abismal(parser):
         prior = NormalPrior(rac)
         loc_init = tf.ones_like(prior.flat_distribution().mean())
         scale_init = parser.init_scale * loc_init
+        if parser.posterior_rank > 1:
+            from abismal.prior.normal import MultivariateNormalPrior
+            prior = MultivariateNormalPrior(rac)
 
-    #loc_init = prior.distribution(rac.asu_id[:,None], rac.Hunique).mean()
+    posterior_kwargs = {
+        'rac' : rac, 
+        'loc_init' : loc_init,
+        'scale_init' : scale_init,
+        'epsilon' : parser.epsilon,
+    }
     if parser.posterior_type == 'intensity':
         if parser.posterior_distribution == 'foldednormal':
             from abismal.surrogate_posterior.intensity import FoldedNormalPosterior as Posterior
@@ -122,21 +130,24 @@ def run_abismal(parser):
         elif parser.posterior_distribution == 'gamma':
             from abismal.surrogate_posterior.intensity.gamma import GammaPosterior as Posterior
         elif parser.posterior_distribution == 'normal':
-            from abismal.surrogate_posterior.intensity.normal import NormalPosterior as Posterior
+            if parser.posterior_rank == 1:
+                from abismal.surrogate_posterior.intensity.normal import NormalPosterior as Posterior
+            else:
+                from abismal.surrogate_posterior.intensity.normal import MultivariateNormalPosterior as Posterior
+                posterior_kwargs['rank'] = parser.posterior_rank
     elif parser.posterior_type == 'structure_factor':
         if parser.posterior_distribution == 'foldednormal':
             from abismal.surrogate_posterior.structure_factor.folded_normal import FoldedNormalPosterior as Posterior
         elif parser.posterior_distribution == 'rice':
             from abismal.surrogate_posterior.structure_factor.rice import RicePosterior as Posterior
         elif parser.posterior_distribution == 'normal':
-            from abismal.surrogate_posterior.structure_factor.normal import NormalPosterior as Posterior
+            if parser.posterior_rank == 1:
+                from abismal.surrogate_posterior.structure_factor.normal import NormalPosterior as Posterior
+            else:
+                from abismal.surrogate_posterior.structure_factor.normal import MultivariateNormalPosterior as Posterior
+                posterior_kwargs['rank'] = parser.posterior_rank
 
-    surrogate_posterior = Posterior(
-        rac, 
-        loc_init,
-        scale_init,
-        epsilon=parser.epsilon,
-    )
+    surrogate_posterior = Posterior(**posterior_kwargs)
 
     scale_model = ImageScaler(
         mlp_width=parser.d_model, 

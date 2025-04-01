@@ -48,6 +48,17 @@ args_and_kwargs = (
 
     (
         (
+            "--posterior-rank",
+        ),{
+            "help": "This parameter makes the normal posterior low-rank multivariate. "
+                    "By default, this is 1 (univariate). ",
+            "type": int,
+            "default" : 1,
+        }
+    ),
+
+    (
+        (
             "--scale-posterior-distribution",
         ),{
             "help": "Define the type of posterior distribution for scales. "
