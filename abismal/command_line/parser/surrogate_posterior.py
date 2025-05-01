@@ -113,6 +113,25 @@ args_and_kwargs = (
 
     (
         (
+            "--freeze-posterior",
+        ),{
+            "help": "Don't optimize the structure factors / intensities.",
+            "action": 'store_true',
+        }
+    ),
+
+    (
+        (
+            "--posterior-init-file",
+        ),{
+            "help": "A `.keras` model file from which to initialize the intensity or structure factors weights.",
+            "type": str,
+            "default": None,
+        }
+    ),
+
+    (
+        (
             "--scale-init-file",
         ),{
             "help": "A `.keras` model file from which to initialize the scale model weights.",

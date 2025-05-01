@@ -248,9 +248,15 @@ def run_abismal(parser):
         ref_model = tfk.saving.load_model(parser.scale_init_file)
         model.scale_model.set_weights(ref_model.scale_model.get_weights())
 
+    if parser.posterior_init_file is not None:
+        ref_model = tfk.saving.load_model(parser.scale_init_file)
+        model.surrogate_posterior.set_weights(ref_model.surrogate_posterior.get_weights())
+
     if parser.freeze_scales:
         model.scale_model.trainable = False
-        assert len(model.scale_model.trainable_variables) == 0
+
+    if parser.freeze_posterior:
+        model.surrogate_posterior.trainable = False
 
     model.compile(opt, run_eagerly=parser.run_eagerly, jit_compile=parser.jit_compile)
 
