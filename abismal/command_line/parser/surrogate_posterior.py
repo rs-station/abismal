@@ -101,4 +101,23 @@ args_and_kwargs = (
             "type": float,
         }
     ),
+
+    (
+        (
+            "--freeze-scales",
+        ),{
+            "help": "Don't optimize the scaling model.",
+            "action": 'store_true',
+        }
+    ),
+
+    (
+        (
+            "--scale-init-file",
+        ),{
+            "help": "A `.keras` model file from which to initialize the scale model weights.",
+            "type": str,
+            "default": None,
+        }
+    ),
 )

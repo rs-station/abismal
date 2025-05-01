@@ -184,12 +184,6 @@ def run_abismal(parser):
         boundaries = [ steps // 2 ]
         values = [ parser.learning_rate, parser.learning_rate_final ]
         learning_rate = PiecewiseConstantDecay(boundaries, values)
-        #from tf_keras.optimizers.schedules import PolynomialDecay
-        #learning_rate = PolynomialDecay(
-        #    parser.learning_rate,
-        #    parser.epochs * parser.steps_per_epoch,
-        #    end_learning_rate=parser.learning_rate_final,
-        #)
     else:
         learning_rate = parser.learning_rate
 
@@ -245,11 +239,18 @@ def run_abismal(parser):
                 )
             callbacks.append(f)
 
-
     if parser.debug:
         for x,y in train:
             break
         model([i[:3,:5] for i in x])
+
+    if parser.scale_init_file is not None:
+        ref_model = tfk.saving.load_model(parser.scale_init_file)
+        model.scale_model.set_weights(ref_model.scale_model.get_weights())
+
+    if parser.freeze_scales:
+        model.scale_model.trainable = False
+        assert len(model.scale_model.trainable_variables) == 0
 
     model.compile(opt, run_eagerly=parser.run_eagerly, jit_compile=parser.jit_compile)
 
