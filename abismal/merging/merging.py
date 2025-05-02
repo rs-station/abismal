@@ -175,7 +175,10 @@ class VariationalMergingModel(tfk.models.Model):
         )
 
         # This is the mean across mc samples and observations
-        ll = tf.reduce_mean(ll) 
+        # This needs to be weighted by the number of reflections per image
+        w = tf.reduce_sum(tf.ones_like(iobs), [-1, -2], keepdims=True)
+        w = w / tf.reduce_sum(w)
+        ll = tf.reduce_sum(w * ll)
         kl_div = tf.reduce_mean(kl_div) 
 
         self.add_metric(-ll, name='NLL')
