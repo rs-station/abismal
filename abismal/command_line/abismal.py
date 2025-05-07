@@ -239,10 +239,13 @@ def run_abismal(parser):
                 )
             callbacks.append(f)
 
-    if parser.debug:
-        for x,y in train:
-            break
-        model([i[:3,:5] for i in x])
+    need_to_build = False
+    need_to_build |= parser.debug
+    need_to_build |= parser.scale_init_file is not None
+    need_to_build |= parser.posterior_init_file is not None
+    if need_to_build:
+        for x,_ train:
+            model(x)
 
     if parser.scale_init_file is not None:
         ref_model = tfk.saving.load_model(parser.scale_init_file)

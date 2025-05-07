@@ -97,7 +97,10 @@ class StillsLoader(DataLoader):
         """
         def data_gen():
             for expt,refl in list(zip(self.expt_files, self.refl_files)):
-                data = self.dials_to_ragged(expt, refl)
+                try:
+                    data = self.dials_to_ragged(expt, refl)
+                except:
+                    continue
                 yield data
         return tf.data.Dataset.from_generator(data_gen, output_signature=self.signature).unbatch()
 
