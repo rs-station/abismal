@@ -246,6 +246,7 @@ def run_abismal(parser):
     if need_to_build:
         for x,_ train:
             model(x)
+            break
 
     if parser.scale_init_file is not None:
         ref_model = tfk.saving.load_model(parser.scale_init_file)
