@@ -244,7 +244,7 @@ def run_abismal(parser):
     need_to_build |= parser.scale_init_file is not None
     need_to_build |= parser.posterior_init_file is not None
     if need_to_build:
-        for x,_ train:
+        for x,_ in train:
             model(x)
             break
 
