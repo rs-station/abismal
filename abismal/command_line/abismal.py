@@ -244,27 +244,34 @@ def run_abismal(parser):
     need_to_build |= parser.scale_init_file is not None
     need_to_build |= parser.posterior_init_file is not None
     if need_to_build:
+        logger.info(f"Initializing weights")
         for x,_ in train:
             model(x)
             break
 
     if parser.scale_init_file is not None:
+        logger.info(f"Initializing the scale model from {parser.scale_init_file}")
         ref_model = tfk.saving.load_model(parser.scale_init_file)
         model.scale_model.set_weights(ref_model.scale_model.get_weights())
 
     if parser.posterior_init_file is not None:
-        ref_model = tfk.saving.load_model(parser.scale_init_file)
+        logger.info(f"Initializing the surrogate posterior from {parser.posterior_init_file}")
+        ref_model = tfk.saving.load_model(parser.posterior_init_file)
         model.surrogate_posterior.set_weights(ref_model.surrogate_posterior.get_weights())
 
     if parser.freeze_scales:
+        logger.info("Freezing the scale model")
         model.scale_model.trainable = False
 
     if parser.freeze_posterior:
+        logger.info("Freezing the surrogate posterior")
         model.surrogate_posterior.trainable = False
 
+    logger.info("Compiling model")
     model.compile(opt, run_eagerly=parser.run_eagerly, jit_compile=parser.jit_compile)
 
     train = train.prefetch(AUTOTUNE)
+    logger.info("Starting training...")
     history = model.fit(
         x=train, 
         epochs=parser.epochs, 
@@ -275,7 +282,10 @@ def run_abismal(parser):
         verbose=parser.keras_verbosity,
     )
 
+    logger.info("Finished training.")
+
     if parser.debug:
+        logger.info("Debug mode selected, entering interactive, IPython shell.")
         from IPython import embed
         embed(colors='linux')
 
