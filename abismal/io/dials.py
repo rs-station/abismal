@@ -112,7 +112,6 @@ class StillsLoader(DataLoader):
                     result_ids.append(
                         parse_expt_refl.remote(
                             expt, refl, self.spacegroup, self.dmin, self.asu_id, self.include_eo
-
                         )
                     )
 
@@ -120,7 +119,7 @@ class StillsLoader(DataLoader):
 
 
         out = None
-        for datum in data[1:]:
+        for datum in data:
             datum = tf.data.Dataset.from_tensors(datum)
             datum = datum.unbatch()
             if out is None:
