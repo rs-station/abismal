@@ -151,7 +151,7 @@ class DataManager:
                 for expt,refl in zip(expt_files, refl_files):
                     loader = StillsLoader([expt], [refl], self.spacegroup, self.cell, self.dmin, asu_id)
                     asu_id += 1
-                    _data = loader.get_dataset()
+                    _data = loader.get_dataset(num_cpus=self.num_cpus)
                     if data is None:
                         data = _data
                     else:
@@ -160,7 +160,7 @@ class DataManager:
                 loader = StillsLoader(
                     expt_files, refl_files, self.spacegroup, self.cell, self.dmin, asu_id=asu_id
                 )
-                data = loader.get_dataset()
+                data = loader.get_dataset(num_cpus=self.num_cpus)
             if self.cell is None:
                 self.cell = loader.cell
         elif all([_is_mtz_file(f) for f in self.inputs]):
