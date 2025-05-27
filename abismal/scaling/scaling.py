@@ -1,7 +1,7 @@
 import math
 import numpy as np
 import tensorflow as tf
-from abismal.layers import Standardize
+from abismal.layers import Standardize,FeedForward,Average
 from abismal.distributions import TruncatedNormal,FoldedNormal
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers  as tfl
@@ -11,7 +11,6 @@ from tensorflow_probability import stats as tfs
 from tensorflow.python.ops.ragged import ragged_tensor
 import tf_keras as tfk
 
-from abismal.layers import *
 from abismal.distributions import FoldedNormal,Rice
 
 
@@ -42,8 +41,8 @@ class ImageScaler(tfk.models.Model):
             epsilon=1e-12,
             num_image_samples=None,
             share_weights=True,
-            prior_name='exponential',
-            posterior_name='lognormal',
+            prior_name='normal',
+            posterior_name='cauchy',
             seed=1234,
             normalize=False,
             standardization_decay=0.999,
@@ -183,8 +182,8 @@ class ImageScaler(tfk.models.Model):
         return self.prior_dict[self.prior_name]()
 
     def bijector_function(self, x):
-        #return tf.nn.softplus(x) + self.epsilon
-        return tf.math.exp(x) + self.epsilon
+        return tf.nn.softplus(x) + self.epsilon
+        #return tf.math.exp(x) + self.epsilon
 
     def normal_posterior(self, output):
         loc, scale = tf.unstack(output, axis=-1)
@@ -193,8 +192,9 @@ class ImageScaler(tfk.models.Model):
         return q
 
     def log_normal_posterior(self, output):
-        output = self.bijector_function(output)
+        #output = self.bijector_function(output)
         loc, scale = tf.unstack(output, axis=-1)
+        scale = self.bijector_function(scale)
         q = tfd.LogNormal(loc, scale)
         return q
 
@@ -276,9 +276,6 @@ class ImageScaler(tfk.models.Model):
         self.add_metric(tf.squeeze(self.standardize_intensity.std), "Istd")
         self.add_metric(tf.squeeze(self.standardize_intensity.count), "Icount")
 
-        # Try something silly
-        iobs = tf.math.log1p(tf.nn.relu(iobs)) - tf.math.log1p(tf.nn.relu(-iobs))
-
         out = (
             asu_id,
             hkl_in, resolution,
@@ -350,7 +347,7 @@ class ImageScaler(tfk.models.Model):
         else:
             z = tf.transpose(z)
 
-        scale = scale * self.standardize_intensity.std
+        z = z * tf.squeeze(self.standardize_intensity.std)
         self.add_metric(tf.math.reduce_mean(z), name='Σ_mean')
         self.add_metric(tf.math.reduce_std(z), name='Σ_std')
 
