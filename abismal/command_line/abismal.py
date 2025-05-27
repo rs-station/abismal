@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#/usr/bin/env python
 
 
 def main():
@@ -115,6 +115,37 @@ def run_abismal(parser):
         if parser.posterior_rank > 1:
             from abismal.prior.normal import MultivariateNormalPrior
             prior = MultivariateNormalPrior(rac)
+    elif parser.prior_distribution == 'empirical':
+        from abismal.merging.empirical import EmpiricalMergingModel
+        merging_model = EmpiricalMergingModel(rac, scale_model=None,
+            posterior_type=parser.posterior_type,
+        )
+        from tqdm import tqdm
+        data_iter = iter(train)
+        with tqdm(total=parser.steps_per_epoch) as pbar:
+            i = 0
+            for x,_ in train:
+                merging_model(x)
+                i += 1
+                pbar.update(1)
+                if i == parser.steps_per_epoch:
+                    break
+        absent = (merging_model.var == 0.)
+
+        loc = merging_model.mean
+        var = merging_model.var
+
+        #default_mean = tf.reduce_mean(loc[~absent])
+        scale = tf.square(tf.math.reduce_std(loc[~absent]))
+
+        loc = tf.where(absent, 0., loc) / scale
+        var = tf.where(absent, scale, var)
+        scale = tf.sqrt(var) / scale
+
+        from abismal.prior.normal import NormalPrior
+        prior = NormalPrior(rac, loc, scale)
+        loc_init = tf.maximum(loc, parser.epsilon)
+        scale_init = scale
 
     posterior_kwargs = {
         'rac' : rac, 
@@ -159,6 +190,8 @@ def run_abismal(parser):
         num_image_samples=parser.sample_reflections_per_image,
         prior_name=parser.scale_prior_distribution,
         posterior_name=parser.scale_posterior_distribution,
+        standardization_decay=parser.standardization_decay,
+        standardization_count_max=parser.standardization_count_max,
     )
 
     if parser.studentt_dof is not None:
@@ -174,8 +207,6 @@ def run_abismal(parser):
         mc_samples=parser.mc_samples,
         kl_weight=parser.kl_weight,
         reindexing_ops=reindexing_ops,
-        standardization_decay=parser.standardization_decay,
-        standardization_count_max=parser.standardization_count_max,
     )
 
     if parser.learning_rate_final is not None:
@@ -246,7 +277,7 @@ def run_abismal(parser):
     if need_to_build:
         logger.info(f"Initializing weights")
         for x,_ in train:
-            model(x)
+            model(x, training=parser.debug)
             break
 
     if parser.scale_init_file is not None:

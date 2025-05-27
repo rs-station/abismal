@@ -42,9 +42,12 @@ class ImageScaler(tfk.models.Model):
             epsilon=1e-12,
             num_image_samples=None,
             share_weights=True,
-            prior_name='cauchy',
-            posterior_name='cauchy',
+            prior_name='exponential',
+            posterior_name='lognormal',
             seed=1234,
+            normalize=False,
+            standardization_decay=0.999,
+            standardization_count_max=None,
             **kwargs, 
         ):
         """
@@ -78,6 +81,8 @@ class ImageScaler(tfk.models.Model):
         posterior_name : str (optional)
             The posterior parameterization to use. Curently, normal, foldednormal, and gamma are supported.
             Normal is the default. The prior must have the same support as the posterior. 
+        standardization_decay : float (optional)
+            Sets the window over which to estimate the moments of the metadata and intensities
         """
         super().__init__(**kwargs)
         self.kl_weight = kl_weight
@@ -112,6 +117,7 @@ class ImageScaler(tfk.models.Model):
                     hidden_units=self.hidden_units,
                     activation=self.activation,
                     kernel_initializer=kernel_initializer,
+                    normalize=normalize,
                 ) for i in range(mlp_depth)])
         if share_weights:
             self.scale_network = self.image_network
@@ -121,6 +127,7 @@ class ImageScaler(tfk.models.Model):
                     hidden_units=self.hidden_units, 
                     kernel_initializer=kernel_initializer, 
                     activation=self.activation, 
+                    normalize=normalize,
                     ) for i in range(mlp_depth)
             ]) 
 
@@ -128,6 +135,16 @@ class ImageScaler(tfk.models.Model):
             self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
         else:
             self.output_dense = tfk.layers.Dense(1, kernel_initializer=kernel_initializer)
+
+        self.standardize_intensity = Standardize(
+            center=False, 
+            decay=standardization_decay, 
+            count_max=standardization_count_max,
+        )
+        self.standardize_metadata = Standardize(
+            decay=standardization_decay,
+            count_max=standardization_count_max, 
+        )
 
     def get_config(self):
         config = super().get_config()
@@ -143,6 +160,9 @@ class ImageScaler(tfk.models.Model):
             'seed' : self.seed,
             'prior_name' : self.prior_name,
             'posterior_name' : self.posterior_name,
+            'standardization_decay' : self.standardize_intensity.decay,
+            'standardization_count_max' : self.standardize_intensity.count_max,
+            'normalize' : self.image_network.layers[0].normalize,
         })
         return config
 
@@ -163,12 +183,19 @@ class ImageScaler(tfk.models.Model):
         return self.prior_dict[self.prior_name]()
 
     def bijector_function(self, x):
-        return tf.nn.softplus(x) + self.epsilon
+        #return tf.nn.softplus(x) + self.epsilon
+        return tf.math.exp(x) + self.epsilon
 
     def normal_posterior(self, output):
         loc, scale = tf.unstack(output, axis=-1)
         scale = self.bijector_function(scale)
         q = tfd.Normal(loc, scale)
+        return q
+
+    def log_normal_posterior(self, output):
+        output = self.bijector_function(output)
+        loc, scale = tf.unstack(output, axis=-1)
+        q = tfd.LogNormal(loc, scale)
         return q
 
     def folded_normal_posterior(self, output):
@@ -194,6 +221,7 @@ class ImageScaler(tfk.models.Model):
             'gamma' : self.gamma_posterior,
             'foldednormal' : self.folded_normal_posterior,
             'delta' : self.delta_posterior,
+            'lognormal' : self.log_normal_posterior,
         }
         return posterior_dict[self.posterior_name](output)
 
@@ -219,9 +247,51 @@ class ImageScaler(tfk.models.Model):
             self.scale_network.build(metadata[:-1] + [self.mlp_width])
         self.pool.build(metadata[:-1] + [self.mlp_width])
         self.output_dense.build(metadata[:-1] + [self.mlp_width])
+
+        # Build online standardizers for metadata and intensity
+        self.standardize_intensity.build(shapes[-1])
+        self.standardize_metadata.build(shapes[-3])
         self.built = True
 
+    def standardize_inputs(self, inputs, training=None):
+        (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = inputs
+
+        if self.standardize_intensity is not None:
+            iobs = tf.ragged.map_flat_values(
+                self.standardize_intensity, iobs, training=training) 
+            sigiobs = tf.ragged.map_flat_values(
+                self.standardize_intensity.standardize, sigiobs)
+        if self.standardize_metadata is not None:
+            metadata = tf.ragged.map_flat_values(
+                self.standardize_metadata, metadata, training=training)
+
+        self.add_metric(tf.squeeze(self.standardize_intensity.std), "Istd")
+        self.add_metric(tf.squeeze(self.standardize_intensity.count), "Icount")
+
+        # Try something silly
+        iobs = tf.math.log1p(tf.nn.relu(iobs)) - tf.math.log1p(tf.nn.relu(-iobs))
+
+        out = (
+            asu_id,
+            hkl_in, resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) 
+
+        return out
+
     def call(self, inputs, mc_samples=32, training=None, **kwargs):
+        inputs = self.standardize_inputs(inputs)
         (
             asu_id,
             hkl,
@@ -244,7 +314,7 @@ class ImageScaler(tfk.models.Model):
 
         scale = tf.ragged.map_flat_values(self.input_scale, scale)
 
-        image = self.image_network(image)
+        image = tf.ragged.map_flat_values(self.image_network, image)
         image = self.pool(image)
         self.add_metric(tf.math.reduce_mean(image), "Image")
         self.add_metric(tf.math.reduce_std(image), "ImageStd")
@@ -280,7 +350,9 @@ class ImageScaler(tfk.models.Model):
         else:
             z = tf.transpose(z)
 
+        scale = scale * self.standardize_intensity.std
         self.add_metric(tf.math.reduce_mean(z), name='Σ_mean')
         self.add_metric(tf.math.reduce_std(z), name='Σ_std')
+
         return z
 

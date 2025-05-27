@@ -65,7 +65,7 @@ args_and_kwargs = (
                     "The default is normal. ",
             "type": str.lower,
             "default" : "normal",
-            "choices" : ["normal", "foldednormal", "gamma", "delta"],
+            "choices" : ["normal", "foldednormal", "gamma", "delta", "lognormal"],
         }
     ),
 

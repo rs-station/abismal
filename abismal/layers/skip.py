@@ -17,6 +17,7 @@ class FeedForward(tfk.layers.Layer):
         activation='ReLU',
         kernel_initializer='glorot_normal', 
         normalize=False, 
+        epsilon=1e-3,
         **kwargs
         ):
         """
@@ -40,23 +41,28 @@ class FeedForward(tfk.layers.Layer):
             Either a string a keras intializer style function. The default is 'glorot_normal'. 
         normalize : bool (optional)
             Optionally apply layer normalization to the input. 
+        epsilon : float (optional)
+            If using normalization, this is a small constant added to the denominator for 
+            numerical stability.
         """
         super().__init__()
         self.hidden_units = hidden_units
         self.kernel_initializer = kernel_initializer
+        self.epsilon = epsilon
 
         if dropout is not None:
             self.dropout = tfk.layers.Dropout(dropout)
         else:
             self.dropout = None
 
-        if normalize:
-            self.normalize = tfk.layers.LayerNormalization(axis=-1)
-        else:
-            self.normalize = None
-
+        self.normalize = normalize
         self.activation = tfk.activations.get(activation)
         self.use_bias = True
+
+    def layer_normalize(self, X):
+        loc = tf.math.reduce_mean(X, axis=-1, keepdims=True)
+        scale = tf.math.reduce_std(X, axis=-1, keepdims=True) + self.epsilon
+        return (X - loc) / scale
 
     def build(self, shape, **kwargs):
         self.units = shape[-1]
@@ -69,18 +75,18 @@ class FeedForward(tfk.layers.Layer):
         self.ff1.build(shape)
         self.ff2.build(shape[:-1] + [self.hidden_units])
 
-        if self.normalize is not None:
-            self.normalize.build(shape)
 
     def call(self, X, **kwargs):
         out = X
 
         if self.normalize is not None:
-            out = self.normalize(out)
-
+            out = self.layer_normalize(out)
         out = self.activation(out)
         out = self.ff1(out)
+        if self.normalize is not None:
+            out = self.layer_normalize(out)
         out = self.activation(out)
+        out = self.layer_normalize(out)
         out = self.ff2(out)
 
         if self.dropout is not None:
