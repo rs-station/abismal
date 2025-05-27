@@ -78,20 +78,34 @@ class FeedForward(tfk.layers.Layer):
 
     def call(self, X, **kwargs):
         out = X
-
-        if self.normalize is not None:
-            out = self.layer_normalize(out)
         out = self.activation(out)
-        out = self.ff1(out)
-        if self.normalize is not None:
-            out = self.layer_normalize(out)
+        out = self.ff1(out) 
         out = self.activation(out)
-        out = self.layer_normalize(out)
         out = self.ff2(out)
-
-        if self.dropout is not None:
-            out = self.dropout(out)
-
         out = out + X
+        if self.normalize:
+            out = self.layer_normalize(out)
         return out
 
+#        if self.dropout is not None:
+#            out = self.dropout(out)
+#
+#        out = out + X
+#        return out
+#
+#
+#        if self.normalize is not None:
+#            out = self.layer_normalize(out)
+#        out = self.activation(out)
+#        out = self.ff1(out)
+#        if self.normalize is not None:
+#            out = self.layer_normalize(out)
+#        out = self.activation(out)
+#        out = self.ff2(out)
+#
+#        if self.dropout is not None:
+#            out = self.dropout(out)
+#
+#        out = out + X
+#        return out
+#
