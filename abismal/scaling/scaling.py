@@ -199,8 +199,9 @@ class ImageScaler(tfk.models.Model):
         return q
 
     def folded_normal_posterior(self, output):
-        output = self.bijector_function(output)
+        #output = self.bijector_function(output)
         loc, scale = tf.unstack(output, axis=-1)
+        scale = self.bijector_function(scale)
         q = FoldedNormal(loc, scale)
         return q
 
