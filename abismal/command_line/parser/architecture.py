@@ -32,6 +32,16 @@ args_and_kwargs=(
 
     (
         (
+            "--normalizer",
+        ),{
+            "help": "Which normalization scheme to use in the neural network.",
+            "default": None,
+            "choices": [None, 'layer', 'rms'],
+        }
+    ),
+
+    (
+        (
             "--activation",
         ),{
             "help": "The name of the activation function used in the scale model. The default is 'leaky_relu'",

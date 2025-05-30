@@ -16,17 +16,11 @@ class FeedForward(tfk.layers.Layer):
         hidden_units=None, 
         activation='ReLU',
         kernel_initializer='glorot_normal', 
-        normalize=False, 
+        normalize=None, 
         epsilon=1e-3,
         **kwargs
         ):
         """
-        This is a ResNet version 2 style feedforward layer. It implements the following
-
-        ```
-        out = dropout(linear(activation(hidden_linear(activation(layer_norm(in)))))) + in
-        ```
-        Where dropout and layer normalization are optional. 
 
         Parameters
         ----------
@@ -39,8 +33,8 @@ class FeedForward(tfk.layers.Layer):
             Either a string name of a keras activation or a callable function. The default is 'ReLU'.
         kernel_initializer : string or callable (optional)
             Either a string a keras intializer style function. The default is 'glorot_normal'. 
-        normalize : bool (optional)
-            Optionally apply layer normalization to the input. 
+        normalize : str (optional)
+            Optionally apply normalization to the output. Options include 'layer' and 'rms'.
         epsilon : float (optional)
             If using normalization, this is a small constant added to the denominator for 
             numerical stability.
@@ -59,6 +53,13 @@ class FeedForward(tfk.layers.Layer):
         self.activation = tfk.activations.get(activation)
         self.use_bias = True
 
+    def rms_normalize(self, X):
+        den = tf.square(X)
+        den = tf.math.reduce_sum(den, -1, keepdims=True)
+        out = tf.sqrt(den + self.epsilon)
+        out = X / den
+        return out
+
     def layer_normalize(self, X):
         loc = tf.math.reduce_mean(X, axis=-1, keepdims=True)
         scale = tf.math.reduce_std(X, axis=-1, keepdims=True) + self.epsilon
@@ -75,7 +76,6 @@ class FeedForward(tfk.layers.Layer):
         self.ff1.build(shape)
         self.ff2.build(shape[:-1] + [self.hidden_units])
 
-
     def call(self, X, **kwargs):
         out = X
         out = self.activation(out)
@@ -83,8 +83,10 @@ class FeedForward(tfk.layers.Layer):
         out = self.activation(out)
         out = self.ff2(out)
         out = out + X
-        if self.normalize:
+        if self.normalize == 'layer':
             out = self.layer_normalize(out)
+        if self.normalize == 'rms':
+            out = self.rms_normalize(out)
         return out
 
 #        if self.dropout is not None:

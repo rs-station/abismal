@@ -152,6 +152,7 @@ class StillsLoader(DataLoader):
 
         hkl = np.array(h, dtype='int32')
         d = np.array(table['d'], dtype='float32')
+        dpsi = np.array(table['delpsical.rad'], dtype='float32')
         wavelength = np.array(table['wavelength'], dtype='float32')
         dQ = np.array(Q - Qobs, dtype='float32')
         xy = np.array(Svec, dtype='float32')[:,:2]
@@ -166,6 +167,7 @@ class StillsLoader(DataLoader):
 
         hkl = hkl[idx]
         d = d[idx, None]
+        dpsi = dpsi[idx, None]
         wavelength = wavelength[idx, None]
         dQ = dQ[idx]
         xy = xy[idx]
@@ -174,6 +176,7 @@ class StillsLoader(DataLoader):
         SigI = SigI[idx, None]
         if include_eo:
             metadata = np.concatenate((xy, dQ), axis=-1)
+            #metadata = np.concatenate((xy, dQ, np.reciprocal(np.square(d)), dpsi), axis=-1) #more flair
         else:
             metadata = xy
 

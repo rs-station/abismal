@@ -29,6 +29,7 @@ class ImageScaler(tfk.models.Model):
         'laplace' : lambda : tfd.Laplace(0., 1.),
         'normal' : lambda : tfd.Normal(0., 1.),
         'halfnormal' : lambda : tfd.HalfNormal(1.),
+        'halfcauchy' : lambda : tfd.HalfCauchy(1.),
         'exponential' : lambda : tfd.Exponential(1.),
     }
     def __init__(
@@ -44,7 +45,7 @@ class ImageScaler(tfk.models.Model):
             prior_name='normal',
             posterior_name='cauchy',
             seed=1234,
-            normalize=False,
+            normalize='layer',
             standardization_decay=0.999,
             standardization_count_max=None,
             **kwargs, 

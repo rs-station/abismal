@@ -192,6 +192,7 @@ def run_abismal(parser):
         posterior_name=parser.scale_posterior_distribution,
         standardization_decay=parser.standardization_decay,
         standardization_count_max=parser.standardization_count_max,
+        normalize=parser.normalizer,
     )
 
     if parser.studentt_dof is not None:

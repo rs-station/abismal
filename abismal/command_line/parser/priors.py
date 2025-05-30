@@ -83,7 +83,7 @@ args_and_kwargs = (
                     "Cauchy is the defalt",
             "default": 'Cauchy',
             "type": str.lower,
-            "choices" : ["cauchy", "laplace", "normal", "halfnormal", "exponential"],
+            "choices" : ["cauchy", "laplace", "normal", "halfnormal", "exponential", "halfcauchy"],
         }
     ),
 )
