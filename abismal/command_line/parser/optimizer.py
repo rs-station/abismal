@@ -86,19 +86,12 @@ args_and_kwargs=(
 
     (
         (
-            "--amsgrad",
+            "--optimizer",
         ),{
-            "help": "Optionally use the amsgrad variant of Adam.",
-            "action": 'store_true',
-        }
-    ),
-
-    (
-        (
-            "--use-wadam",
-        ),{
-            "help": "Optionally use a Welfordized version of Adam.",
-            "action": 'store_true',
+            "help": "Choose which optimizer to use.",
+            "choices": ['adam', 'wadam', 'adamw'],
+            "default" : "Adam",
+            "type" : str.lower,
         }
     ),
 )
