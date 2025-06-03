@@ -18,6 +18,7 @@ class FeedForward(tfk.layers.Layer):
         kernel_initializer='glorot_normal', 
         normalize=None, 
         epsilon=1e-3,
+        skip=True,
         **kwargs
         ):
         """
@@ -38,11 +39,14 @@ class FeedForward(tfk.layers.Layer):
         epsilon : float (optional)
             If using normalization, this is a small constant added to the denominator for 
             numerical stability.
+        skip : bool (optional)
+            Whether to use a skip connection or not
         """
         super().__init__()
         self.hidden_units = hidden_units
         self.kernel_initializer = kernel_initializer
         self.epsilon = epsilon
+        self.skip = skip
 
         if dropout is not None:
             self.dropout = tfk.layers.Dropout(dropout)
@@ -82,7 +86,8 @@ class FeedForward(tfk.layers.Layer):
         out = self.ff1(out) 
         out = self.activation(out)
         out = self.ff2(out)
-        out = out + X
+        if self.skip:
+            out = out + X
         if self.normalize == 'layer':
             out = self.layer_normalize(out)
         if self.normalize == 'rms':

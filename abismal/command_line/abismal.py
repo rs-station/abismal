@@ -210,11 +210,14 @@ def run_abismal(parser):
     )
 
     if parser.learning_rate_final is not None:
-        from tf_keras.optimizers.schedules import PiecewiseConstantDecay
-        steps = parser.steps_per_epoch * parser.epochs
-        boundaries = [ steps // 2 ]
-        values = [ parser.learning_rate, parser.learning_rate_final ]
-        learning_rate = PiecewiseConstantDecay(boundaries, values)
+        #from tf_keras.optimizers.schedules import PiecewiseConstantDecay
+        #steps = parser.steps_per_epoch * parser.epochs
+        #boundaries = [ steps // 2 ]
+        #values = [ parser.learning_rate, parser.learning_rate_final ]
+        #learning_rate = PiecewiseConstantDecay(boundaries, values)
+        from tf_keras.optimizers.schedules import CosineDecay
+        alpha = parser.learning_rate_final / parser.learning_rate
+        learning_rate = CosineDecay(parser.learning_rate, parser.steps_per_epoch * parser.epochs, alpha)
     else:
         learning_rate = parser.learning_rate
 

@@ -42,12 +42,13 @@ class ImageScaler(tfk.models.Model):
             epsilon=1e-12,
             num_image_samples=None,
             share_weights=True,
-            prior_name='normal',
-            posterior_name='cauchy',
+            prior_name='cauchy',
+            posterior_name='normal',
             seed=1234,
             normalize='layer',
             standardization_decay=0.999,
             standardization_count_max=None,
+            skip=True,
             **kwargs, 
         ):
         """
@@ -118,6 +119,7 @@ class ImageScaler(tfk.models.Model):
                     activation=self.activation,
                     kernel_initializer=kernel_initializer,
                     normalize=normalize,
+                    skip=skip,
                 ) for i in range(mlp_depth)])
         if share_weights:
             self.scale_network = self.image_network
@@ -128,6 +130,7 @@ class ImageScaler(tfk.models.Model):
                     kernel_initializer=kernel_initializer, 
                     activation=self.activation, 
                     normalize=normalize,
+                    skip=skip,
                     ) for i in range(mlp_depth)
             ]) 
 
@@ -200,9 +203,9 @@ class ImageScaler(tfk.models.Model):
         return q
 
     def folded_normal_posterior(self, output):
-        #output = self.bijector_function(output)
+        output = self.bijector_function(output)
         loc, scale = tf.unstack(output, axis=-1)
-        scale = self.bijector_function(scale)
+        #scale = self.bijector_function(scale)
         q = FoldedNormal(loc, scale)
         return q
 
@@ -290,6 +293,7 @@ class ImageScaler(tfk.models.Model):
         return out
 
     def call(self, inputs, mc_samples=32, training=None, **kwargs):
+        iobs,sigiobs = inputs[-2:]
         inputs = self.standardize_inputs(inputs)
         (
             asu_id,
@@ -300,6 +304,7 @@ class ImageScaler(tfk.models.Model):
             iobs,
             sigiobs,
         ) = inputs
+
         scale = metadata
         image = [metadata, iobs, sigiobs]
 
@@ -315,6 +320,7 @@ class ImageScaler(tfk.models.Model):
 
         image = tf.ragged.map_flat_values(self.image_network, image)
         image = self.pool(image)
+
         self.add_metric(tf.math.reduce_mean(image), "Image")
         self.add_metric(tf.math.reduce_std(image), "ImageStd")
         scale = scale + image
