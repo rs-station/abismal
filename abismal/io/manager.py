@@ -39,7 +39,7 @@ class DataManager:
     """
     def __init__(self, inputs, dmin, cell=None, spacegroup=None, 
             num_cpus=None, separate=False, wavelength=None, ray_log_level="ERROR",
-            test_fraction=0., separate_friedel_mates=False):
+            test_fraction=0., separate_friedel_mates=False, cell_tol=None, isigi_cutoff=None):
         if separate_friedel_mates and separate:
             raise ValueError("Cannot combine --separate-friedel-mates and --separate")
 
@@ -54,6 +54,8 @@ class DataManager:
         self.test_fraction = test_fraction
         self.num_asus = 0
         self.separate_friedel_mates = separate_friedel_mates
+        self.cell_tol = cell_tol
+        self.isigi_cutoff = isigi_cutoff
 
     def get_config(self):
         conf = {
@@ -92,6 +94,8 @@ class DataManager:
             ray_log_level = parser.ray_log_level,
             test_fraction = parser.test_fraction,
             separate_friedel_mates = parser.separate_friedel_mates,
+            cell_tol = parser.fractional_cell_tolerance,
+            isigi_cutoff = parser.isigi_cutoff,
         )
 
     @property
@@ -127,6 +131,7 @@ class DataManager:
                     dmin=self.dmin, 
                     asu_id=asu_id, 
                     wavelength=self.wavelength,
+                    isigi_cutoff=self.isigi_cutoff,
                 )
                 if self.separate:
                     asu_id += 1
@@ -149,7 +154,7 @@ class DataManager:
             data = None
             if self.separate:
                 for expt,refl in zip(expt_files, refl_files):
-                    loader = StillsLoader([expt], [refl], self.spacegroup, self.cell, self.dmin, asu_id)
+                    loader = StillsLoader([expt], [refl], self.spacegroup, self.cell, self.dmin, asu_id, cell_tol=self.cell_tol, isigi_cutoff=self.isigi_cutoff)
                     asu_id += 1
                     _data = loader.get_dataset(num_cpus=self.num_cpus)
                     if data is None:
@@ -158,7 +163,8 @@ class DataManager:
                         data = data.concatenate(_data)
             else:
                 loader = StillsLoader(
-                    expt_files, refl_files, self.spacegroup, self.cell, self.dmin, asu_id=asu_id
+                    expt_files, refl_files, self.spacegroup, self.cell, self.dmin, asu_id=asu_id,
+                    cell_tol=self.cell_tol, isigi_cutoff=self.isigi_cutoff,
                 )
                 data = loader.get_dataset(num_cpus=self.num_cpus)
             if self.cell is None:

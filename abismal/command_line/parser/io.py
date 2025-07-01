@@ -61,4 +61,26 @@ args_and_kwargs=(
         "action": "store_true",
         }
     ),
+
+    (
+        (
+            "--isigi-cutoff",
+        ),{
+            "type": float,
+            "default" : None,
+            "help": 'Discard reflections below this I/Sigma threshold.',
+        }
+    ),
+
+    (
+        (
+            "--fractional-cell-tolerance",
+        ),{
+            "type": float,
+            "default" : None,
+            "help": 'Discard images with cells that deviate from the average or supplied cell by more than this fractional tolerance. '
+                    'This feature is only supported for DIALS inputs.',
+        }
+    ),
+
 )

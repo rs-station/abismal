@@ -11,7 +11,7 @@ from reciprocalspaceship.io.common import ray_context
 
 class StillsLoader(DataLoader):
     """ DIALS stills loader """
-    def __init__(self, expt_files, refl_files, spacegroup=None, cell=None, dmin=None, asu_id=0, include_eo=True):
+    def __init__(self, expt_files, refl_files, spacegroup=None, cell=None, dmin=None, asu_id=0, include_eo=True, cell_tol=None, isigi_cutoff=None):
         self.include_eo = include_eo
         if include_eo:
             super().__init__(5)
@@ -21,6 +21,8 @@ class StillsLoader(DataLoader):
         self.expt_files = expt_files
         self.refl_files = refl_files
         self.dmin = dmin
+        self.cell_tol = cell_tol
+        self.isigi_cutoff = isigi_cutoff
         self.asu_id = asu_id
 
         elist_list = [ExperimentListFactory.from_json_file(expt_file, check_format=False) for expt_file in self.expt_files]
@@ -97,9 +99,9 @@ class StillsLoader(DataLoader):
         if num_cpus == 1:
             data = []
             for expt,refl in zip(self.expt_files, self.refl_files):
-                datum = self.dials_to_ragged(expt, refl, 
-                    spacegroup=self.spacegroup, dmin=self.dmin, 
-                    asu_id=self.asu_id, include_eo=self.include_eo)
+                datum = self.dials_to_ragged(
+                    expt, refl, self.cell, self.spacegroup, self.dmin, self.asu_id, self.include_eo, self.cell_tol, self.isigi_cutoff
+                )
                 data.append(datum)
         else:
             with ray_context(num_cpus=num_cpus, **ray_kwargs) as ray:
@@ -111,7 +113,7 @@ class StillsLoader(DataLoader):
                 for expt,refl in zip(self.expt_files, self.refl_files):
                     result_ids.append(
                         parse_expt_refl.remote(
-                            expt, refl, self.spacegroup, self.dmin, self.asu_id, self.include_eo
+                            expt, refl, self.cell, self.spacegroup, self.dmin, self.asu_id, self.include_eo, self.cell_tol, self.isigi_cutoff
                         )
                     )
 
@@ -129,7 +131,7 @@ class StillsLoader(DataLoader):
         return out
 
     @staticmethod
-    def dials_to_ragged(expt_file, refl_file, spacegroup, dmin, asu_id, include_eo=True):
+    def dials_to_ragged(expt_file, refl_file, cell, spacegroup, dmin, asu_id, include_eo=True, cell_tol=None, isigi_cutoff=None):
         """
         Convert dials monochromatic stills files to ragged tensors.
         """
@@ -157,11 +159,22 @@ class StillsLoader(DataLoader):
         xy = np.array(Svec, dtype='float32')[:,:2]
         batch = table['id'].as_numpy_array()
         idx = ~spacegroup.operations().systematic_absences(h)
-        if dmin is not None:
-            idx &= d >= dmin
 
         I  = np.array(table['intensity.sum.value'], dtype='float32')
         SigI  = np.array(np.sqrt(table['intensity.sum.variance']), dtype='float32')
+
+        if dmin is not None:
+            idx &= d >= dmin
+
+        if isigi_cutoff is not None:
+            isigi = I / SigI
+            idx &= isigi >= isigi_cutoff
+
+        if cell_tol is not None:
+            ref_cell = np.array(cell.parameters)
+            cells = np.array([C.get_unit_cell().parameters() for C in elist.crystals()])
+            frac_diff = np.abs(cells - ref_cell) / ref_cell
+            idx &= np.all(frac_diff <= cell_tol, axis=1)[batch]
 
         hkl = hkl[idx]
         d = d[idx, None]
@@ -176,7 +189,7 @@ class StillsLoader(DataLoader):
         else:
             metadata = xy
 
-        #batch = np.unique(batch, return_inverse=True)[1].astype(batch.dtype)
+        batch = np.unique(batch, return_inverse=True)[1].astype(batch.dtype)
         hkl = tf.RaggedTensor.from_value_rowids(hkl, batch)
         d = tf.RaggedTensor.from_value_rowids(d, batch)
         wavelength = tf.RaggedTensor.from_value_rowids(wavelength, batch)
