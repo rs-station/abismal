@@ -53,9 +53,14 @@ def run_abismal(parser):
 
     if test is not None:
         logger.info("There is a test set for validation")
-        test  = test.cache().repeat().ragged_batch(parser.batch_size)
+        test  = test.cache()
+        if parser.validation_steps is not None:
+            test = test.repeat()
+        test = test.ragged_batch(parser.batch_size)
         test = test.prefetch(AUTOTUNE)
-    train = train.cache().repeat()
+    train = train.cache()
+    if parser.steps_per_epoch is not None:
+        train = train.repeat()
     if parser.shuffle_buffer_size > 0:
         logger.info("There is a shuffle buffer to randomize train-time inputs")
         train = train.shuffle(parser.shuffle_buffer_size)
@@ -106,14 +111,33 @@ def run_abismal(parser):
             prior = WilsonPrior(rac)
         loc_init = prior.flat_distribution().mean()
         scale_init = parser.init_scale * loc_init
+    if parser.prior_distribution == 'halfnormal':
+        scale = tf.ones(rac.asu_size)
+
     elif parser.prior_distribution == 'normal':
-        from abismal.prior.normal import NormalPrior
-        prior = NormalPrior(rac)
-        loc_init = tf.ones_like(prior.flat_distribution().mean())
-        scale_init = parser.init_scale * loc_init
+        loc,scale = tf.zeros(rac.asu_size),tf.ones(rac.asu_size)
+        if parser.reference_mtz is not None:
+            import reciprocalspaceship as rs
+            ds = rs.read_mtz(parser.reference_mtz).expand_anomalous()
+            hkl = rac.Hunique.numpy()
+            idx = ds.dtypes == 'F'
+            fkey = ds.dtypes[idx].keys()[0]
+            loc = ds.loc[map(tuple, hkl)][fkey].to_numpy('float32')
+            scale = loc
+            idx = ds.dtypes == 'Q'
+            if any(idx):
+                sigkey = ds.dtypes[idx].keys()[0]
+                scale = ds.loc[map(tuple, hkl)][sigkey].to_numpy('float32')
+
         if parser.posterior_rank > 1:
             from abismal.prior.normal import MultivariateNormalPrior
             prior = MultivariateNormalPrior(rac)
+        else:
+            from abismal.prior.normal import NormalPrior
+            prior = NormalPrior(rac, loc=loc, scale=scale)
+
+        loc_init = prior.flat_distribution().mean() + 1.
+        scale_init = parser.init_scale * loc_init
     elif parser.prior_distribution == 'empirical':
         from abismal.merging.empirical import EmpiricalMergingModel
         merging_model = EmpiricalMergingModel(rac, scale_model=None,
@@ -168,6 +192,8 @@ def run_abismal(parser):
     elif parser.posterior_type == 'structure_factor':
         if parser.posterior_distribution == 'foldednormal':
             from abismal.surrogate_posterior.structure_factor.folded_normal import FoldedNormalPosterior as Posterior
+        elif parser.posterior_distribution == 'truncatednormal':
+            from abismal.surrogate_posterior.structure_factor.folded_normal import TruncatedNormalPosterior as Posterior
         elif parser.posterior_distribution == 'rice':
             from abismal.surrogate_posterior.structure_factor.rice import RicePosterior as Posterior
         elif parser.posterior_distribution == 'normal':
@@ -189,8 +215,6 @@ def run_abismal(parser):
         num_image_samples=parser.sample_reflections_per_image,
         prior_name=parser.scale_prior_distribution,
         posterior_name=parser.scale_posterior_distribution,
-        standardization_decay=parser.standardization_decay,
-        standardization_count_max=parser.standardization_count_max,
         normalize=parser.normalizer,
     )
 
@@ -232,11 +256,14 @@ def run_abismal(parser):
         "epsilon" : parser.adam_epsilon, 
     }
     if parser.optimizer=='wadam':
-        from abismal.optimizers.wadam import WAdam
+        from abismal.optimizers import WAdam
         opt = WAdam(**opt_kwargs)
     elif parser.optimizer=='adamw':
         from tf_keras.optimizers import AdamW
         opt = AdamW(**opt_kwargs)
+    elif parser.optimizer=='adabelief':
+        from abismal.optimizers import AdaBelief
+        opt = AdaBelief(**opt_kwargs)
     elif parser.optimizer=='adam':
         from tf_keras.optimizers import Adam
         opt = Adam(**opt_kwargs)
@@ -253,6 +280,13 @@ def run_abismal(parser):
         history_saver,
         weight_saver,
     ]
+    use_tboard = False
+    if use_tboard:
+        tboard = tfk.callbacks.TensorBoard(
+            parser.out_dir + "/tensorboard",
+            histogram_freq=1,
+        )
+        callbacks.append(tboard)
 
     if parser.eff_files is not None:
         for i,eff_file in enumerate(parser.eff_files.split(',')):

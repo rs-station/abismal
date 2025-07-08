@@ -77,13 +77,23 @@ args_and_kwargs = (
 
     (
         (
+            "--reference-mtz",
+        ),{
+            "help": "Use reference structure factors as a prior.  ",
+            "default": None,
+            "type": str,
+        }
+    ),
+
+    (
+        (
             "--scale-prior-distribution",
         ),{
             "help": "The scale prior to use.  "
                     "Cauchy is the defalt",
             "default": 'Cauchy',
-            "type": str.lower,
-            "choices" : ["cauchy", "laplace", "normal", "halfnormal", "exponential", "halfcauchy"],
+            "type": lambda x: x.lower() if x.lower() != 'none' else None,
+            "choices" : [None, "cauchy", "laplace", "normal", "halfnormal", "exponential", "halfcauchy", "moyal"],
         }
     ),
 )

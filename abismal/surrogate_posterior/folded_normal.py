@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+import math
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
@@ -24,7 +25,10 @@ class FoldedNormalPosteriorBase(object):
 
         self.loc = tfu.TransformedVariable(
             loc_init,
-            tfb.Exp(),
+            tfb.Chain([
+                tfb.Shift(epsilon), 
+                tfb.Exp(),
+            ]),
         )
 
         self.scale = tfu.TransformedVariable(
@@ -55,5 +59,15 @@ class FoldedNormalPosteriorBase(object):
 
     def flat_distribution(self):
         q = self._distribution(self.loc, self.scale, self.low)
+        return q
+
+class TruncatedNormalPosteriorBase(FoldedNormalPosteriorBase):
+    def _distribution(self, loc, scale, low):
+        q = tfd.TruncatedNormal(
+            loc, 
+            scale, 
+            low,
+            math.inf,
+        )
         return q
 

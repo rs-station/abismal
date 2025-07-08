@@ -175,8 +175,8 @@ class StillsLoader(DataLoader):
         I = I[idx, None]
         SigI = SigI[idx, None]
         if include_eo:
-            metadata = np.concatenate((xy, dQ), axis=-1)
-            #metadata = np.concatenate((xy, dQ, np.reciprocal(np.square(d)), dpsi), axis=-1) #more flair
+            #metadata = np.concatenate((xy, dQ), axis=-1)
+            metadata = np.concatenate((xy, dQ, np.reciprocal(np.square(d)), dpsi), axis=-1) #more flair
         else:
             metadata = xy
 

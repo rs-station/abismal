@@ -29,19 +29,21 @@ class NormalPrior(PriorBase):
         config = super().get_config()
         config.update({
             'rac' : tfk.saving.serialize_keras_object(self.rac),
-            'loc' : self.loc,
-            'scale' : self.scale,
+            'loc' : tfk.saving.serialize_keras_object(self.loc),
+            'scale' : tfk.saving.serialize_keras_object(self.scale),
         })
         return config
 
     @classmethod
     def from_config(cls, config):
         config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
+        config['loc'] = tfk.saving.deserialize_keras_object(config['loc'])
+        config['scale'] = tfk.saving.deserialize_keras_object(config['scale'])
         return cls(**config)
 
     def flat_distribution(self):
-        loc = self.loc * tf.ones(self.rac.asu_size)
-        scale = self.scale * tf.ones(self.rac.asu_size)
+        loc = self.loc 
+        scale = self.scale 
         return tfd.Normal(loc, scale)
 
 

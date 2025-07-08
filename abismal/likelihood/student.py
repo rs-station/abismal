@@ -8,6 +8,6 @@ class StudentTLikelihood(LocationScale):
         super().__init__()
         self.degrees_of_freedom = degrees_of_freedom
 
-    def _likelihood(self, iobs, sigiobs):
+    def _likelihood(self, ipred, iobs, sigiobs):
         return  tfd.StudentT(self.degrees_of_freedom, iobs, sigiobs)
 

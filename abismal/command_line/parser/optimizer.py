@@ -89,7 +89,7 @@ args_and_kwargs=(
             "--optimizer",
         ),{
             "help": "Choose which optimizer to use.",
-            "choices": ['adam', 'wadam', 'adamw'],
+            "choices": ['adam', 'wadam', 'adamw', 'adabelief'],
             "default" : "Adam",
             "type" : str.lower,
         }

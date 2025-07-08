@@ -65,3 +65,20 @@ class Average(tfk.layers.Layer):
 
     def call(self, data, **kwargs):
         return tf.reduce_mean(data, self.axis, self.keepdims)
+
+class NormPool(tfk.layers.Layer):
+    def __init__(self, pool_axis=-2, norm_axis=(-2, -1), keepdims=True, epsilon=1e-3):
+        super().__init__()
+        self.epsilon = epsilon
+        self.norm_axis = norm_axis
+        self.pool_axis = pool_axis
+        self.keepdims = keepdims
+
+    def call(self, data, **kwargs):
+        out = data
+        scale = tf.math.reduce_std(out, self.norm_axis, keepdims=True)
+        loc = tf.math.reduce_mean(out, self.norm_axis, keepdims=True)
+        out = (out - loc) / (scale + self.epsilon)
+        out = tf.math.reduce_mean(out, self.pool_axis, self.keepdims)
+        return out
+

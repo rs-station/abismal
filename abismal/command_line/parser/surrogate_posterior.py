@@ -41,7 +41,7 @@ args_and_kwargs = (
                     "The default is foldednormal. ",
             "type": str.lower,
             "default" : "foldednormal",
-            "choices" : ["normal", "foldednormal", "rice", "gamma"],
+            "choices" : ["normal", "truncatednormal", "foldednormal", "rice", "gamma"],
         }
     ),
 
@@ -65,7 +65,7 @@ args_and_kwargs = (
                     "The default is normal. ",
             "type": str.lower,
             "default" : "normal",
-            "choices" : ["normal", "foldednormal", "gamma", "delta", "lognormal"],
+            "choices" : ["normal", "foldednormal", "gamma", "delta", "lognormal", "truncatednormal"],
         }
     ),
 

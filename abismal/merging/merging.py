@@ -105,6 +105,7 @@ class VariationalMergingModel(tfk.models.Model):
                 _ipred = tf.square(_ipred)
             _ipred = _ipred * scale
 
+
             _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
             _ll = tf.reduce_mean(_ll, [-1, -2], keepdims=True)
 

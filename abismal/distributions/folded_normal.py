@@ -34,6 +34,32 @@ def folded_normal_sample_gradients(z, loc, scale):
     dscale = -dscale / dz
     return dloc, dscale
 
+def folded_normal_sample_gradients(z, loc, scale):
+    alpha = (z + loc) / scale
+    beta = (z - loc) / scale
+
+    log_p_a = tfd.Normal(loc, scale).log_prob(z)   #N(z|loc,scale)
+    log_p_b = tfd.Normal(-loc, scale).log_prob(z)  #N(z|-loc,scale)
+
+    p_a = tf.math.exp(log_p_a)
+    p_b = tf.math.exp(log_p_b)
+
+    # This formula is dz = N(z|-loc,scale) + N(z|loc,scale)
+    log_dz = tfm.log_add_exp(log_p_a, log_p_b)
+    dz = tf.math.exp(log_dz)
+
+    # This formula is dloc = N(z|-loc,scale) - N(z|loc,scale)
+    log_dloc,sign  = tfm.log_sub_exp(log_p_b, log_p_a, return_sign=True)
+    #dloc = p_b - p_a
+    log_dloc = log_dloc - log_dz
+    dloc = -sign * tf.math.exp(log_dloc)
+    #dloc = -dloc / dz
+
+    # This formula is -[b * N(z|-loc, scale) + a * N(z|loc, scale)]
+    dscale = -alpha * p_b - beta * p_a
+    dscale = -dscale / dz
+    return dloc, dscale
+
 @tf.custom_gradient
 def stateless_folded_normal(shape, loc, scale, seed):
     z = tf.random.stateless_normal(shape, seed, mean=loc, stddev=scale)

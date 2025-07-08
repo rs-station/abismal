@@ -1,6 +1,7 @@
 import numpy as np
 import tensorflow as tf
 import tf_keras as tfk
+from abismal.layers.standardization import Standardize
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers  as tfl
 from tensorflow_probability import util as tfu
@@ -19,6 +20,7 @@ class FeedForward(tfk.layers.Layer):
         normalize=None, 
         epsilon=1e-3,
         skip=True,
+        use_bias=False,
         **kwargs
         ):
         """
@@ -35,7 +37,7 @@ class FeedForward(tfk.layers.Layer):
         kernel_initializer : string or callable (optional)
             Either a string a keras intializer style function. The default is 'glorot_normal'. 
         normalize : str (optional)
-            Optionally apply normalization to the output. Options include 'layer' and 'rms'.
+            Optionally apply normalization to the output. Options include 'layer', 'instance', and 'rms'.
         epsilon : float (optional)
             If using normalization, this is a small constant added to the denominator for 
             numerical stability.
@@ -53,9 +55,19 @@ class FeedForward(tfk.layers.Layer):
         else:
             self.dropout = None
 
+        if normalize is not None:
+            normalize = normalize.lower()
         self.normalize = normalize
+        if normalize == 'welford':
+            self.welford_normalize = Standardize()
+
         self.activation = tfk.activations.get(activation)
-        self.use_bias = True
+        self.use_bias = use_bias
+
+    def _norm(self, X, loc_axis, scale_axis):
+        loc = tf.math.reduce_mean(X, loc_axis, keepdims=True)
+        scale = tf.math.reduce_std(X, scale_axis, keepdims=True) + self.epsilon
+        return (X - loc) / scale
 
     def rms_normalize(self, X):
         den = tf.square(X)
@@ -65,9 +77,10 @@ class FeedForward(tfk.layers.Layer):
         return out
 
     def layer_normalize(self, X):
-        loc = tf.math.reduce_mean(X, axis=-1, keepdims=True)
-        scale = tf.math.reduce_std(X, axis=-1, keepdims=True) + self.epsilon
-        return (X - loc) / scale
+        return self._norm(X, (-2, -1), (-2, -1))
+
+    def instance_normalize(self, X):
+        return self._norm(X, -1, -1)
 
     def build(self, shape, **kwargs):
         self.units = shape[-1]
@@ -90,29 +103,11 @@ class FeedForward(tfk.layers.Layer):
             out = out + X
         if self.normalize == 'layer':
             out = self.layer_normalize(out)
-        if self.normalize == 'rms':
+        elif self.normalize == 'instance':
+            out = self.instance_normalize(out)
+        elif self.normalize == 'rms':
             out = self.rms_normalize(out)
+        elif self.normalize == 'welford':
+            out = self.welford_normalize(out)
         return out
 
-#        if self.dropout is not None:
-#            out = self.dropout(out)
-#
-#        out = out + X
-#        return out
-#
-#
-#        if self.normalize is not None:
-#            out = self.layer_normalize(out)
-#        out = self.activation(out)
-#        out = self.ff1(out)
-#        if self.normalize is not None:
-#            out = self.layer_normalize(out)
-#        out = self.activation(out)
-#        out = self.ff2(out)
-#
-#        if self.dropout is not None:
-#            out = self.dropout(out)
-#
-#        out = out + X
-#        return out
-#
