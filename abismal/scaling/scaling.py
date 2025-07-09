@@ -103,7 +103,7 @@ class ImageScaler(tfk.models.Model):
         self.input_image = tfk.layers.Dense(
                 mlp_width, kernel_initializer=kernel_initializer, use_bias=False)
         self.input_scale = tfk.layers.Dense(
-                mlp_width, kernel_initializer=kernel_initializer, use_bias=False)
+                mlp_width, kernel_initializer=kernel_initializer, use_bias=True)
 
         self.pool = Average(axis=-2)
 
@@ -112,6 +112,7 @@ class ImageScaler(tfk.models.Model):
                     hidden_units=self.hidden_units,
                     activation=self.activation,
                     kernel_initializer=kernel_initializer,
+                    use_bias=False,
                 ) for i in range(mlp_depth)])
         if share_weights:
             self.scale_network = self.image_network
@@ -121,6 +122,7 @@ class ImageScaler(tfk.models.Model):
                     hidden_units=self.hidden_units, 
                     kernel_initializer=kernel_initializer, 
                     activation=self.activation, 
+                    use_bias=False,
                     ) for i in range(mlp_depth)
             ]) 
 
