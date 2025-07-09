@@ -95,10 +95,12 @@ args_and_kwargs=(
 
     (
         (
-            "--use-wadam",
+            "--optimizer",
         ),{
-            "help": "Optionally use a Welfordized version of Adam.",
-            "action": 'store_true',
+            "help": "Choose the optimizer to use.",
+            "default" : 'adam', 
+            "type" : str.lower,
+            "choices": ['adam', 'wadam', 'adabelief'],
         }
     ),
 )

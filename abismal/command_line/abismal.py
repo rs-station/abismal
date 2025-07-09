@@ -22,7 +22,6 @@ def run_abismal(parser):
     from abismal.io import split_dataset_train_test,set_gpu
     from abismal.scaling import ImageScaler
     from abismal.surrogate_posterior.structure_factor import FoldedNormalPosterior
-    from tf_keras.optimizers import Adam
     from tf_keras.callbacks import ModelCheckpoint
     import gemmi
     from tensorflow.data import AUTOTUNE
@@ -187,29 +186,22 @@ def run_abismal(parser):
     else:
         learning_rate = parser.learning_rate
 
-
-    if parser.use_wadam:
-        from abismal.optimizers.wadam import WAdam
-        opt = WAdam(
-            parser.learning_rate, 
-            parser.beta_1, 
-            parser.beta_2, 
-            global_clipnorm=parser.global_clipnorm, 
-            clipnorm=parser.clipnorm, 
-            clipvalue=parser.clip, 
-            epsilon=parser.adam_epsilon, 
-        )
-    else:
-        opt = Adam(
-            parser.learning_rate, 
-            parser.beta_1, 
-            parser.beta_2, 
-            global_clipnorm=parser.global_clipnorm, 
-            clipnorm=parser.clipnorm, 
-            clipvalue=parser.clip, 
-            epsilon=parser.adam_epsilon, 
-            amsgrad=parser.amsgrad
-        )
+    optimizer_kwargs = {
+        "learning_rate": parser.learning_rate, 
+        "beta_1": parser.beta_1, 
+        "beta_2": parser.beta_2, 
+        "epsilon": parser.adam_epsilon, 
+        "clipnorm": parser.clipnorm, 
+        "clipvalue": parser.clip, 
+        "global_clipnorm": parser.global_clipnorm, 
+    }
+    if parser.optimizer == 'wadam':
+        from abismal.optimizers.wadam import WAdam as Optimizer
+    elif parser.optimizer == 'adam':
+        from tf_keras.optimizers import Adam as Optimizer
+    elif parser.optimizer == 'adabelief':
+        from abismal.optimizers.wadam import AdaBelief as Optimizer
+    opt = Optimizer(**optimizer_kwargs)
 
     if parser.separate_friedel_mates:
         mtz_saver = FriedelMtzSaver(parser.out_dir)

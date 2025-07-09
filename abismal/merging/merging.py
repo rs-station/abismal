@@ -101,7 +101,7 @@ class VariationalMergingModel(tfk.models.Model):
                 self.standardize_metadata, metadata, training=training)
 
         self.add_metric(self.standardize_intensity.std, "Istd")
-        self.add_metric(self.standardize_intensity.count, "Icount")
+        #self.add_metric(self.standardize_intensity.count, "Icount") #This is only useful for debugging
 
         out = (
             asu_id,
