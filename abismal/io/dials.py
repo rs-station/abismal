@@ -158,7 +158,7 @@ class StillsLoader(DataLoader):
         dQ = np.array(Q - Qobs, dtype='float32')
         xy = np.array(Svec, dtype='float32')[:,:2]
         batch = table['id'].as_numpy_array()
-        idx = ~spacegroup.operations().systematic_absences(h)
+        idx = ~spacegroup.operations().systematic_absences(np.array(h, dtype='int32'))
 
         I  = np.array(table['intensity.sum.value'], dtype='float32')
         SigI  = np.array(np.sqrt(table['intensity.sum.variance']), dtype='float32')
