@@ -14,9 +14,9 @@ class StillsLoader(DataLoader):
     def __init__(self, expt_files, refl_files, spacegroup=None, cell=None, dmin=None, asu_id=0, include_eo=True, cell_tol=None, isigi_cutoff=None):
         self.include_eo = include_eo
         if include_eo:
-            super().__init__(5)
+            super().__init__(6)
         else:
-            super().__init__(2)
+            super().__init__(3)
         from dxtbx.model.experiment_list import ExperimentListFactory  #defer defer defer defer
         self.expt_files = expt_files
         self.refl_files = refl_files
@@ -156,7 +156,8 @@ class StillsLoader(DataLoader):
         d = np.array(table['d'], dtype='float32')
         wavelength = np.array(table['wavelength'], dtype='float32')
         dQ = np.array(Q - Qobs, dtype='float32')
-        xy = np.array(Svec, dtype='float32')[:,:2]
+        s1 = np.array(Svec, dtype='float32')
+        xy = s1 #actually xyz
         batch = table['id'].as_numpy_array()
         idx = ~spacegroup.operations().systematic_absences(np.array(h, dtype='int32'))
 

@@ -23,13 +23,56 @@ class DeltaDistribution():
         """Return a tensor that broadcasts as a sample"""
         return self.loc[None,...]
 
+def normal_posterior(output, bijector_function):
+    loc, scale = tf.unstack(output, axis=-1)
+    scale = bijector_function(scale)
+    q = tfd.Normal(loc, scale)
+    return q
+
+def log_normal_posterior(output, bijector_function):
+    output = bijector_function(output)
+    loc, scale = tf.unstack(output, axis=-1)
+    #scale = bijector_function(scale)
+    q = tfd.LogNormal(loc, scale)
+    return q
+
+def folded_normal_posterior(output, bijector_function):
+    #output = bijector_function(output)
+    loc, scale = tf.unstack(output, axis=-1)
+    scale = bijector_function(scale)
+    q = FoldedNormal(loc, scale)
+    return q
+
+def gamma_posterior(output, bijector_function):
+    output = bijector_function(output)
+    loc, scale = tf.unstack(output, axis=-1)
+    q = tfd.Gamma(loc, scale)
+    return q
+
+def delta_posterior(output, bijector_function):
+    loc = tf.squeeze(output, axis=-1)
+    q = DeltaDistribution(loc)
+    return q
+
 @tfk.saving.register_keras_serializable(package="abismal")
 class ImageScaler(tfk.models.Model):
+    bijector_dict = {
+        'softplus' : tf.nn.softplus,
+        'exp' : tf.math.exp,
+    }
+    posterior_dict = {
+        'normal' : normal_posterior,
+        'gamma' : gamma_posterior,
+        'foldednormal' : folded_normal_posterior,
+        'lognormal' : log_normal_posterior,
+        'delta' : delta_posterior,
+    }
     prior_dict = {
         'cauchy' : lambda : tfd.Cauchy(0., 1.),
         'laplace' : lambda : tfd.Laplace(0., 1.),
         'normal' : lambda : tfd.Normal(0., 1.),
         'halfnormal' : lambda : tfd.HalfNormal(1.),
+        'halfcauchy' : lambda : tfd.HalfCauchy(0., 1.),
         'exponential' : lambda : tfd.Exponential(1.),
     }
     def __init__(
@@ -42,8 +85,12 @@ class ImageScaler(tfk.models.Model):
             epsilon=1e-12,
             num_image_samples=None,
             share_weights=True,
-            prior_name='cauchy',
-            posterior_name='cauchy',
+            prior_name='exponential',
+            posterior_name='foldednormal',
+            bijector_name='softplus',
+            normalizer_name=None,
+            hkl_to_imodel=False,
+            gated=True,
             seed=1234,
             **kwargs, 
         ):
@@ -78,6 +125,8 @@ class ImageScaler(tfk.models.Model):
         posterior_name : str (optional)
             The posterior parameterization to use. Curently, normal, foldednormal, and gamma are supported.
             Normal is the default. The prior must have the same support as the posterior. 
+        normalizer_name : str (optional)
+            Optional normalizer supported by abismal.layers.FeedForward
         """
         super().__init__(**kwargs)
         self.kl_weight = kl_weight
@@ -90,22 +139,32 @@ class ImageScaler(tfk.models.Model):
         self.seed = seed
         self.prior_name = prior_name.lower()
         self.posterior_name = posterior_name.lower()
+        self.bijector_name = bijector_name
+        self.normalizer_name = normalizer_name
+        self.hkl_to_imodel = hkl_to_imodel
+        self.gated = gated
 
         self.hidden_units = hidden_units
         if self.hidden_units is None:
             self.hidden_units = 2 * image_mpl_width
 
-        kernel_initializer = tfk.initializers.VarianceScaling(
-            scale=1./10./mlp_depth,
-            mode='fan_avg', distribution='truncated_normal', seed=seed
-        )
+        #kernel_initializer = tfk.initializers.VarianceScaling(
+        #    scale=1./10./mlp_depth,
+        #    mode='fan_avg', distribution='truncated_normal', seed=seed
+        #)
+        kernel_initializer = 'glorot_normal'
 
         self.input_image = tfk.layers.Dense(
                 mlp_width, kernel_initializer=kernel_initializer, use_bias=False)
         self.input_scale = tfk.layers.Dense(
-                mlp_width, kernel_initializer=kernel_initializer, use_bias=True)
+                mlp_width, kernel_initializer=kernel_initializer, use_bias=False) #Should use_bias?
 
         self.pool = Average(axis=-2)
+
+        if gated:
+            from abismal.layers import GLUFeedForward as FeedForward
+        else:
+            from abismal.layers import FeedForward 
 
         self.image_network = tfk.models.Sequential([
                 FeedForward(
@@ -113,6 +172,7 @@ class ImageScaler(tfk.models.Model):
                     activation=self.activation,
                     kernel_initializer=kernel_initializer,
                     use_bias=False,
+                    normalizer=normalizer_name,
                 ) for i in range(mlp_depth)])
         if share_weights:
             self.scale_network = self.image_network
@@ -123,13 +183,14 @@ class ImageScaler(tfk.models.Model):
                     kernel_initializer=kernel_initializer, 
                     activation=self.activation, 
                     use_bias=False,
+                    normalizer=normalizer_name,
                     ) for i in range(mlp_depth)
             ]) 
 
-        if self.kl_weight > 0.:
-            self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer)
+        if self.posterior_name == 'delta':
+            self.output_dense = tfk.layers.Dense(1, kernel_initializer=kernel_initializer, use_bias=False)
         else:
-            self.output_dense = tfk.layers.Dense(1, kernel_initializer=kernel_initializer)
+            self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer, use_bias=False)
 
     def get_config(self):
         config = super().get_config()
@@ -145,6 +206,10 @@ class ImageScaler(tfk.models.Model):
             'seed' : self.seed,
             'prior_name' : self.prior_name,
             'posterior_name' : self.posterior_name,
+            'bijector_name' : self.bijector_name,
+            'normalizer_name' : self.normalizer_name,
+            'hkl_to_imodel' : self.hkl_to_imodel,
+            'gated' : self.gated,
         })
         return config
 
@@ -165,39 +230,10 @@ class ImageScaler(tfk.models.Model):
         return self.prior_dict[self.prior_name]()
 
     def bijector_function(self, x):
-        return tf.nn.softplus(x) + self.epsilon
-
-    def normal_posterior(self, output):
-        loc, scale = tf.unstack(output, axis=-1)
-        scale = self.bijector_function(scale)
-        q = tfd.Normal(loc, scale)
-        return q
-
-    def folded_normal_posterior(self, output):
-        output = self.bijector_function(output)
-        loc, scale = tf.unstack(output, axis=-1)
-        q = FoldedNormal(loc, scale)
-        return q
-
-    def gamma_posterior(self, output):
-        output = self.bijector_function(output)
-        loc, scale = tf.unstack(output, axis=-1)
-        q = tfd.Gamma(loc, scale)
-        return q
-
-    def delta_posterior(self, output):
-        loc = tf.squeeze(output, axis=-1)
-        q = DeltaDistribution(loc)
-        return q
+        return self.bijector_dict[self.bijector_name](x) + self.epsilon
 
     def distribution_function(self, output):
-        posterior_dict = {
-            'normal' : self.normal_posterior,
-            'gamma' : self.gamma_posterior,
-            'foldednormal' : self.folded_normal_posterior,
-            'delta' : self.delta_posterior,
-        }
-        return posterior_dict[self.posterior_name](output)
+        return self.posterior_dict[self.posterior_name](output, self.bijector_function)
 
     def build(self, shapes):
         (
@@ -211,6 +247,8 @@ class ImageScaler(tfk.models.Model):
         ) = shapes
 
         dimage = metadata[-1] + 2
+        if self.hkl_to_imodel:
+            dimage = dimage + 3
         self.input_image.build(
             metadata[:-1] + [dimage] #add columns for iobs/sigiobs
         )
@@ -235,6 +273,8 @@ class ImageScaler(tfk.models.Model):
         ) = inputs
         scale = metadata
         image = [metadata, iobs, sigiobs]
+        if self.hkl_to_imodel:
+            image.append(0.02 * tf.cast(hkl, metadata.dtype))
 
         image = tf.concat(image, axis=-1)
 
@@ -246,11 +286,19 @@ class ImageScaler(tfk.models.Model):
 
         scale = tf.ragged.map_flat_values(self.input_scale, scale)
 
-        image = self.image_network(image)
+        image = tf.ragged.map_flat_values(self.image_network, image)
         image = self.pool(image)
+
+        #image = image / tf.sqrt((tf.math.reduce_mean(tf.square(image), axis=-1, keepdims=True) + 1e-3))
+        #image = (image - tf.reduce_mean(image, axis=-1, keepdims=True)) / (tf.math.reduce_std(image, axis=-1, keepdims=True) + 1e-3)
+        #image = tf.nn.tanh(image)
+
         self.add_metric(tf.math.reduce_mean(image), "Image")
         self.add_metric(tf.math.reduce_std(image), "ImageStd")
         scale = scale + image
+        #scale = tf.nn.tanh(scale)
+        #scale = (scale - tf.reduce_mean(scale, axis=-1, keepdims=True)) / (tf.math.reduce_std(scale, axis=-1, keepdims=True) + 1e-3)
+
 
         scale = tf.ragged.map_flat_values(self.scale_network, scale)
         scale = tf.ragged.map_flat_values(self.output_dense, scale)

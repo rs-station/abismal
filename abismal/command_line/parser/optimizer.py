@@ -1,6 +1,7 @@
 title = "Optimizer"
 description = "Arguments affecting the optimization algorithm"
 
+from abismal.optimizers.optimizer_dict import optimizer_dict
 
 args_and_kwargs=(
 
@@ -100,7 +101,7 @@ args_and_kwargs=(
             "help": "Choose the optimizer to use.",
             "default" : 'adam', 
             "type" : str.lower,
-            "choices": ['adam', 'wadam', 'adabelief'],
+            "choices": optimizer_dict.keys(),
         }
     ),
 )

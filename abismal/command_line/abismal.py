@@ -158,6 +158,8 @@ def run_abismal(parser):
         num_image_samples=parser.sample_reflections_per_image,
         prior_name=parser.scale_prior_distribution,
         posterior_name=parser.scale_posterior_distribution,
+        bijector_name=parser.scale_posterior_bijector,
+        normalizer_name=parser.normalizer,
     )
 
     if parser.studentt_dof is not None:
@@ -195,12 +197,8 @@ def run_abismal(parser):
         "clipvalue": parser.clip, 
         "global_clipnorm": parser.global_clipnorm, 
     }
-    if parser.optimizer == 'wadam':
-        from abismal.optimizers.wadam import WAdam as Optimizer
-    elif parser.optimizer == 'adam':
-        from tf_keras.optimizers import Adam as Optimizer
-    elif parser.optimizer == 'adabelief':
-        from abismal.optimizers.wadam import AdaBelief as Optimizer
+    from abismal.optimizers.optimizer_dict import optimizer_dict
+    Optimizer = optimizer_dict[parser.optimizer]
     opt = Optimizer(**optimizer_kwargs)
 
     if parser.separate_friedel_mates:
@@ -261,6 +259,22 @@ def run_abismal(parser):
 
     logger.info("Compiling model")
     model.compile(opt, run_eagerly=parser.run_eagerly, jit_compile=parser.jit_compile)
+
+    #for x,y in train:
+    #    model(x)
+    #    break
+    #with tf.GradientTape(persistent=True) as tape:
+    #    y_pred = model(x, training=True)  # Forward pass
+    #    # Compute the loss value
+    #    # (the loss function is configured in `compile()`)
+    #    loss = model.compiled_loss(y, y_pred, regularization_losses=model.losses)
+    #q_vars = model.surrogate_posterior.trainable_variables
+    #grad_q= tape.gradient(loss, q_vars)
+    #from abismal.merging.merging import to_indexed_slices
+    #gis_q = [to_indexed_slices(g) for g in grad_q]
+    #from IPython import embed
+    #embed(colors='linux')
+
 
     train = train.prefetch(AUTOTUNE)
     logger.info("Starting training...")

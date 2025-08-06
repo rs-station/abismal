@@ -145,3 +145,39 @@ class LazyAdam(adam_optimizer_class):
         }
 
         return resource_scatter_op(**resource_update_kwargs)
+
+
+@tf.keras.utils.register_keras_serializable(package="abismal")
+class LazyAdaBelief(LazyAdam):
+    def _resource_apply_sparse(self, grad, var, indices):
+        var_dtype = var.dtype.base_dtype
+        lr_t = self._decayed_lr(var_dtype)
+        beta_1_t = self._get_hyper("beta_1", var_dtype)
+        beta_2_t = self._get_hyper("beta_2", var_dtype)
+        local_step = tf.cast(self.iterations + 1, var_dtype)
+        beta_1_power = tf.math.pow(beta_1_t, local_step)
+        beta_2_power = tf.math.pow(beta_2_t, local_step)
+        epsilon_t = tf.convert_to_tensor(self.epsilon, var_dtype)
+        lr = lr_t * tf.math.sqrt(1 - beta_2_power) / (1 - beta_1_power)
+
+        # \\(m := beta1 * m + (1 - beta1) * g_t\\)
+        m = self.get_slot(var, "m")
+        m_l = tf.gather(m, indices)
+        m_t_slice = beta_1_t * m_l + (1 - beta_1_t) * grad
+        m_update_op = self._resource_scatter_update(m, indices, m_t_slice)
+
+        # \\(v := beta2 * v + (1 - beta2) * (g_t * g_t)\\)
+        delta = grad - tf.gather(m, indices) 
+        v = self.get_slot(var, "v")
+        v_t_slice = beta_2_t * tf.gather(v, indices) + (1 - beta_2_t) * tf.math.square(
+            grad - m_l
+        )
+        v_update_op = self._resource_scatter_update(v, indices, v_t_slice)
+
+        # \\(variable += -learning_rate * m_t / (epsilon_t + sqrt(v_t))\\)
+        var_slice = lr * m_t_slice / (tf.math.sqrt(v_t_slice) + epsilon_t)
+        var_update_op = self._resource_scatter_sub(var, indices, var_slice)
+
+        return tf.group(*[var_update_op, m_update_op, v_update_op])
+
+

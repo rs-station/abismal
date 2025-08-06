@@ -1,6 +1,8 @@
 title = "Architecture"
 description = "Arguments affecting the model architecture and dimensions"
 
+from abismal.layers import FeedForward
+
 def int_or_none_type(x):
     if x.lower() == 'none':
         return None
@@ -37,6 +39,17 @@ args_and_kwargs=(
             "help": "The name of the activation function used in the scale model. The default is 'leaky_relu'",
             "default": "leaky_relu",
             "type": str,
+        }
+    ),
+
+    (
+        (
+            "--normalizer",
+        ),{
+            "help": "Optional pre-normalization function for feed forward layers.",
+            "default": 'rms',
+            "type": str,
+            "choices": FeedForward.norm_dict.keys(),
         }
     ),
 

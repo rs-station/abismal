@@ -1,6 +1,8 @@
 title = "Surrogate posteriors"
 description = "Arguments affecting the parameterization and initialization of surrogate posteriors"
 
+from abismal.scaling.scaling import ImageScaler
+
 args_and_kwargs = (
     (
         (
@@ -65,7 +67,18 @@ args_and_kwargs = (
                     "The default is normal. ",
             "type": str.lower,
             "default" : "normal",
-            "choices" : ["normal", "foldednormal", "gamma", "delta"],
+            "choices" : ImageScaler.posterior_dict.keys(),
+        }
+    ),
+
+    (
+        (
+            "--scale-posterior-bijector",
+        ),{
+            "help": "Define the bijector used to enforce positivity of surrogate parameters. ",
+            "type": str.lower,
+            "default" : "softplus",
+            "choices" : ImageScaler.bijector_dict.keys(),
         }
     ),
 

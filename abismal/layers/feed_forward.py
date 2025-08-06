@@ -11,12 +11,18 @@ class FeedForward(tfk.layers.Layer):
     """
     This is a ResNet version 2 style layer
     """
+    norm_dict = {
+        'rms' : lambda x: x / (tf.math.sqrt(tf.reduce_sum(x*x, axis=-1, keepdims=True)) + 1e-3),
+        'layer' : lambda x: (x - tf.math.reduce_mean(x, axis=-1, keepdims=True)) / (tf.math.reduce_std(x, axis=-1, keepdims=True) + 1e-3),
+        'identity' : lambda x: x,
+    }
     def __init__(self, 
         dropout=None, 
         hidden_units=None, 
         activation='ReLU',
         kernel_initializer='glorot_normal', 
-        normalize=False, 
+        normalizer='rms',
+        use_bias=False,
         **kwargs
         ):
         """
@@ -38,25 +44,19 @@ class FeedForward(tfk.layers.Layer):
             Either a string name of a keras activation or a callable function. The default is 'ReLU'.
         kernel_initializer : string or callable (optional)
             Either a string a keras intializer style function. The default is 'glorot_normal'. 
-        normalize : bool (optional)
-            Optionally apply layer normalization to the input. 
         """
         super().__init__()
         self.hidden_units = hidden_units
         self.kernel_initializer = kernel_initializer
+        self.normalizer = normalizer
 
         if dropout is not None:
             self.dropout = tfk.layers.Dropout(dropout)
         else:
             self.dropout = None
 
-        if normalize:
-            self.normalize = tfk.layers.LayerNormalization(axis=-1)
-        else:
-            self.normalize = None
-
         self.activation = tfk.activations.get(activation)
-        self.use_bias = True
+        self.use_bias = use_bias
 
     def build(self, shape, **kwargs):
         self.units = shape[-1]
@@ -69,17 +69,12 @@ class FeedForward(tfk.layers.Layer):
         self.ff1.build(shape)
         self.ff2.build(shape[:-1] + [self.hidden_units])
 
-        if self.normalize is not None:
-            self.normalize.build(shape)
-
     def call(self, X, **kwargs):
         out = X
-
-        if self.normalize is not None:
-            out = self.normalize(out)
-
+        out = self.norm_dict[self.normalizer](out)
         out = self.activation(out)
         out = self.ff1(out)
+        out = self.norm_dict[self.normalizer](out)
         out = self.activation(out)
         out = self.ff2(out)
 
@@ -87,5 +82,42 @@ class FeedForward(tfk.layers.Layer):
             out = self.dropout(out)
 
         out = out + X
+        return out
+
+
+class GLUFeedForward(FeedForward):
+    """
+    This is a ResNet version 2 style layer
+    """
+    norm_dict = {
+        'rms' : lambda x: x / (tf.math.sqrt(tf.reduce_sum(x*x, axis=-1, keepdims=True)) + 1e-3),
+        'layer' : lambda x: (x - tf.math.reduce_mean(x, axis=-1, keepdims=True)) / (tf.math.reduce_std(x, axis=-1, keepdims=True) + 1e-3),
+        'identity' : lambda x: x,
+    }
+    def build(self, shape, **kwargs):
+        self.units = shape[-1]
+        if self.hidden_units is None:
+            self.hidden_units = 2 * self.units
+
+        self.ff1 = tfk.layers.Dense(self.hidden_units, kernel_initializer=self.kernel_initializer, use_bias=self.use_bias, **kwargs)
+        self.ff2 = tfk.layers.Dense(self.hidden_units, kernel_initializer=self.kernel_initializer, use_bias=self.use_bias, **kwargs)
+        self.ff3 = tfk.layers.Dense(self.units, kernel_initializer=self.kernel_initializer, use_bias=self.use_bias, **kwargs)
+
+        self.ff1.build(shape)
+        self.ff2.build(shape)
+        self.ff3.build(shape[:-1] + [self.hidden_units])
+
+    def call(self, X, **kwargs):
+        out = X
+        out = self.norm_dict[self.normalizer](out)
+
+        out = self.ff1(out) * self.activation(self.ff2(out))
+        out = self.ff3(out)
+
+        if self.dropout is not None:
+            out = self.dropout(out)
+
+        out = out + X
+
         return out
 

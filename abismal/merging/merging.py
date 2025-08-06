@@ -10,6 +10,20 @@ from abismal.symmetry import Op
 import tf_keras as tfk
 from abismal.layers import Standardize
 
+def to_indexed_slices(tensor):
+    """
+    This is used to sparsify the structure factor gradients. 
+    """
+    mask = tensor != 0.
+    shape = tfk.backend.shape(tensor)
+    idx = tf.where(mask)
+    idx = tf.squeeze(idx, axis=-1)
+    result = tf.IndexedSlices(
+        tf.boolean_mask(tensor, mask),
+        idx,
+        shape,
+    )
+    return result
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class VariationalMergingModel(tfk.models.Model):
@@ -179,6 +193,9 @@ class VariationalMergingModel(tfk.models.Model):
         w = tf.reduce_sum(tf.ones_like(iobs), [-1, -2], keepdims=True)
         w = w / tf.reduce_sum(w)
         ll = tf.reduce_sum(w * ll)
+
+        # Resample kl_div based on observations
+        kl_div = self.surrogate_posterior.rac.gather(kl_div, asu_id, hkl)
         kl_div = tf.reduce_mean(kl_div) 
 
         self.add_metric(-ll, name='NLL')
@@ -216,11 +233,12 @@ class VariationalMergingModel(tfk.models.Model):
         metrics["|∇s|"] = grad_s_norm
 
         q_vars = self.surrogate_posterior.trainable_variables
-        grad_q= tape.gradient(loss, q_vars)
+        grad_q = tape.gradient(loss, q_vars)
         grad_q_norm = tf.sqrt(
             tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_q])
         )
         metrics["|∇q|"] = grad_q_norm
+        grad_q = [to_indexed_slices(g) for g in grad_q] #This makes lazy adam work
 
         trainable_vars = scale_vars + q_vars 
 

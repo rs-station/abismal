@@ -2,6 +2,7 @@ title = "Priors"
 description = "Arguments governing the prior distributions"
 
 from abismal.command_line.parser.custom_types import list_of_ints,list_of_ops,list_of_floats
+from abismal.scaling.scaling import ImageScaler
 
 args_and_kwargs = (
     (
@@ -83,7 +84,7 @@ args_and_kwargs = (
                     "Cauchy is the defalt",
             "default": 'Cauchy',
             "type": str.lower,
-            "choices" : ["cauchy", "laplace", "normal", "halfnormal", "exponential"],
+            "choices" : ImageScaler.prior_dict.keys(),
         }
     ),
 )
