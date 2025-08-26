@@ -11,7 +11,17 @@ args_and_kwargs=(
         ),{
             "help": "Learning rate for Adam with default 1e-3.",
             "default": 1e-3,
-            "type": float
+            "type": float,
+        }
+    ),
+
+    (
+        (
+            "--burnin",
+        ),{
+            "help": "Boundary for learning rate decay.",
+            "default": 10_000,
+            "type": int,
         }
     ),
 
@@ -21,7 +31,7 @@ args_and_kwargs=(
         ),{
             "help": "Optionally anneal the learning rate to this value throughout training.",
             "default": None,
-            "type": float
+            "type": float,
         }
     ),
 

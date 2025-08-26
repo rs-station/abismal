@@ -17,8 +17,8 @@ args_and_kwargs = (
         (
             "--steps-per-epoch",
         ),{
-            "help": "The number of gradient steps in an epoch dictating how often output can be saved. 1000 is the default.",
-            "default": 1_000,
+            "help": "Optional set the number of gradient steps in an epoch dictating how often output will be saved.",
+            "default": None,
             "type": int,
         }
     ),
@@ -37,8 +37,8 @@ args_and_kwargs = (
         (
             "--validation-steps",
         ),{
-            "help": "The number of validation steps run at the close of each epoch with default 100.",
-            "default": 100,
+            "help": "Optionally set the number of validation steps run at the close of each epoch.",
+            "default": None,
             "type": int,
         }
     ),
@@ -68,7 +68,7 @@ args_and_kwargs = (
             "--shuffle-buffer-size",
         ),{
             "help": "The size of the shuffle buffer which randomizes the training data with default 100_000.",
-            "default": 100_000,
+            "default": 0,
             "type": int,
         }
     ),
