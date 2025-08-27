@@ -302,7 +302,7 @@ class ImageScaler(tfk.models.Model):
 
         z = q.sample(mc_samples) 
 
-        if not self.posterior_name.lower() == 'delta':
+        if not self.posterior_name.lower() == 'delta' and self.kl_weight > 0.:
             p = self.prior_function()
             try: #Attempt to calculate this analytically
                 kl_div = q.kl_divergence(p)
