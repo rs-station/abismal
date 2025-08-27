@@ -23,7 +23,7 @@ def main():
         "--epochs", help="How many gradient descent epochs to run", type=int, default=30, required=False
     )
     parser.add_argument(
-        "--steps-per-epoch", help="How many steps per epoch", type=int, default=1_000, required=False
+        "--steps-per-epoch", help="How many steps per epoch", type=int, default=None, required=False
     )
     parser.add_argument(
         "--batch-size", help="Number of images considered in each gradient step", type=int, default=100, required=False
@@ -43,7 +43,10 @@ def main():
         half1,half2 = dm.get_train_test_splits()
 
         for half_id,half in enumerate([half1, half2]):
-            half = half.cache().repeat().ragged_batch(parser.batch_size)
+            half = half.cache()
+            if parser.steps_per_epoch is not None:
+                half = half.repeat()
+            half = half.ragged_batch(parser.batch_size)
 
             model = tfk.saving.load_model(parser.model_file)
             if parser.sf_init is not None:
