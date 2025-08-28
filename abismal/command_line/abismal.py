@@ -2,6 +2,8 @@
 
 
 def main():
+    from time import time
+    start_time = time()
     from abismal.ragged import quiet
     from abismal.command_line.parser import parser
 
@@ -11,10 +13,10 @@ def main():
 
     set_log_level(parser.tf_log_level)
     set_gpu(parser.gpu_id)
-    run_abismal(parser)
+    run_abismal(parser, start_time)
 
 
-def run_abismal(parser):
+def run_abismal(parser, start_time=None):
     import math
     import tensorflow as tf
     import tf_keras as tfk
@@ -251,7 +253,7 @@ def run_abismal(parser):
         mtz_saver = FriedelMtzSaver(parser.out_dir)
     else:
         mtz_saver = MtzSaver(parser.out_dir)
-    history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id)
+    history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id, start_time=start_time)
     weight_saver = WeightSaver(parser.out_dir)
 
     callbacks = [
