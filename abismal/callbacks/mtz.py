@@ -45,7 +45,7 @@ class MtzSaver(tfk.callbacks.Callback):
         best = -1.
         mtz_out = None
         for op in self.reindexing_ops:
-            op = op.gemmi_op
+            op = gemmi.Op(op)
             reindexed = merged.apply_symop(op).hkl_to_asu()
             cc = calculate_correlation(ref[[refkey]], reindexed[['F']], reindexed[['SIGF']])
             if cc > best:
@@ -53,7 +53,7 @@ class MtzSaver(tfk.callbacks.Callback):
                 mtz_out = reindexed
                 op_name = op.triplet()
         if anomalous:
-            merged = merged.unstack_anomalous()
+            mtz_out = mtz_out.unstack_anomalous()
         return mtz_out
 
 
