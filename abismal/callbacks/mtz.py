@@ -20,6 +20,7 @@ class MtzSaver(tfk.callbacks.Callback):
 
     def reindex_dataset(self, merged):
         anomalous = ("F(+)" in merged)
+        keys = merged.keys()
         if anomalous:
             merged = merged.stack_anomalous()
         def get_first_key_of_dtype(ds, dtype):
@@ -46,16 +47,15 @@ class MtzSaver(tfk.callbacks.Callback):
         mtz_out = None
         for op in self.reindexing_ops:
             op = gemmi.Op(op)
-            reindexed = merged.apply_symop(op).hkl_to_asu()
+            reindexed = merged.apply_symop(op).hkl_to_asu(anomalous=anomalous)
             cc = calculate_correlation(ref[[refkey]], reindexed[['F']], reindexed[['SIGF']])
             if cc > best:
                 best = cc
                 mtz_out = reindexed
                 op_name = op.triplet()
-        if "M/ISYM" in mtz_out:
-            del(mtz_out["M/ISYM"])
         if anomalous:
             mtz_out = mtz_out.unstack_anomalous()
+        mtz_out = mtz_out[keys] #reorder columns to match input spec
         return mtz_out
 
 
