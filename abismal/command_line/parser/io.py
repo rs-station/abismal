@@ -45,6 +45,16 @@ args_and_kwargs=(
 
     (
         (
+            "--reference-mtz",
+        ),{
+            "type": str,
+            "default" : None,
+            "help": 'A reference mtz file which will be used to determine the reindexing operator.',
+        }
+    ),
+
+    (
+        (
             "--separate",
         ),{
         "help": "Merge the contents of each input file into a separate output file. ",

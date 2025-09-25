@@ -250,7 +250,7 @@ def run_abismal(parser):
     if parser.separate_friedel_mates:
         mtz_saver = FriedelMtzSaver(parser.out_dir)
     else:
-        mtz_saver = MtzSaver(parser.out_dir)
+        mtz_saver = MtzSaver(parser.out_dir, parser.reference_mtz, reindexing_ops)
     history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id)
     weight_saver = WeightSaver(parser.out_dir)
 
