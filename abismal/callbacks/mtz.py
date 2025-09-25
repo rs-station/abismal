@@ -52,6 +52,8 @@ class MtzSaver(tfk.callbacks.Callback):
                 best = cc
                 mtz_out = reindexed
                 op_name = op.triplet()
+        if "M/ISYM" in mtz_out:
+            del(mtz_out["M/ISYM"])
         if anomalous:
             mtz_out = mtz_out.unstack_anomalous()
         return mtz_out
