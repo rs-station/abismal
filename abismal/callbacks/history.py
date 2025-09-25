@@ -11,11 +11,13 @@ from shutil import which
 
 
 class HistorySaver(tfk.callbacks.Callback):
-    def __init__(self, output_directory, gpu_id=None,  *args, **kwargs):
+    def __init__(self, output_directory, gpu_id=None, start_time=None,  *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.gpu_id=0
         self.output_directory = abspath(output_directory)
-        self.start = time()
+        self.start = start_time
+        if self.start is None:
+            self.start = time()
 
         if not exists(self.output_directory):
             mkdir(output_directory)
