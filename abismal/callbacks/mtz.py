@@ -3,7 +3,6 @@ import tf_keras as tfk
 from os.path import exists,dirname,abspath
 import reciprocalspaceship as rs
 from os import mkdir
-import gemmi
 import numpy as np
 
 class MtzSaver(tfk.callbacks.Callback):
