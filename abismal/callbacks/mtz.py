@@ -18,8 +18,7 @@ class MtzSaver(tfk.callbacks.Callback):
         if not exists(self.output_directory):
             mkdir(output_directory)
 
-    def reindex_dataset(self, merged):
-        anomalous = ("F(+)" in merged)
+    def reindex_dataset(self, merged, anomalous):
         keys = merged.keys()
         if anomalous:
             merged = merged.stack_anomalous()
@@ -65,7 +64,8 @@ class MtzSaver(tfk.callbacks.Callback):
     def save_mtz(self, epoch, seen=True):
         for asu_id,data in enumerate(self.model.surrogate_posterior.to_datasets(seen=seen)):
             if self.reference_mtz is not None:
-                data = self.reindex_dataset(data)
+                anomalous = self.model.surrogate_posterior.rac.reciprocal_asus[asu_id].anomalous
+                data = self.reindex_dataset(data, anomalous)
             data.write_mtz(f"{self.output_directory}/asu_{asu_id}_epoch_{epoch+1}.mtz")
 
 class FriedelMtzSaver(MtzSaver):
