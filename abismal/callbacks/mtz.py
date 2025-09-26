@@ -7,9 +7,8 @@ import gemmi
 import numpy as np
 
 class MtzSaver(tfk.callbacks.Callback):
-    def __init__(self, output_directory, reference_mtz=None, reindexing_ops=None, *args, **kwargs):
+    def __init__(self, output_directory, reference_mtz=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.reindexing_ops = reindexing_ops
         self.reference_mtz = reference_mtz
         if self.reference_mtz is not None:
             self.reference_mtz = rs.read_mtz(reference_mtz)
@@ -44,19 +43,17 @@ class MtzSaver(tfk.callbacks.Callback):
 
         best = -1.
         mtz_out = None
-        for op in self.reindexing_ops:
-            op = gemmi.Op(op)
+        for op in self.model.reindexing_ops:
+            op = op.gemmi_op #These are abismal ops. we need gemmi
             reindexed = merged.apply_symop(op).hkl_to_asu(anomalous=anomalous)
             cc = calculate_correlation(ref[[refkey]], reindexed[['F']], reindexed[['SIGF']])
             if cc > best:
                 best = cc
                 mtz_out = reindexed
-                op_name = op.triplet()
         if anomalous:
             mtz_out = mtz_out.unstack_anomalous()
         mtz_out = mtz_out[keys] #reorder columns to match input spec
         return mtz_out
-
 
     def on_epoch_end(self, epoch, logs=None):
         self.save_mtz(epoch)

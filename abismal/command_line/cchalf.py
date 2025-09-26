@@ -67,15 +67,8 @@ def main():
             #Now re-compile to re-initialize the optimizer momenta
             model.compile(opt)
 
-
-            reindexing_ops = None
-            if parser.reference_mtz is not None:
-                import gemmi
-                reindexing_ops = ["x,y,z"]
-                ops = gemmi.find_twin_laws(dm.cell, dm.spacegroup, 3.0, False)
-                reindexing_ops = reindexing_ops + [op.triplet() for op in ops]
             callbacks = [
-                MtzSaver(f"half_{half_id+1}", reference_mtz=parser.reference_mtz, reindexing_ops=reindexing_ops),
+                MtzSaver(f"half_{half_id+1}", reference_mtz=parser.reference_mtz)
             ]
             history = model.fit(
                 x=half, 
