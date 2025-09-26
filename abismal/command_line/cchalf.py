@@ -34,6 +34,9 @@ def main():
     parser.add_argument(
         "--keras-verbosity", help="Keras Model.fit verbose level. See docs for more info: https://keras.io/2.18/api/models/model_training_apis/#fit-method", type=int, default=1, choices=[0, 1, 2,]
     )
+    parser.add_argument(
+        "--reference-mtz", type= str, default=None, help='A reference mtz file which will be used to determine the reindexing operator.',
+    )
     parser = parser.parse_args()
     refls = []
 
@@ -64,7 +67,7 @@ def main():
             model.compile(opt)
 
             callbacks = [
-                MtzSaver(f"half_{half_id+1}"),
+                MtzSaver(f"half_{half_id+1}", reference_mtz=parser.reference_mtz),
             ]
             history = model.fit(
                 x=half, 
