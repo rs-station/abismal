@@ -38,7 +38,6 @@ class VariationalMergingModel(tfk.models.Model):
             epsilon=1e-6, 
             reindexing_ops=None, 
             standardization_decay=0.999,
-            standardization_count_max=None,
             **kwargs):
         super().__init__(**kwargs)
         self.epsilon = epsilon
@@ -54,10 +53,8 @@ class VariationalMergingModel(tfk.models.Model):
         self.standardize_intensity = Standardize(
             center=False, 
             decay=standardization_decay, 
-            count_max=standardization_count_max
         )
         self.standardize_metadata = Standardize(
-            count_max=standardization_count_max, 
             decay=standardization_decay
         )
 

@@ -34,6 +34,7 @@ def run_abismal(parser, start_time=None):
         PhenixRunner,
         AnomalousPeakFinder,
         WeightSaver,
+        StandardizationFreezer,
     )
     from abismal.io import split_dataset_train_test, set_gpu
     from abismal.scaling import ImageScaler
@@ -224,7 +225,6 @@ def run_abismal(parser, start_time=None):
         kl_weight=parser.kl_weight,
         reindexing_ops=reindexing_ops,
         standardization_decay=parser.standardization_decay,
-        standardization_count_max=parser.standardization_count_max,
     )
 
     if parser.learning_rate_final is not None:
@@ -256,11 +256,13 @@ def run_abismal(parser, start_time=None):
 
     history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id, start_time=start_time)
     weight_saver = WeightSaver(parser.out_dir)
+    freezer = StandardizationFreezer()
 
     callbacks = [
         mtz_saver,
         history_saver,
         weight_saver,
+        freezer,
     ]
 
     if parser.eff_files is not None:

@@ -63,17 +63,6 @@ args_and_kwargs = (
         },
     ),
     (
-        ("--standardization-count-max",),
-        {
-            "help": "Abismal uses Welford's algorithm to calculate the standard deviation of intensities. "
-            "After one pass over the data, updating the standard deviation may introduce noise. "
-            "So, typically the value is frozen after a number of steps specified by this parameter. "
-            "0 or None is interpreted as never freezing and is the default.",
-            "default": None,
-            "type": int_or_none_type,
-        },
-    ),
-    (
         ("--standardization-decay",),
         {
             "help": "Abismal uses Welford's algorithm to calculate the standard deviation of intensities. "
