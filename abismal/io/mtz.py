@@ -34,7 +34,7 @@ class MTZLoader(DataLoader):
             self.metadata_keys = [
                 "XDET",
                 "YDET",
-                "ROT",
+                #"ROT",
             ]
 
         super().__init__(len(self.metadata_keys))
