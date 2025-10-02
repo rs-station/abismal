@@ -235,7 +235,7 @@ class VariationalMergingModel(tfk.models.Model):
             tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_q])
         )
         metrics["|∇q|"] = grad_q_norm
-        grad_q = [to_indexed_slices(g) for g in grad_q] #This makes lazy adam work
+        #grad_q = [to_indexed_slices(g) for g in grad_q] #This makes lazy adam work
 
         trainable_vars = scale_vars + q_vars 
 
