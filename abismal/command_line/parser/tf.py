@@ -69,5 +69,17 @@ args_and_kwargs = (
             "action" : ListDevicesAction,
         }
     ),
+
+    (
+        (
+            "--keras-verbosity",
+        ),{
+            "help": "Keras Model.fit verbose level. See the docs for more info: "
+            "https://keras.io/2.18/api/models/model_training_apis/#fit-method",
+            'type' : int,
+            'default' : 1,
+            "choices" : [0, 1 ,2],
+        }
+    ),
 )
 

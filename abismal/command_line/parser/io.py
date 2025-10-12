@@ -45,10 +45,52 @@ args_and_kwargs=(
 
     (
         (
+            "--reference-mtz",
+        ),{
+            "type": str,
+            "default" : None,
+            "help": 'A reference mtz file which will be used to determine the reindexing operator.',
+        }
+    ),
+
+    (
+        (
             "--separate",
         ),{
         "help": "Merge the contents of each input file into a separate output file. ",
         "action": "store_true",
         }
     ),
+
+    (
+        (
+            "--separate-friedel-mates",
+        ),{
+        "help": "Separate the Friedel mates into ASU ID 0 (plus) and 1 (minus). "
+                "This option is not compatible with --separate. ",
+        "action": "store_true",
+        }
+    ),
+
+    (
+        (
+            "--isigi-cutoff",
+        ),{
+            "type": float,
+            "default" : None,
+            "help": 'Discard reflections below this I/Sigma threshold.',
+        }
+    ),
+
+    (
+        (
+            "--fractional-cell-tolerance",
+        ),{
+            "type": float,
+            "default" : None,
+            "help": 'Discard images with cells that deviate from the average or supplied cell by more than this fractional tolerance. '
+                    'This feature is only supported for DIALS inputs.',
+        }
+    ),
+
 )

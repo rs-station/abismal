@@ -1,6 +1,7 @@
 title = "Optimizer"
 description = "Arguments affecting the optimization algorithm"
 
+from abismal.optimizers.optimizer_dict import optimizer_dict
 
 args_and_kwargs=(
 
@@ -10,7 +11,17 @@ args_and_kwargs=(
         ),{
             "help": "Learning rate for Adam with default 1e-3.",
             "default": 1e-3,
-            "type": float
+            "type": float,
+        }
+    ),
+
+    (
+        (
+            "--burnin",
+        ),{
+            "help": "Boundary for learning rate decay.",
+            "default": 10_000,
+            "type": int,
         }
     ),
 
@@ -20,7 +31,7 @@ args_and_kwargs=(
         ),{
             "help": "Optionally anneal the learning rate to this value throughout training.",
             "default": None,
-            "type": float
+            "type": float,
         }
     ),
 
@@ -38,8 +49,8 @@ args_and_kwargs=(
         (
             "--beta-2",
         ),{
-            "help": "Second moment momentum parameter for Adam with default 0.999.",
-            "default": 0.999,
+            "help": "Second moment momentum parameter for Adam with default 0.9.",
+            "default": 0.9,
             "type": float,
         }
     ),
@@ -95,10 +106,12 @@ args_and_kwargs=(
 
     (
         (
-            "--use-wadam",
+            "--optimizer",
         ),{
-            "help": "Optionally use a Welfordized version of Adam.",
-            "action": 'store_true',
+            "help": "Choose the optimizer to use.",
+            "default" : 'adam', 
+            "type" : str.lower,
+            "choices": optimizer_dict.keys(),
         }
     ),
 )

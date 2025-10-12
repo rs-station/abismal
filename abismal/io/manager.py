@@ -1,5 +1,7 @@
 from reciprocalspaceship.decorators import spacegroupify,cellify
 from abismal.io import split_dataset_train_test
+import reciprocalspaceship as rs
+import tensorflow as tf
 import yaml
 
 # TODO: refactor this filetype control flow into abismal.io
@@ -7,6 +9,7 @@ _file_endings = {
     'refl' : ('.refl', '.pickle'),
     'expt' : ('.expt', '.json'),
     'stream' : ('.stream',),
+    'mtz' : ('.mtz',),
 }
 
 def _is_file_type(s, endings):
@@ -24,6 +27,9 @@ def _is_refl_file(s):
 def _is_expt_file(s):
     return _is_file_type(s, _file_endings['expt'])
 
+def _is_mtz_file(s):
+    return _is_file_type(s, _file_endings['mtz'])
+
 def _is_dials_file(s):
     return _is_refl_file(s) or _is_expt_file(s)
 
@@ -33,7 +39,10 @@ class DataManager:
     """
     def __init__(self, inputs, dmin, cell=None, spacegroup=None, 
             num_cpus=None, separate=False, wavelength=None, ray_log_level="ERROR",
-            test_fraction=0.):
+            test_fraction=0., separate_friedel_mates=False, cell_tol=None, isigi_cutoff=None):
+        if separate_friedel_mates and separate:
+            raise ValueError("Cannot combine --separate-friedel-mates and --separate")
+
         self.inputs = inputs
         self.dmin = dmin
         self.wavelength = wavelength
@@ -44,6 +53,9 @@ class DataManager:
         self.spacegroup = spacegroup
         self.test_fraction = test_fraction
         self.num_asus = 0
+        self.separate_friedel_mates = separate_friedel_mates
+        self.cell_tol = cell_tol
+        self.isigi_cutoff = isigi_cutoff
 
     def get_config(self):
         conf = {
@@ -58,6 +70,7 @@ class DataManager:
             'ray_log_level' : self.ray_log_level,
             'test_fraction' : self.test_fraction,
             'num_asus': self.num_asus,
+            'separate_friedel_mates' : self.separate_friedel_mates,
         }
         return conf
 
@@ -80,6 +93,9 @@ class DataManager:
             wavelength = parser.wavelength,
             ray_log_level = parser.ray_log_level,
             test_fraction = parser.test_fraction,
+            separate_friedel_mates = parser.separate_friedel_mates,
+            cell_tol = parser.fractional_cell_tolerance,
+            isigi_cutoff = parser.isigi_cutoff,
         )
 
     @property
@@ -115,11 +131,10 @@ class DataManager:
                     dmin=self.dmin, 
                     asu_id=asu_id, 
                     wavelength=self.wavelength,
+                    isigi_cutoff=self.isigi_cutoff,
                 )
                 if self.separate:
                     asu_id += 1
-                else:
-                    asu_id = 1
                 if self.cell is None:
                     self.cell = loader.cell
                 _data = loader.get_dataset(
@@ -139,25 +154,40 @@ class DataManager:
             data = None
             if self.separate:
                 for expt,refl in zip(expt_files, refl_files):
-                    loader = StillsLoader([expt], [refl], self.spacegroup, self.cell, self.dmin, asu_id)
+                    loader = StillsLoader([expt], [refl], self.spacegroup, self.cell, self.dmin, asu_id, cell_tol=self.cell_tol, isigi_cutoff=self.isigi_cutoff)
                     asu_id += 1
-                    _data = loader.get_dataset()
+                    _data = loader.get_dataset(num_cpus=self.num_cpus)
                     if data is None:
                         data = _data
                     else:
                         data = data.concatenate(_data)
             else:
                 loader = StillsLoader(
-                    expt_files, refl_files, self.spacegroup, self.cell, self.dmin, asu_id=asu_id
+                    expt_files, refl_files, self.spacegroup, self.cell, self.dmin, asu_id=asu_id,
+                    cell_tol=self.cell_tol, isigi_cutoff=self.isigi_cutoff,
                 )
-                data = loader.get_dataset()
-                asu_id += 1
+                data = loader.get_dataset(num_cpus=self.num_cpus)
             if self.cell is None:
                 self.cell = loader.cell
+        elif all([_is_mtz_file(f) for f in self.inputs]):
+            from abismal.io import MTZLoader
+            data = None
+            for mtz in self.inputs:
+                loader = MTZLoader(mtz, dmin=self.dmin, cell=self.cell, spacegroup=self.spacegroup, asu_id=asu_id)
+                if self.separate:
+                    asu_id += 1
+                _data = loader.get_dataset()
+                if data is None:
+                    data = _data
+                else:
+                    data = data.concatenate(_data)
+            if self.cell is None:
+                self.cell = loader.cell
+
         else:
             raise ValueError(
                 "Couldn't determine input file type. "
-                "DIALS reflection tables and CrystFEL streams are supported. "
+                "MTZs, DIALS reflection tables, and CrystFEL streams are supported. "
                 "Mixing filetypes is not supported."
             )
         if self.spacegroup is None:
@@ -167,6 +197,10 @@ class DataManager:
                 self.spacegroup = 'P1'
 
         self.num_asus = asu_id
+        if not self.separate:
+            self.num_asus = self.num_asus + 1
+        if self.separate_friedel_mates:
+            self.num_asus = 2
 
         return data
 
@@ -176,6 +210,23 @@ class DataManager:
 
         # Handle setting up the test fraction, shuffle buffer, batching, etc
         test = None
+        if self.separate_friedel_mates:
+            from abismal.symmetry import ReciprocalASU
+            rasu = ReciprocalASU(self.cell, self.spacegroup, self.dmin, anomalous=True)
+            _,isym = rs.utils.hkl_to_asu(rasu.Hunique, self.spacegroup)
+            centric = rs.utils.is_centric(rasu.Hunique, self.spacegroup)
+            fplus = (isym % 2) == 1
+            fplus = fplus | centric
+            def friedelize_datum(x, y):
+                asu_id, hkl = x[:2]
+                is_plus = rasu.gather(fplus, hkl)
+                asu_id = tf.where(is_plus[...,None], 0, 1)
+                friedelized = (
+                    (asu_id,) + x[1:],
+                    y,
+                )
+                return friedelized
+            data = data.map(friedelize_datum)
         if self.test_fraction > 0.:
             train,test = split_dataset_train_test(data, self.test_fraction)
         else:

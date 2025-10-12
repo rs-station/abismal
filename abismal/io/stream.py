@@ -15,7 +15,7 @@ from multiprocessing import cpu_count,Pool
 class StreamLoader(rs.io.crystfel.StreamLoader):
     @cellify
     @spacegroupify
-    def __init__(self, stream_file, cell=None, dmin=None, asu_id=0, wavelength=None, encoding='utf-8'):
+    def __init__(self, stream_file, cell=None, dmin=None, asu_id=0, wavelength=None, encoding='utf-8', isigi_cutoff=None):
         """
         Parameters
         ----------
@@ -34,6 +34,8 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
             Optionally override the wavelengths recorded for each event in the stream file. 
         encoding : str (optional)
             Try to override the default encoding, 'utf-8'
+        isigi_cutoff : float (optional)
+            Discard reflections with I/Sigma less than this threshold.
         """
         super().__init__(stream_file, encoding)
 
@@ -42,6 +44,7 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
         self.asu_id = asu_id
         self.wavelength = wavelength
         self.dmin = dmin
+        self.isigi_cutoff = isigi_cutoff
 
     def _get_unit_cell(self, cell=None):
         if cell is None:
@@ -60,8 +63,14 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
         SigI = peak_list[:,4]
         metadata = peak_list[:,5:]
 
-        if self.dmin is not None:
-            idx = d >= self.dmin
+        if self.dmin is not None or self.isigi_cutoff is not None:
+            idx = np.ones_like(d, dtype=bool)
+            if self.dmin is not None:
+                idx &= d >= self.dmin
+            if self.isigi_cutoff is not None:
+                isigi = I / SigI
+                idx &= isigi >= self.isigi_cutoff
+
             d = d[idx]
             hkl = hkl[idx]
             peak_list = peak_list[idx]
@@ -82,7 +91,7 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
 
     def _parse_chunk(self, *args, **kwargs):
         data = super()._parse_chunk(*args, **kwargs)
-        return [self._convert_to_tf(pl, data['wavelength']) for pl in data['peak_lists']]
+        return [self._convert_to_tf(pl, data['wavelength']) for pl in data['peak_lists'] if len(pl) > 0]
 
     def get_dataset(self, peak_list_columns=None, **ray_kwargs):
         """

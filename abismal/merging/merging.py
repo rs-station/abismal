@@ -10,6 +10,20 @@ from abismal.symmetry import Op
 import tf_keras as tfk
 from abismal.layers import Standardize
 
+def to_indexed_slices(tensor):
+    """
+    This is used to sparsify the structure factor gradients. 
+    """
+    mask = tensor != 0.
+    shape = tfk.backend.shape(tensor)
+    idx = tf.where(mask)
+    idx = tf.squeeze(idx, axis=-1)
+    result = tf.IndexedSlices(
+        tf.boolean_mask(tensor, mask),
+        idx,
+        shape,
+    )
+    return result
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class VariationalMergingModel(tfk.models.Model):
@@ -23,7 +37,7 @@ class VariationalMergingModel(tfk.models.Model):
             kl_weight=1., 
             epsilon=1e-6, 
             reindexing_ops=None, 
-            standardization_count_max=2_000,
+            standardization_decay=0.999,
             **kwargs):
         super().__init__(**kwargs)
         self.epsilon = epsilon
@@ -36,8 +50,13 @@ class VariationalMergingModel(tfk.models.Model):
         if reindexing_ops is None:
             reindexing_ops = ["x,y,z"]
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
-        self.standardize_intensity = Standardize(center=False, count_max=standardization_count_max)
-        self.standardize_metadata = Standardize(count_max=standardization_count_max)
+        self.standardize_intensity = Standardize(
+            center=False, 
+            decay=standardization_decay, 
+        )
+        self.standardize_metadata = Standardize(
+            decay=standardization_decay
+        )
 
     def get_config(self):
         ops = self.reindexing_ops
@@ -61,16 +80,19 @@ class VariationalMergingModel(tfk.models.Model):
 
     @classmethod
     def from_config(cls, config):
-        for k in ['scale_model', 'surrogate_posterior', 'likelihood']:
+        for k in ['scale_model', 'surrogate_posterior', 'likelihood', 'prior']:
             config[k] = tfk.saving.deserialize_keras_object(config[k])
         return cls(**config)
 
     def build(self, shapes):
+        if self.built:
+            return
         self.scale_model.build(shapes)
         self.standardize_intensity.build(shapes[-1])
         self.standardize_metadata.build(shapes[-3])
+        self.built = True
 
-    def standardize_inputs(self, inputs):
+    def standardize_inputs(self, inputs, training=None):
         (
             asu_id,
             hkl_in,
@@ -82,15 +104,15 @@ class VariationalMergingModel(tfk.models.Model):
         ) = inputs
         if self.standardize_intensity is not None:
             iobs = tf.ragged.map_flat_values(
-                self.standardize_intensity, iobs) 
+                self.standardize_intensity, iobs, training=training) 
             sigiobs = tf.ragged.map_flat_values(
                 self.standardize_intensity.standardize, sigiobs)
         if self.standardize_metadata is not None:
             metadata = tf.ragged.map_flat_values(
-                self.standardize_metadata, metadata)
+                self.standardize_metadata, metadata, training=training)
 
         self.add_metric(self.standardize_intensity.std, "Istd")
-        self.add_metric(self.standardize_intensity.count, "Icount")
+        #self.add_metric(self.standardize_intensity.count, "Icount") #This is only useful for debugging
 
         out = (
             asu_id,
@@ -103,11 +125,11 @@ class VariationalMergingModel(tfk.models.Model):
 
         return out
 
-    def _call_dense(self, inputs, mc_samples=None, training=None, **kwargs):
+    def call(self, inputs, mc_samples=None, training=None, **kwargs):
         if mc_samples is None:
             mc_samples = self.mc_samples
 
-        inputs = self.standardize_inputs(inputs)
+        inputs = self.standardize_inputs(inputs, training=training)
 
         (
             asu_id,
@@ -164,7 +186,13 @@ class VariationalMergingModel(tfk.models.Model):
         )
 
         # This is the mean across mc samples and observations
-        ll = tf.reduce_mean(ll) 
+        # This needs to be weighted by the number of reflections per image
+        w = tf.reduce_sum(tf.ones_like(iobs), [-1, -2], keepdims=True)
+        w = w / tf.reduce_sum(w)
+        ll = tf.reduce_sum(w * ll)
+
+        # Resample kl_div based on observations
+        kl_div = self.surrogate_posterior.rac.gather(kl_div, asu_id, hkl)
         kl_div = tf.reduce_mean(kl_div) 
 
         self.add_metric(-ll, name='NLL')
@@ -176,93 +204,6 @@ class VariationalMergingModel(tfk.models.Model):
         ipred_avg = tf.reduce_mean(ipred, axis=-1)
         return ipred_avg
 
-    def _call_sparse(self, inputs, mc_samples=None, training=None, **kwargs):
-        if mc_samples is None:
-            mc_samples = self.mc_samples
-
-        (
-            asu_id,
-            hkl_in,
-            resolution,
-            wavelength,
-            metadata,
-            iobs,
-            sigiobs,
-        ) = inputs
-
-        scale = self.scale_model(
-            inputs,
-            mc_samples=mc_samples, 
-            **kwargs
-        )
-
-        ll = None
-        ipred = None
-        hkl = None
-        kl_div = None
-
-        for op in self.reindexing_ops:
-            # Choose the best indexing solution for each image
-            _hkl = tf.ragged.map_flat_values(op, hkl_in)
-            _q = self.surrogate_posterior.distribution(asu_id.flat_values, _hkl.flat_values)
-            _p = self.prior.distribution(asu_id.flat_values, _hkl.flat_values)
-            _z = _q.sample(mc_samples)
-
-            kl_div = self.surrogate_posterior.compute_kl_terms(_q, _p, samples=_z)
-            ##We need these shenanigans to support multivariate posteriors
-            if _q.event_shape != []:
-                _ipred = _z[...,0]
-            else:
-                _ipred = _z
-
-            _kl_div = tf.RaggedTensor.from_row_splits(kl_div[...,None], scale.row_splits)
-            _ipred = tf.RaggedTensor.from_row_splits(tf.transpose(_ipred), scale.row_splits)
-
-            #_ipred  = self.surrogate_posterior.rac.gather(tf.transpose(z), asu_id, _hkl)
-            if self.surrogate_posterior.parameterization == 'structure_factor':
-                _ipred = tf.square(_ipred)
-            _ipred = _ipred * scale
-
-            _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
-            _ll = tf.reduce_mean(_ll, [-1, -2], keepdims=True)
-
-            if ll is None:
-                ipred = _ipred
-                ll = _ll
-                hkl = _hkl
-                kl_div = _kl_div
-            else:
-                idx =  _ll > ll
-                ipred = tf.where(idx, _ipred, ipred)
-                ll = tf.where(idx, _ll, ll)
-                hkl = tf.where(idx, _hkl, hkl)
-                kl_div = tf.where(idx, _kl_div, kl_div)
-
-        if training:
-            self.surrogate_posterior.register_seen(asu_id.flat_values, hkl.flat_values)
-
-        self.likelihood.register_metrics(
-            ipred.flat_values, 
-            iobs.flat_values, 
-            sigiobs.flat_values,
-        )
-
-        # This is the mean across mc samples and observations
-        ll = tf.reduce_mean(ll) 
-        kl_div = tf.reduce_mean(kl_div) 
-
-        self.add_metric(-ll, name='NLL')
-        self.add_loss(-ll)
-
-        self.add_metric(kl_div, name='KL')
-        self.add_loss(self.kl_weight * kl_div)
-
-        ipred_avg = tf.reduce_mean(ipred, axis=-1)
-        return ipred_avg
-
-    def call(self, inputs, mc_samples=None, training=None, **kwargs):
-        #return self._call_sparse(inputs, mc_samples, training, **kwargs)
-        return self._call_dense(inputs, mc_samples, training, **kwargs)
 
     #For production with super nan avoiding powers
     @tf.function
@@ -289,11 +230,12 @@ class VariationalMergingModel(tfk.models.Model):
         metrics["|∇s|"] = grad_s_norm
 
         q_vars = self.surrogate_posterior.trainable_variables
-        grad_q= tape.gradient(loss, q_vars)
+        grad_q = tape.gradient(loss, q_vars)
         grad_q_norm = tf.sqrt(
             tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_q])
         )
         metrics["|∇q|"] = grad_q_norm
+        #grad_q = [to_indexed_slices(g) for g in grad_q] #This makes lazy adam work
 
         trainable_vars = scale_vars + q_vars 
 

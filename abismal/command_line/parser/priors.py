@@ -2,6 +2,7 @@ title = "Priors"
 description = "Arguments governing the prior distributions"
 
 from abismal.command_line.parser.custom_types import list_of_ints,list_of_ops,list_of_floats
+from abismal.scaling.scaling import ImageScaler
 
 args_and_kwargs = (
     (
@@ -60,6 +61,30 @@ args_and_kwargs = (
                     'For example, --reindexing-ops "x,y,z;-x,-y,-z". ',
             "default": None,
             "type": list_of_ops,
+        }
+    ),
+
+    (
+        (
+            "--prior-distribution",
+        ),{
+            "help": "The prior to use for structure factors or intensities.  "
+                    "Wilson is the defalt",
+            "default": 'Wilson',
+            "type": str.lower,
+            "choices" : ["wilson", "normal"],
+        }
+    ),
+
+    (
+        (
+            "--scale-prior-distribution",
+        ),{
+            "help": "The scale prior to use.  "
+                    "Cauchy is the defalt",
+            "default": 'Cauchy',
+            "type": str.lower,
+            "choices" : ImageScaler.prior_dict.keys(),
         }
     ),
 )

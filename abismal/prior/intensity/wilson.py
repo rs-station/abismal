@@ -39,7 +39,13 @@ class WilsonPrior(PriorBase):
         config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
         return cls(**config)
 
-    def distribution(self, asu_id, hkl):
+    def distribution(self, asu_id=None, hkl=None):
+        if asu_id is None:
+            centric = self.rac.centric
+            epsilon = self.rac.epsilon
+            sigma = self.sigma
+            p = WilsonDistribution(centric, epsilon, sigma)
+            return p
         centric = self.rac.gather(self.rac.centric, asu_id, hkl)
         epsilon = self.rac.gather(self.rac.epsilon, asu_id, hkl)
         sigma = self.sigma
@@ -48,4 +54,6 @@ class WilsonPrior(PriorBase):
         p = WilsonDistribution(centric, epsilon, sigma)
         return p
 
+    def flat_distribution(self):
+        return self.distribution()
 

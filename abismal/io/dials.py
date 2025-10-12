@@ -5,21 +5,24 @@ import pandas as pd
 import gemmi
 import tensorflow as tf
 from .loader import DataLoader
+from reciprocalspaceship.io.common import ray_context
 
 
 
 class StillsLoader(DataLoader):
     """ DIALS stills loader """
-    def __init__(self, expt_files, refl_files, spacegroup=None, cell=None, dmin=None, asu_id=0, include_eo=True):
+    def __init__(self, expt_files, refl_files, spacegroup=None, cell=None, dmin=None, asu_id=0, include_eo=True, cell_tol=None, isigi_cutoff=None):
         self.include_eo = include_eo
         if include_eo:
-            super().__init__(5)
+            super().__init__(6)
         else:
-            super().__init__(2)
+            super().__init__(3)
         from dxtbx.model.experiment_list import ExperimentListFactory  #defer defer defer defer
         self.expt_files = expt_files
         self.refl_files = refl_files
         self.dmin = dmin
+        self.cell_tol = cell_tol
+        self.isigi_cutoff = isigi_cutoff
         self.asu_id = asu_id
 
         elist_list = [ExperimentListFactory.from_json_file(expt_file, check_format=False) for expt_file in self.expt_files]
@@ -29,8 +32,6 @@ class StillsLoader(DataLoader):
         if self.spacegroup is None:
             self.spacegroup = self.get_space_group(elist_list)
 
-        self.mean = None
-        self.std  = None
 
     @staticmethod
     def get_average_cell(elist_list):
@@ -91,17 +92,46 @@ class StillsLoader(DataLoader):
         ds = tf.data.Dataset.from_tensor_slices(ragged)
         return ds
 
-    def get_dataset(self):
+    def get_dataset(self, num_cpus=1, **ray_kwargs):
         """
         Convert dials monochromatic stills files to a tf.data.Dataset.
         """
-        def data_gen():
-            for expt,refl in list(zip(self.expt_files, self.refl_files)):
-                data = self.dials_to_ragged(expt, refl)
-                yield data
-        return tf.data.Dataset.from_generator(data_gen, output_signature=self.signature).unbatch()
+        if num_cpus == 1:
+            data = []
+            for expt,refl in zip(self.expt_files, self.refl_files):
+                datum = self.dials_to_ragged(
+                    expt, refl, self.cell, self.spacegroup, self.dmin, self.asu_id, self.include_eo, self.cell_tol, self.isigi_cutoff
+                )
+                data.append(datum)
+        else:
+            with ray_context(num_cpus=num_cpus, **ray_kwargs) as ray:
+                @ray.remote
+                def parse_expt_refl(*args):
+                    return StillsLoader.dials_to_ragged(*args)
 
-    def dials_to_ragged(self, expt_file, refl_file):
+                result_ids = []
+                for expt,refl in zip(self.expt_files, self.refl_files):
+                    result_ids.append(
+                        parse_expt_refl.remote(
+                            expt, refl, self.cell, self.spacegroup, self.dmin, self.asu_id, self.include_eo, self.cell_tol, self.isigi_cutoff
+                        )
+                    )
+
+                data = ray.get(result_ids)
+
+
+        out = None
+        for datum in data:
+            datum = tf.data.Dataset.from_tensors(datum)
+            datum = datum.unbatch()
+            if out is None:
+                out = datum
+            else:
+                out = out.concatenate(datum)
+        return out
+
+    @staticmethod
+    def dials_to_ragged(expt_file, refl_file, cell, spacegroup, dmin, asu_id, include_eo=True, cell_tol=None, isigi_cutoff=None):
         """
         Convert dials monochromatic stills files to ragged tensors.
         """
@@ -126,14 +156,26 @@ class StillsLoader(DataLoader):
         d = np.array(table['d'], dtype='float32')
         wavelength = np.array(table['wavelength'], dtype='float32')
         dQ = np.array(Q - Qobs, dtype='float32')
-        xy = np.array(Svec, dtype='float32')[:,:2]
+        s1 = np.array(Svec, dtype='float32')
+        xy = s1 #actually xyz
         batch = table['id'].as_numpy_array()
-        idx = ~self.spacegroup.operations().systematic_absences(h)
-        if self.dmin is not None:
-            idx &= d >= self.dmin
+        idx = ~spacegroup.operations().systematic_absences(np.array(h, dtype='int32'))
 
         I  = np.array(table['intensity.sum.value'], dtype='float32')
         SigI  = np.array(np.sqrt(table['intensity.sum.variance']), dtype='float32')
+
+        if dmin is not None:
+            idx &= d >= dmin
+
+        if isigi_cutoff is not None:
+            isigi = I / SigI
+            idx &= isigi >= isigi_cutoff
+
+        if cell_tol is not None:
+            ref_cell = np.array(cell.parameters)
+            cells = np.array([C.get_unit_cell().parameters() for C in elist.crystals()])
+            frac_diff = np.abs(cells - ref_cell) / ref_cell
+            idx &= np.all(frac_diff <= cell_tol, axis=1)[batch]
 
         hkl = hkl[idx]
         d = d[idx, None]
@@ -143,20 +185,12 @@ class StillsLoader(DataLoader):
         batch = batch[idx]
         I = I[idx, None]
         SigI = SigI[idx, None]
-        if self.include_eo:
+        if include_eo:
             metadata = np.concatenate((xy, dQ), axis=-1)
         else:
             metadata = xy
 
-        if self.mean is None:
-            self.mean = (metadata.mean(0), I.mean(0), SigI.mean(0))
-            self.std  = (metadata.std(0), I.std(0), SigI.std(0))
-
-        #TODO: why is this still necessary even with Welford standardization???
-        #metadata = (metadata - self.mean[0]) / self.std[0]
-        #I = I / self.std[1]
-        #SigI = SigI / self.std[1]
-
+        batch = np.unique(batch, return_inverse=True)[1].astype(batch.dtype)
         hkl = tf.RaggedTensor.from_value_rowids(hkl, batch)
         d = tf.RaggedTensor.from_value_rowids(d, batch)
         wavelength = tf.RaggedTensor.from_value_rowids(wavelength, batch)
@@ -166,7 +200,7 @@ class StillsLoader(DataLoader):
         )
         I = tf.RaggedTensor.from_value_rowids(I, batch)
         SigI = tf.RaggedTensor.from_value_rowids(SigI, batch)
-        asu = tf.ones_like(I, dtype='int32') * self.asu_id
+        asu = tf.ones_like(I, dtype='int32') * asu_id
 
         data = ((asu, hkl, d, wavelength, metadata, I, SigI), (I,))
 

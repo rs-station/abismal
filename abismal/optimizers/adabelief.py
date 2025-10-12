@@ -1,11 +1,9 @@
 import tensorflow.compat.v2 as tf
 import tensorflow_probability as tfp
+import tf_keras as tfk
 from abismal.optimizers.base import AbismalOptimizer
 
-import tf_keras as tfk
-
-
-class WAdam(AbismalOptimizer):
+class AdaBelief(AbismalOptimizer):
     def __init__(
         self,
         learning_rate=0.001,
@@ -20,7 +18,7 @@ class WAdam(AbismalOptimizer):
         ema_momentum=0.99,
         ema_overwrite_frequency=None,
         jit_compile=True,
-        name="WAdam",
+        name="AdaBelief",
         **kwargs
     ):
         super().__init__(
@@ -36,10 +34,9 @@ class WAdam(AbismalOptimizer):
             ema_momentum=0.99,
             ema_overwrite_frequency=None,
             jit_compile=True,
-            name="WAdam",
+            name=name,
             **kwargs
         )
-
 
     def update_step(self, gradient, variable):
         """Update step given gradient and the associated model variable."""
@@ -59,7 +56,7 @@ class WAdam(AbismalOptimizer):
         g = gradient
         delta = g - m
         m.assign_add((1. - beta_1) * delta)
-        v.assign_add((beta_2 - 1.) * v + (1. - beta_2) * delta * (g - m))
+        v.assign_add((beta_2 - 1.) * v + (1. - beta_2) * tf.square(delta))
         variable.assign_sub((m * alpha) / (tf.sqrt(v) + self.epsilon))
 
 

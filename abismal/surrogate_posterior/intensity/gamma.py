@@ -1,4 +1,5 @@
 from abismal.surrogate_posterior import IntensityPosteriorBase
+from abismal.surrogate_posterior.gamma import GammaPosteriorBase
 import numpy as np
 import tensorflow as tf
 from tensorflow_probability import distributions as tfd
@@ -10,74 +11,31 @@ import tf_keras as tfk
 
 
 @tfk.saving.register_keras_serializable(package="abismal")
-class GammaPosterior(IntensityPosteriorBase):
-    def __init__(self, rac, rate_init, conc_init,  eps=1e-12, concentration_min=0., **kwargs):
-        super().__init__(rac, **kwargs)
-        self.rac = rac
-
-        #For serialization
-        self._rate_init = rate_init
-        self._conc_init = conc_init
-
-        self.rate = tfu.TransformedVariable(
-            rate_init,
-            tfb.Chain([
-                tfb.Shift(eps), 
-                tfb.Exp(),
-            ]),
-        )
-
-        #Concentration should remain above one to prevent change in curvature
-        self.concentration = tfu.TransformedVariable(
-            conc_init,
-            tfb.Chain([
-                tfb.Shift(concentration_min + eps), 
-                tfb.Exp(),
-            ]),
-        )
-        self.built=True
-
-    def get_config(self):
-        config = super().get_config()
-        config.update({
-            'rac' : self.rac,
-            'epsilon' : self.epsilon,
-            'rate_init' : self._rate_init,
-            'conc_init' : self._conc_init,
-        })
-        return config
-
-    def distribution(self, asu_id, hkl):
-        concentration = self.rac.gather(self.concentration, asu_id, hkl)
-        rate = self.rac.gather(self.rate, asu_id, hkl)
-        q = tfd.Gamma(concentration, rate)
-        return q
-
-    def flat_distribution(self):
-        return tfd.Gamma(self.concentration, self.rate)
-
-# This is experimental still. 
-    def get_flat_fsigf(q, eps=1e-6):
+class GammaPosterior(GammaPosteriorBase, IntensityPosteriorBase):
+    """
+    an intensity surrogate posterior parameterized by a gamma distribution.
+    """
+    def get_flat_fsigf(self):
         """
-        Compute the mean and standard deviation of the square root of a gamma distribution.
+        the square root of a gamma distribution is the nakagami distribution. 
+        compute the mean and standard deviation of the square root of a gamma distribution.
+        see [https://en.wikipedia.org/wiki/nakagami_distribution#random_variate_generation]. 
         """
-        alpha = q.concentration
-        beta  = q.rate
-        omega = alpha / beta
+        q = self.flat_distribution()
+        conc = q.concentration
+        rate  = q.rate
 
-        log_mean_sqrt_beta = tf.math.lgamma(alpha + 0.5) - tf.math.lgamma(alpha) #log(mean * beta**0.5)
-        mean = tf.math.exp(log_mean_sqrt_beta) / tf.sqrt(beta)
+        # log_gamma(conc + 0.5) - log_gamma(conc)
+        ldiff = -tfm.log_gamma_difference(0.5, conc)
 
-        num = alpha - tf.math.exp(2.* log_mean_sqrt_beta)
-        var = tf.where(
-            alpha > 1e4,
-            0.25/beta, #The limit is 0.25 for num
-            num/beta,
+        mean = tf.math.exp(
+            ldiff - 0.5*tf.math.log(rate)
         )
-
+        var = (conc - tf.math.exp(2.* ldiff)) / rate
+        std = tf.math.sqrt(var)
+        var = tf.where(var <= 0., self.epsilon * self.epsilon, var)
         std = tf.math.sqrt(var)
         return mean,std
-
 
 
 if __name__=="__main__":

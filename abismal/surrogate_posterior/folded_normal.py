@@ -13,11 +13,14 @@ class FoldedNormalPosteriorBase(object):
     """
     A base class for creating folded normal posteriors. 
     """
-    def __init__(self, rac, loc_init, scale_init, epsilon=1e-12, **kwargs):
+    def __init__(self, rac, loc_init=None, scale_init=None, epsilon=1e-12, **kwargs):
         super().__init__(rac, epsilon=epsilon, **kwargs)
         self.low = self.epsilon
-        self._loc_init = loc_init
-        self._scale_init = scale_init
+
+        if loc_init is None:
+            loc_init = tf.ones(rac.asu_size)
+        if scale_init is None:
+            scale_init = 0.01 * tf.ones(rac.asu_size)
 
         self.loc = tfu.TransformedVariable(
             loc_init,
@@ -32,14 +35,6 @@ class FoldedNormalPosteriorBase(object):
             ]),
         )
         self.built = True
-
-    def get_config(self):
-        config = super().get_config()
-        config.update({
-            'loc_init' : self._loc_init,
-            'scale_init' : self._scale_init,
-        })
-        return config
 
     def _distribution(self, loc, scale, low):
         f = FoldedNormal(

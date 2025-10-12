@@ -53,9 +53,14 @@ class PhenixRunner(tfk.callbacks.Callback):
         self.eff_file = eff_file
         self.epoch_stride = epoch_stride
         self.output_directory = abspath(output_directory)
+        self.processes = []
 
         if not exists(self.output_directory):
             mkdir(output_directory)
+
+    def on_train_end(self, logs=None):
+        for p in self.processes:
+            p.wait()
 
     def on_epoch_end(self, epoch, logs=None):
         if self.eff_file is not None and (epoch + 1) % self.epoch_stride == 0:
@@ -84,4 +89,5 @@ class PhenixRunner(tfk.callbacks.Callback):
                 stdout=o,
 		env=phenix_env,
             )
+            self.processes.append(p)
 
