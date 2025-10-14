@@ -5,7 +5,6 @@ import pandas as pd
 import gemmi
 import tensorflow as tf
 from .loader import DataLoader
-from reciprocalspaceship.io.common import ray_context
 
 
 
@@ -104,6 +103,7 @@ class StillsLoader(DataLoader):
                 )
                 data.append(datum)
         else:
+            from abismal.io.common import ray_context
             with ray_context(num_cpus=num_cpus, **ray_kwargs) as ray:
                 @ray.remote
                 def parse_expt_refl(*args):
