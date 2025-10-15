@@ -121,11 +121,11 @@ class DataManager:
     def get_dataset(self):
         asu_id = 0
         if all([_is_stream_file(f) for f in self.inputs]):
-            from abismal.io import StreamLoader
+            from abismal.io import StreamDataLoader
             data = None
 
             for stream_file in self.inputs:
-                loader = StreamLoader(
+                loader = StreamDataLoader(
                     stream_file, 
                     cell=self.cell, 
                     dmin=self.dmin, 
