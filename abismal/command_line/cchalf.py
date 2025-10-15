@@ -40,11 +40,11 @@ def main():
     parser = parser.parse_args()
     refls = []
 
-
     for repeat in range(parser.repeats):
         dm = DataManager.from_file(parser.datamanager_yml)
         dm.test_fraction = 0.5
-        half1,half2 = dm.get_train_test_splits()
+        with tf.device("/CPU:0"):
+            half1,half2 = dm.get_train_test_splits()
 
         for half_id,half in enumerate([half1, half2]):
             half = half.cache()

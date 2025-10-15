@@ -63,7 +63,8 @@ def run_abismal(parser, start_time=None):
 
     logger.info("Configuring data input")
     dm = DataManager.from_parser(parser)
-    train, test = dm.get_train_test_splits()
+    with tf.device("/CPU:0"):
+        train, test = dm.get_train_test_splits()
     dm_file = parser.out_dir + "/datamanager.yml"
     dm.to_file(dm_file)
     logger.info(f"Data manager config written to: {dm_file}")
