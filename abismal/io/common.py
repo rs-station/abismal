@@ -45,3 +45,4 @@ def ray_context(log_level="DEBUG", **ray_kwargs):
     try:
         yield ray
     finally:
+        ray.shutdown()
