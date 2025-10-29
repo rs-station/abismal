@@ -1,18 +1,21 @@
 #/usr/bin/env cctbx.python
+import mmap
 import numpy as np
 import argparse
 import reciprocalspaceship as rs
 import pandas as pd
 import gemmi
 import tensorflow as tf
+from abismal.io.common import check_for_ray,ray_context
 from abismal.io.loader import DataLoader
+from abismal.io.crystfel import StreamLoaderBase
 from reciprocalspaceship.decorators import spacegroupify,cellify
 from multiprocessing import cpu_count,Pool
 
 
 
 
-class StreamLoader(rs.io.crystfel.StreamLoader):
+class StreamLoader(StreamLoaderBase):
     @cellify
     @spacegroupify
     def __init__(self, stream_file, cell=None, dmin=None, asu_id=0, wavelength=None, encoding='utf-8', isigi_cutoff=None):
@@ -71,6 +74,9 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
                 isigi = I / SigI
                 idx &= isigi >= self.isigi_cutoff
 
+            if not idx.any():
+                return None
+
             d = d[idx]
             hkl = hkl[idx]
             peak_list = peak_list[idx]
@@ -91,7 +97,9 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
 
     def _parse_chunk(self, *args, **kwargs):
         data = super()._parse_chunk(*args, **kwargs)
-        return [self._convert_to_tf(pl, data['wavelength']) for pl in data['peak_lists'] if len(pl) > 0]
+        result = [self._convert_to_tf(pl, data['wavelength']) for pl in data['peak_lists'] if len(pl) > 0]
+        result = [pl for pl in result if pl is not None]
+        return result
 
     def get_dataset(self, peak_list_columns=None, **ray_kwargs):
         """
@@ -124,6 +132,98 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
 
         return tf.data.Dataset.from_generator(data_gen, output_signature=self.signature).unbatch()
 
+    def read_crystfel(
+        self,
+        wavelength=None, chunk_metadata_keys=None,
+        crystal_metadata_keys=None,
+        peak_list_columns=None,
+        use_ray=True,
+        num_cpus=None,
+        address="local",
+        **ray_kwargs,
+    ) -> list:
+        """
+        Parse a CrystFEL stream file using multiple processors. Parallelization depends on the ray library (https://www.ray.io/).
+        If ray is unavailable, this method falls back to serial processing on one CPU. Ray is not a dependency of reciprocalspaceship
+        and will not be installed automatically. Users must manually install it prior to calling this method.
+
+        PARAMETERS
+        ----------
+        wavelength : float
+            Override the wavelength with this value. Wavelength is used to compute Ewald offsets.
+        chunk_metadata_keys : list
+            A list of metadata_keys which will be returned in the resulting dictionaries under the 'chunk_metadata' entry.
+            A list of possible keys is stored as stream_loader.available_chunk_metadata_keys
+        crytal_metadata_keys : list
+            A list of metadata_keys which will be returned in the resulting dictionaries under the 'crystal_metadata' entry.
+            A list of possible keys is stored as stream_loader.available_crystal_metadata_keys
+        peak_list_columns : list
+            A list of columns to include in the peak list numpy arrays.
+            A list of possible column names is stored as stream_loader.available_column_names.
+        use_ray : bool(optional)
+            Whether or not to use ray for parallelization.
+        num_cpus : int (optional)
+            The number of cpus for ray to use.
+        ray_kwargs : optional
+            Additional keyword arguments to pass to [ray.init](https://docs.ray.io/en/latest/ray-core/api/doc/ray.init.html#ray.init).
+
+        RETURNS
+        -------
+        chunks : list
+            A list of dictionaries containing the per-chunk data. The 'peak_lists' item contains a
+            numpy array with shape n x 14 with the following information.
+                h, k, l, I, SIGI, peak, background, fs/px, ss/px, s1x, s1y, s1z,
+                ewald_offset, angular_ewald_offset
+        """
+        if peak_list_columns is not None:
+            peak_list_columns = [self.peak_list_columns[s] for s in peak_list_columns]
+
+        # Check whether ray is available
+        use_ray = False
+        if num_cpus > 1:
+            use_ray = check_for_ray()
+
+        with open(self.filename, "r") as f:
+            memfile = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+            beginnings_and_ends = zip(
+                self.block_regex_bytes["chunk_begin"].finditer(memfile),
+                self.block_regex_bytes["chunk_end"].finditer(memfile),
+            )
+            if use_ray:
+                with ray_context(num_cpus=num_cpus, **ray_kwargs) as ray:
+
+                    @ray.remote
+                    def parse_chunk(loader: StreamLoaderBase, *args):
+                        return loader._parse_chunk(*args)
+
+                    result_ids = []
+                    for begin, end in beginnings_and_ends:
+                        result_ids.append(
+                            parse_chunk.remote(
+                                self,
+                                begin.start(),
+                                end.end(),
+                                wavelength,
+                                chunk_metadata_keys,
+                                crystal_metadata_keys,
+                                peak_list_columns,
+                            )
+                        )
+
+                    for result_id in result_ids:
+                        yield ray.get(result_id)
+
+            else:
+                for begin, end in beginnings_and_ends:
+                    yield self._parse_chunk(
+                        begin.start(),
+                        end.end(),
+                        wavelength,
+                        chunk_metadata_keys,
+                        crystal_metadata_keys,
+                        peak_list_columns,
+                    )
+
     @staticmethod
     def get_signature_from_datum(datum):
         """Work out the proper signature for creating a dataset from an example"""
@@ -142,19 +242,3 @@ class StreamLoader(rs.io.crystfel.StreamLoader):
         signature = tf.nest.map_structure(to_ragged_spec, datum)
         return signature
 
-if __name__ == '__main__':
-    file = "/mnt/raid/data/xtal/abismal_examples/cxidb_62/all-amb.stream.bz2"
-
-    dmin = 1.5
-    sg = "P 65"
-    loader = StreamLoader(file, dmin=dmin, spacegroup=sg)
-    ds = loader.get_dataset()
-    count_max = 100
-    count = 0
-    for datum in ds:
-        count += 1
-        if count > count_max:
-            break
-
-    from IPython import embed
-    embed(colors='linux')

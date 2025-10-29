@@ -70,12 +70,10 @@ def run_abismal(parser, start_time=None):
 
     if test is not None:
         logger.info("There is a test set for validation")
-        test = test.cache()
         if parser.validation_steps is not None:
             test = test.repeat()
         test = test.ragged_batch(parser.batch_size)
         test = test.prefetch(AUTOTUNE)
-    train = train.cache()
     if parser.steps_per_epoch is not None:
         train = train.repeat()
     if parser.shuffle_buffer_size > 0:

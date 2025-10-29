@@ -207,6 +207,7 @@ class DataManager:
     def get_train_test_splits(self, data=None):
         if data is None:
             data = self.get_dataset()
+            data = data.cache()
 
         # Handle setting up the test fraction, shuffle buffer, batching, etc
         test = None
@@ -227,6 +228,7 @@ class DataManager:
                 )
                 return friedelized
             data = data.map(friedelize_datum)
+
         if self.test_fraction > 0.:
             train,test = split_dataset_train_test(data, self.test_fraction)
         else:
