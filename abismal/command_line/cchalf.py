@@ -47,7 +47,6 @@ def main():
         half1,half2 = dm.get_train_test_splits()
 
         for half_id,half in enumerate([half1, half2]):
-            half = half.cache()
             if parser.steps_per_epoch is not None:
                 half = half.repeat()
             half = half.ragged_batch(parser.batch_size)
