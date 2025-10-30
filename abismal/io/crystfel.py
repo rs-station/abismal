@@ -361,6 +361,9 @@ class StreamLoaderBase(object):
                 result[k] = v
         return result
 
+    def filter_peak_list(self, data):
+        return False
+
     def _parse_chunk(
         self,
         start,
@@ -392,6 +395,8 @@ class StreamLoaderBase(object):
                 xdata = data[xmatch.start() : xmatch.end()]
                 if header is None:
                     header = data[: xmatch.start()]
+                if self.filter_peak_list(xdata):
+                    continue
 
                 # crystal_metadata.append(self._extract_crystal_metadata(xdata))
                 A = (
