@@ -132,6 +132,7 @@ class DataManager:
                     asu_id=asu_id, 
                     wavelength=self.wavelength,
                     isigi_cutoff=self.isigi_cutoff,
+                    cell_tol=self.cell_tol,
                 )
                 if self.separate:
                     asu_id += 1

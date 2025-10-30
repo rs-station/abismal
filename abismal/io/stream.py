@@ -18,7 +18,7 @@ from multiprocessing import cpu_count,Pool
 class StreamLoader(StreamLoaderBase):
     @cellify
     @spacegroupify
-    def __init__(self, stream_file, cell=None, dmin=None, asu_id=0, wavelength=None, encoding='utf-8', isigi_cutoff=None):
+    def __init__(self, stream_file, cell=None, dmin=None, asu_id=0, wavelength=None, encoding='utf-8', isigi_cutoff=None, cell_tol=None):
         """
         Parameters
         ----------
@@ -41,13 +41,25 @@ class StreamLoader(StreamLoaderBase):
             Discard reflections with I/Sigma less than this threshold.
         """
         super().__init__(stream_file, encoding)
-
+        self.cell_tol = cell_tol
         self.signature = None
         self.cell = self._get_unit_cell(cell)
         self.asu_id = asu_id
         self.wavelength = wavelength
         self.dmin = dmin
         self.isigi_cutoff = isigi_cutoff
+
+    def filter_peak_list(self, data):
+        if self.cell_tol is None:
+            return False
+        cell = self.re_crystal_metadata['Cell parameters'].findall(data)[0].split()
+        cell = np.array([float(cell[i]) for i in (0, 1, 2, 4, 5, 6)])
+        cell[:3] *= 10.
+        target = self.cell.parameters
+        r = np.abs(cell - target) / target
+        if (r <= self.cell_tol).all():
+            return False
+        return True
 
     def _get_unit_cell(self, cell=None):
         if cell is None:
