@@ -41,4 +41,5 @@ class AnomalousPeakFinder(PhenixRunner):
                 stdout=o,
                 env=phenix_env,
             )
+            self.processes.append(p)
 
