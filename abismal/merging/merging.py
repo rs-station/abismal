@@ -271,4 +271,130 @@ class VariationalMergingModel(tfk.models.Model):
         # Return a dict mapping metric names to current value
         return metrics
 
+class EmpiricalMergingModel(tfk.layers.Layer):
+    def __init__(self, rac, eps=1e-6, **kwargs):
+        super().__init__(**kwargs)
+        self.eps = eps
+        self.rac = rac
+
+    def build(self, shape):
+        self.mean = self.add_weight(
+            shape=self.rac.asu_size,
+            initializer='zeros',
+            dtype=tf.float32,
+            trainable=False,
+            name='mean',
+        )
+        self.M2 = self.add_weight(
+            shape=self.rac.asu_size,
+            initializer='zeros',
+            dtype=tf.float32,
+            trainable=False,
+            name='M2',
+        )
+        self.S0 = self.add_weight(
+            shape=self.rac.asu_size,
+            initializer='zeros',
+            dtype=tf.float32,
+            trainable=False,
+            name='S0',
+        )
+        self.count = self.add_weight(
+            shape=self.rac.asu_size,
+            initializer='zeros',
+            dtype=tf.int32,
+            trainable=False,
+            name='count',
+        )
+
+    @property
+    def intensity(self):
+        loc = tf.math.reduce_mean(self.mean)
+        idx = self.M2 <= self.eps
+        return tf.where(
+            idx,
+            loc,
+            self.mean,
+        )
+
+    @property
+    def uncertainty(self):
+        default = tf.math.reduce_std(self.mean)
+        scale = tf.sqrt(tf.math.divide_no_nan(self.M2, self.S0))
+        idx = self.M2 <= self.eps
+        return tf.where(
+            idx,
+            default,
+            scale,
+        )
+
+    def stderr(self):
+        return tf.sqrt(tf.math.divide_no_nan(1., self.S0))
+
+    def update(self, asu_id, hkl, I, SigI):
+        miller_ids = self.rac._miller_ids(asu_id, hkl)
+
+        #This shouldn't be necessary but is with the stream loader right now
+        idx = miller_ids != -1
+        asu_id = asu_id[idx]
+        miller_ids = miller_ids[idx]
+        hkl = hkl[idx]
+        I = I[idx] 
+        SigI = SigI[idx]
+
+        SigI = tf.squeeze(SigI, -1)
+        I = tf.squeeze(I, -1)
+        w = tf.math.reciprocal(tf.square(SigI))
+
+        S0_b = tf.scatter_nd(miller_ids[:,None], w, (self.rac.asu_size,))
+        mean_b = tf.math.divide_no_nan(
+            tf.scatter_nd(miller_ids[:,None], w * I, (self.rac.asu_size,)),
+            S0_b,
+        )
+        M2_b = tf.scatter_nd(
+            miller_ids[:,None],
+            w * tf.square(I - tf.gather(mean_b, miller_ids)),
+            (self.rac.asu_size,),
+        )
+        count = tf.scatter_nd(
+            miller_ids[:,None],
+            tf.ones_like(miller_ids),
+            (self.rac.asu_size,),
+        )
+        idx = (self.S0 == 0.0)
+        mean_new = tf.where(
+            idx,
+            mean_b,
+            tf.math.divide_no_nan(self.S0 * self.mean + S0_b * mean_b, self.S0 + S0_b),
+        )
+        M2_new = tf.where(
+            idx,
+            M2_b,
+            self.M2 + M2_b + self.S0 * (self.mean - mean_new) ** 2 + S0_b * (mean_b - mean_new) ** 2,
+        )
+        S0_new = tf.where(
+            idx,
+            S0_b,
+            self.S0 + S0_b,
+        )
+
+        idx = (count > 0)
+        self.mean.assign(
+            tf.where(idx, mean_new, self.mean),
+        )
+        self.M2.assign(
+            tf.where(idx, M2_new, self.M2),
+        )
+        self.S0.assign(
+            tf.where(idx, S0_new, self.S0),
+        )
+        self.count.assign_add(count)
+
+    def call(self, batch, training=None):
+        asu_id = batch[0].flat_values
+        hkl = batch[1].flat_values
+        I = batch[-2].flat_values
+        SigI = batch[-1].flat_values
+        if training:
+            self.update(asu_id, hkl, I, SigI)
 

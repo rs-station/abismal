@@ -8,6 +8,7 @@ import tf_keras as tfk
 from abismal.symmetry import Op,ReciprocalASUCollection
 from abismal.prior.base import PriorBase
 
+
 @tfk.saving.register_keras_serializable(package="abismal")
 class NormalPrior(PriorBase):
     """Normally distributed prior."""
@@ -24,6 +25,17 @@ class NormalPrior(PriorBase):
         self.loc = loc
         self.scale = scale
         self.built = True #This is always true
+
+    @classmethod
+    def from_rac_data(cls, rac, data, maxiter=None):
+        from abismal.merging.merging import EmpiricalMergingModel
+        merger = EmpiricalMergingModel(rac)
+        from tqdm import tqdm
+        for i,(x,y) in tqdm(enumerate(data)):
+            merger(x, training=True)
+            if maxiter is not None and i >= maxiter:
+                break
+        return cls(rac, merger.intensity, merger.uncertainty)
 
     def get_config(self):
         config = super().get_config()

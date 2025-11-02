@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#/usr/bin/env python
 
 
 def main():
@@ -138,6 +138,20 @@ def run_abismal(parser, start_time=None):
             from abismal.prior.normal import MultivariateNormalPrior
 
             prior = MultivariateNormalPrior(rac)
+    elif parser.prior_distribution == "empirical":
+        from abismal.prior.normal import NormalPrior
+        maxiter=None
+        if parser.steps_per_epoch is not None:
+            maxiter = 100
+        prior = NormalPrior.from_rac_data(rac, train, maxiter=maxiter)
+        p = prior.flat_distribution()
+        loc_init = tf.abs(p.loc)
+        scale_init = parser.init_scale * loc_init
+
+        #from tensorflow_probability import distributions as tfd
+        #J = tfd.TruncatedNormal(prior.loc, prior.scale, 0., tf.abs(prior.loc) + 10_000 * prior.scale)
+        #loc_init = J.mean()
+        #scale_init = parser.init_scale * J.stddev()
 
     posterior_kwargs = {
         "rac": rac,
