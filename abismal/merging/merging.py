@@ -147,18 +147,21 @@ class VariationalMergingModel(tfk.models.Model):
             **kwargs
         )
 
-        q = self.surrogate_posterior.flat_distribution()
-        p = self.prior.flat_distribution()
-        z = q.sample(mc_samples)
-        kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
-
         ll = None
         ipred = None
         hkl = None
+        kl_div = None
 
         for op in self.reindexing_ops:
             _hkl = tf.ragged.map_flat_values(op, hkl_in)
-            _ipred = self.surrogate_posterior.rac.gather(tf.transpose(z), asu_id, _hkl)
+            q = self.surrogate_posterior.distribution(asu_id.flat_values, _hkl.flat_values)
+            p = self.prior.distribution(asu_id.flat_values, _hkl.flat_values)
+            z = q.sample(mc_samples)
+            _kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
+ 
+            _kl_div = tf.RaggedTensor.from_row_splits(_kl_div[...,None], iobs.row_splits)
+            _ipred = tf.RaggedTensor.from_row_splits(tf.transpose(z), iobs.row_splits)
+
             if self.surrogate_posterior.parameterization == 'structure_factor':
                 _ipred = tf.square(_ipred)
             _ipred = _ipred * scale
@@ -170,11 +173,13 @@ class VariationalMergingModel(tfk.models.Model):
                 ipred = _ipred
                 ll = _ll
                 hkl = _hkl
+                kl_div = _kl_div
             else:
                 idx =  _ll > ll
                 ipred = tf.where(idx, _ipred, ipred)
                 ll = tf.where(idx, _ll, ll)
                 hkl = tf.where(idx, _hkl, hkl)
+                kl_div = tf.where(idx, _kl_div, kl_div)
 
         if training:
             self.surrogate_posterior.register_seen(asu_id.flat_values, hkl.flat_values)
@@ -185,14 +190,7 @@ class VariationalMergingModel(tfk.models.Model):
             sigiobs.flat_values,
         )
 
-        # This is the mean across mc samples and observations
-        # This needs to be weighted by the number of reflections per image
-        w = tf.reduce_sum(tf.ones_like(iobs), [-1, -2], keepdims=True)
-        w = w / tf.reduce_sum(w)
-        ll = tf.reduce_sum(w * ll)
-
-        # Resample kl_div based on observations
-        kl_div = self.surrogate_posterior.rac.gather(kl_div, asu_id, hkl)
+        ll = tf.reduce_mean(ll)
         kl_div = tf.reduce_mean(kl_div) 
 
         self.add_metric(-ll, name='NLL')
