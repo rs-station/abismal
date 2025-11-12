@@ -20,6 +20,7 @@ class AbismalOptimizer(tfk.optimizers.Optimizer):
         ema_overwrite_frequency=None,
         jit_compile=True,
         name="AbismalOptimizer",
+        lazy_vars=None,
         **kwargs
     ):
         super().__init__(
@@ -38,6 +39,7 @@ class AbismalOptimizer(tfk.optimizers.Optimizer):
         self.beta_1 = beta_1
         self.beta_2 = beta_2
         self.epsilon = epsilon
+        self.lazy_vars = lazy_vars
 
     def build(self, var_list):
         """Initialize optimizer variables.
@@ -76,6 +78,7 @@ class AbismalOptimizer(tfk.optimizers.Optimizer):
                 "beta_1": self.beta_1,
                 "beta_2": self.beta_2,
                 "epsilon": self.epsilon,
+                "lazy_vars": self.lazy_vars,
             }
         )
         return config

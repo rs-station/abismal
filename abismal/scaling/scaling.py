@@ -280,6 +280,7 @@ class ImageScaler(tfk.models.Model):
         if self.hkl_to_imodel:
             image.append(0.02 * tf.cast(hkl, metadata.dtype))
 
+
         image = tf.concat(image, axis=-1)
 
         if self.num_image_samples is not None:
@@ -324,5 +325,24 @@ class ImageScaler(tfk.models.Model):
 
         self.add_metric(tf.math.reduce_mean(z), name='Σ_mean')
         self.add_metric(tf.math.reduce_std(z), name='Σ_std')
+        return z
+
+class KBImageScaler(tfk.models.Model):
+    def build(self, shapes):
+        super.build(shapes)
+        self.log_B = self.add_weight(
+            name='log_B', shape=(), dtype='float32', initializer='zeros'
+        )
+        self.log_k = self.add_weight(
+            name='log_k', shape=(), dtype='float32', initializer='zeros'
+        )
+
+    def call(self, inputs, mc_samples=32, training=None, **kwargs):
+        z = super()(inputs, mc_samples, training, **kwargs)
+        B = tf.math.exp(self.log_B)
+        k = tf.math.exp(self.log_k)
+        self.add_metric(B, name='B')
+        self.add_metric(k, name='k')
+        z = k * tf.math.exp(-B * tf.math.reciprocal(tf.math.square(resolution))) * z
         return z
 

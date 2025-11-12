@@ -32,7 +32,7 @@ from abismal.optimizers.base import AbismalOptimizer
 adam_optimizer_class = tfk.optimizers.legacy.Adam
 
 @tf.keras.utils.register_keras_serializable(package="abismal")
-class AdaBelief(AbismalOptimizer):
+class Adam(AbismalOptimizer):
     def update_step(self, gradient, variable):
         """Update step given gradient and the associated model variable."""
         lr = tf.cast(self.learning_rate, variable.dtype)
@@ -48,18 +48,17 @@ class AdaBelief(AbismalOptimizer):
 
         if self.lazy_vars is not None and var_key in self.lazy_vars:
             nonzero = gradient != 0.
-            delta = gradient - m
             m.assign_add(
                 tf.where(
                     nonzero,
-                    (1 - self.beta_1) * delta,
+                    (gradient - m) * (1 - self.beta_1),
                     0.
                 )
             )
             v.assign_add(
                 tf.where(
                     nonzero,
-                    (self.beta_2 - 1.) * v + (1. - self.beta_2) * tf.square(delta),
+                    (tf.square(gradient) - v) * (1 - self.beta_2),
                     0.
                 )
             )
@@ -71,8 +70,7 @@ class AdaBelief(AbismalOptimizer):
                 )
             )
         else:
-            delta = gradient - m
-            m.assign_add((1 - self.beta_1) * delta)
-            v.assign_add((self.beta_2 - 1.) * v + (1. - self.beta_2) * tf.square(delta))
+            m.assign_add((gradient - m) * (1 - self.beta_1))
+            v.assign_add((tf.square(gradient) - v) * (1 - self.beta_2))
             variable.assign_sub((m * alpha) / (tf.sqrt(v) + self.epsilon))
 
