@@ -44,6 +44,14 @@ class NormalPrior(PriorBase):
         scale = self.scale * tf.ones(self.rac.asu_size)
         return tfd.Normal(loc, scale)
 
+    def distribution(self, asu_id, hkl):
+        ones = tf.ones_like(
+            tf.squeeze(asu_id, axis=-1),
+            dtype='float32',
+        )
+        loc = self.loc * ones
+        scale = self.scale * ones
+        return tfd.Normal(loc, scale)
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class MultivariateNormalPrior(NormalPrior):

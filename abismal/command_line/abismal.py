@@ -241,6 +241,7 @@ def run_abismal(parser, start_time=None):
         "clipnorm": parser.clipnorm,
         "clipvalue": parser.clip,
         "global_clipnorm": parser.global_clipnorm,
+        "lazy_vars" : [v._unique_id for v in surrogate_posterior.trainable_variables],
     }
     from abismal.optimizers.optimizer_dict import optimizer_dict
 
@@ -290,7 +291,7 @@ def run_abismal(parser, start_time=None):
     need_to_build |= parser.posterior_init_file is not None
     if need_to_build:
         logger.info(f"Initializing weights")
-        for x, _ in train:
+        for x, y in train:
             model(x)
             break
 
@@ -318,6 +319,9 @@ def run_abismal(parser, start_time=None):
 
     logger.info("Compiling model")
     model.compile(opt, run_eagerly=parser.run_eagerly, jit_compile=parser.jit_compile)
+    if parser.debug:
+        from IPython import embed
+        embed(colors='linux')
 
     # for x,y in train:
     #    model(x)
