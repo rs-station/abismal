@@ -21,6 +21,7 @@ class WAdam(AbismalOptimizer):
         ema_overwrite_frequency=None,
         jit_compile=True,
         name="WAdam",
+        lazy_vars=None,
         **kwargs
     ):
         super().__init__(
@@ -36,7 +37,8 @@ class WAdam(AbismalOptimizer):
             ema_momentum=0.99,
             ema_overwrite_frequency=None,
             jit_compile=True,
-            name="WAdam",
+            name=name,
+            lazy_vars=lazy_vars,
             **kwargs
         )
 
@@ -58,8 +60,26 @@ class WAdam(AbismalOptimizer):
 
         g = gradient
         delta = g - m
-        m.assign_add((1. - beta_1) * delta)
-        v.assign_add((beta_2 - 1.) * v + (1. - beta_2) * delta * (g - m))
-        variable.assign_sub((m * alpha) / (tf.sqrt(v) + self.epsilon))
+        if self.lazy_vars is not None and var_key in self.lazy_vars:
+            nonzero = (g != 0.)
+            m.assign_add(tf.where(
+                nonzero, 
+                (1. - beta_1) * delta, 
+                0.
+            ))
+            v.assign_add(tf.where(
+                nonzero, 
+                (beta_2 - 1.) * v + (1. - beta_2) * delta * (g - m), 
+                0.
+            ))
+            variable.assign_sub(tf.where(
+                nonzero, 
+                (m * alpha) / (tf.sqrt(v) + self.epsilon),
+                0.,
+            ))
+        else:
+            m.assign_add((1. - beta_1) * delta)
+            v.assign_add((beta_2 - 1.) * v + (1. - beta_2) * delta * (g - m))
+            variable.assign_sub((m * alpha) / (tf.sqrt(v) + self.epsilon))
 
 
