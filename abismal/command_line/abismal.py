@@ -41,7 +41,6 @@ def run_abismal(parser, start_time=None):
     from abismal.surrogate_posterior.structure_factor import FoldedNormalPosterior
     from tf_keras.callbacks import ModelCheckpoint
     import gemmi
-    from tensorflow.data import AUTOTUNE
     import logging
     from os.path import exists
     from os import mkdir
@@ -67,21 +66,7 @@ def run_abismal(parser, start_time=None):
     dm_file = parser.out_dir + "/datamanager.yml"
     dm.to_file(dm_file)
     logger.info(f"Data manager config written to: {dm_file}")
-
-    if test is not None:
-        logger.info("There is a test set for validation")
-        if parser.validation_steps is not None:
-            test = test.repeat()
-        test = test.ragged_batch(parser.batch_size)
-        test = test.prefetch(AUTOTUNE)
-    if parser.steps_per_epoch is not None:
-        train = train.repeat()
-    if parser.shuffle_buffer_size > 0:
-        logger.info("There is a shuffle buffer to randomize train-time inputs")
-        #if parser.steps_per_epoch is None:
-        #    raise ValueError("You must set `--steps_per_epoch` to an integer to use a shuffle buffer.")
-        train = train.shuffle(parser.shuffle_buffer_size)
-    train = train.ragged_batch(parser.batch_size)
+    logger.info("There is a test set for validation")
 
     rasu = []
     anomalous = False if parser.separate_friedel_mates else parser.anomalous
@@ -338,7 +323,6 @@ def run_abismal(parser, start_time=None):
     # from IPython import embed
     # embed(colors='linux')
 
-    train = train.prefetch(AUTOTUNE)
     logger.info("Starting training...")
     history = model.fit(
         x=train,

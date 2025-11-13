@@ -39,7 +39,10 @@ class DataManager:
     """
     def __init__(self, inputs, dmin, cell=None, spacegroup=None, 
             num_cpus=None, separate=False, wavelength=None, ray_log_level="ERROR",
-            test_fraction=0., separate_friedel_mates=False, cell_tol=None, isigi_cutoff=None):
+            test_fraction=0., separate_friedel_mates=False, cell_tol=None, isigi_cutoff=None, 
+            shuffle_buffer_size=0, batch_size=100, steps_per_epoch=None, validation_steps=None,
+            epochs=30,
+        ):
         if separate_friedel_mates and separate:
             raise ValueError("Cannot combine --separate-friedel-mates and --separate")
 
@@ -56,6 +59,11 @@ class DataManager:
         self.separate_friedel_mates = separate_friedel_mates
         self.cell_tol = cell_tol
         self.isigi_cutoff = isigi_cutoff
+        self.shuffle_buffer_size = shuffle_buffer_size
+        self.batch_size = batch_size
+        self.steps_per_epoch = steps_per_epoch
+        self.validation_steps = validation_steps
+        self.epochs = epochs
 
     def get_config(self):
         conf = {
@@ -71,6 +79,11 @@ class DataManager:
             'test_fraction' : self.test_fraction,
             'num_asus': self.num_asus,
             'separate_friedel_mates' : self.separate_friedel_mates,
+            'shuffle_buffer_size' : self.shuffle_buffer_size,
+            'batch_size' : self.batch_size,
+            'steps_per_epoch' : self.steps_per_epoch,
+            'validation_steps' : self.validation_steps,
+            'epochs' : self.epochs,
         }
         return conf
 
@@ -96,6 +109,10 @@ class DataManager:
             separate_friedel_mates = parser.separate_friedel_mates,
             cell_tol = parser.fractional_cell_tolerance,
             isigi_cutoff = parser.isigi_cutoff,
+            shuffle_buffer_size = parser.shuffle_buffer_size,
+            batch_size = parser.batch_size,
+            steps_per_epoch = parser.steps_per_epoch,
+            validation_steps = parser.validation_steps,
         )
 
     @property
@@ -205,10 +222,27 @@ class DataManager:
 
         return data
 
-    def get_train_test_splits(self, data=None):
+    @property
+    def repeat_train(self):
+        repeat_train = self.steps_per_epoch > 0
+        return repeat_train
+
+    @property
+    def repeat_test(self):
+        repeat_test = self.validation_steps is not None
+        return repeat_test
+
+    def get_train_test_splits(self, data=None, test_fraction=None, repeat_test=None, repeat_train=None):
         if data is None:
             data = self.get_dataset()
             data = data.cache()
+        if test_fraction is None:
+            test_fraction = self.test_fraction
+        if repeat_test is None:
+            repeat_test = self.repeat_test
+        if repeat_train is None:
+            repeat_train = self.repeat_train
+
 
         # Handle setting up the test fraction, shuffle buffer, batching, etc
         test = None
@@ -230,11 +264,30 @@ class DataManager:
                 return friedelized
             data = data.map(friedelize_datum)
 
-        if self.test_fraction > 0.:
-            train,test = split_dataset_train_test(data, self.test_fraction)
+        if test_fraction > 0.:
+            train,test = split_dataset_train_test(data, test_fraction)
         else:
             train = data
+
+        from tensorflow.data import AUTOTUNE
+        if repeat_train:
+            train = train.repeat()
+        if self.shuffle_buffer_size > 0:
+            train = train.shuffle(self.shuffle_buffer_size)
+        if test is not None:
+            if repeat_test:
+                test = test.repeat()
+            if self.shuffle_buffer_size > 0:
+                test = test.shuffle(self.shuffle_buffer_size)
+            test = test.ragged_batch(self.batch_size)
+            test = test.prefetch(AUTOTUNE)
+
+        train = train.ragged_batch(self.batch_size)
+        train = train.prefetch(AUTOTUNE)
         return train, test
+
+    def get_half_datasets(self):
+        return self.get_train_test_splits(test_fraction = 0.5, repeat_test = self.repeat_train)
 
     def to_file(self, file_name):
         conf = self.get_config()
