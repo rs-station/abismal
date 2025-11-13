@@ -66,7 +66,8 @@ def run_abismal(parser, start_time=None):
     dm_file = parser.out_dir + "/datamanager.yml"
     dm.to_file(dm_file)
     logger.info(f"Data manager config written to: {dm_file}")
-    logger.info("There is a test set for validation")
+    if test is not None:
+        logger.info("There is a test set for validation")
 
     rasu = []
     anomalous = False if parser.separate_friedel_mates else parser.anomalous
