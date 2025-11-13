@@ -20,15 +20,6 @@ def main():
         "--sf-init", help="An optional .keras file from which to initialize the structure factors file from an abismal run", default=None, required=False
     )
     parser.add_argument(
-        "--epochs", help="How many gradient descent epochs to run", type=int, default=30, required=False
-    )
-    parser.add_argument(
-        "--steps-per-epoch", help="How many steps per epoch", type=int, default=None, required=False
-    )
-    parser.add_argument(
-        "--batch-size", help="Number of images considered in each gradient step", type=int, default=100, required=False
-    )
-    parser.add_argument(
         "--repeats", help="Number of random repeats to conduct. Default is one.", type=int, default=1, required=False
     )
     parser.add_argument(
@@ -43,14 +34,9 @@ def main():
 
     for repeat in range(parser.repeats):
         dm = DataManager.from_file(parser.datamanager_yml)
-        dm.test_fraction = 0.5
-        half1,half2 = dm.get_train_test_splits()
+        half1,half2 = dm.get_half_datasets()
 
         for half_id,half in enumerate([half1, half2]):
-            if parser.steps_per_epoch is not None:
-                half = half.repeat()
-            half = half.ragged_batch(parser.batch_size)
-
             model = tfk.saving.load_model(parser.model_file)
             if parser.sf_init is not None:
                 sf_model = tfk.saving.load_model(parser.sf_init)
@@ -71,8 +57,8 @@ def main():
             ]
             history = model.fit(
                 x=half, 
-                epochs=parser.epochs, 
-                steps_per_epoch=parser.steps_per_epoch, 
+                epochs=dm.epochs, 
+                steps_per_epoch=dm.steps_per_epoch, 
                 callbacks=callbacks, 
                 verbose=parser.keras_verbosity,
             )
