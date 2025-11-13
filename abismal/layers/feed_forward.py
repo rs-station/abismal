@@ -14,7 +14,7 @@ class FeedForward(tfk.layers.Layer):
 
     norm_dict = {
         "layer": lambda s, x: (x - tf.math.reduce_mean(x, axis=-1, keepdims=True)) / (tf.math.reduce_std(x, axis=-1, keepdims=True) + s.epsilon),
-        "rms": lambda s, x: x * tf.math.rsqrt(tf.reduce_mean(tf.square(x), axis=-1, keepdims=True) + s.epsilon),
+        "rms": lambda s, x: x * tf.math.rsqrt(tf.reduce_sum(tf.square(x), axis=-1, keepdims=True) + s.epsilon * s.epsilon),
         "activation": lambda s, x: s.activation(x),
     }
 
