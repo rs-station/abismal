@@ -210,6 +210,7 @@ class VariationalMergingModel(tfk.models.Model):
         # on what you pass to `fit()`.
         x, y = data
 
+
         # Set up metrics dict
         metrics = {m.name: m.result() for m in self.metrics}
 
@@ -228,6 +229,8 @@ class VariationalMergingModel(tfk.models.Model):
         metrics["|∇s|"] = grad_s_norm
 
         q_vars = self.surrogate_posterior.trainable_variables
+        self.optimizer.lazy_vars = [v._unique_id for v in q_vars]
+
         grad_q = tape.gradient(loss, q_vars)
         grad_q_norm = tf.sqrt(
             tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_q])
