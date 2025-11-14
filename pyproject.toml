@@ -40,6 +40,7 @@ Issues = "https://github.com/rs-station/abismal/issues"
 
 [project.scripts]
 abismal = "abismal.command_line.abismal:main"
+"abismal.spread" = "abismal.command_line.spread:main"
 "abismal.cchalf" = "abismal.command_line.cchalf:main"
 "abismal.friedelize" = "abismal.command_line.friedelize:main"
 "abismal.plot_history" = "abismal.command_line.plot_history:main"
