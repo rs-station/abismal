@@ -61,3 +61,43 @@ class MultivariateNormalPrior(NormalPrior):
         scale = self.scale * tf.ones(self.rac.asu_size)
         return tfd.MultivariateNormalDiag(loc, scale)
 
+@tfk.saving.register_keras_serializable(package="abismal")
+class HalfNormalPrior(PriorBase):
+    """HalfNormally distributed prior."""
+    def __init__(self, rac, scale=1., **kwargs):
+        """
+        Parameters
+        ----------
+        rac : ReciprocalASUCollection
+        scale : float (optional)
+        """
+        super().__init__(**kwargs)
+        self.rac = rac
+        self.scale = scale
+        self.built = True #This is always true
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'rac' : tfk.saving.serialize_keras_object(self.rac),
+            'scale' : self.scale,
+        })
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
+        return cls(**config)
+
+    def flat_distribution(self):
+        scale = self.scale * tf.ones(self.rac.asu_size)
+        return tfd.HalfNormal(scale)
+
+    def distribution(self, asu_id, hkl):
+        ones = tf.ones_like(
+            tf.squeeze(asu_id, axis=-1),
+            dtype='float32',
+        )
+        scale = self.scale * ones
+        return tfd.HalfNormal(scale)
+

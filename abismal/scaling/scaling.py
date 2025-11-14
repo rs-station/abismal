@@ -157,7 +157,6 @@ class ImageScaler(tfk.models.Model):
             self.hidden_units = 2 * mlp_width 
 
         kernel_initializer = 'glorot_normal'
-
         self.input_image = tfk.layers.Dense(
                 mlp_width, kernel_initializer=kernel_initializer, use_bias=False)
         self.input_scale = tfk.layers.Dense(

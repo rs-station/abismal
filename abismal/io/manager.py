@@ -113,6 +113,7 @@ class DataManager:
             batch_size = parser.batch_size,
             steps_per_epoch = parser.steps_per_epoch,
             validation_steps = parser.validation_steps,
+            epochs = parser.epochs,
         )
 
     @property
@@ -224,8 +225,9 @@ class DataManager:
 
     @property
     def repeat_train(self):
-        repeat_train = self.steps_per_epoch > 0
-        return repeat_train
+        if self.steps_per_epoch is None:
+            return False
+        return True
 
     @property
     def repeat_test(self):

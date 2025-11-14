@@ -124,6 +124,11 @@ def run_abismal(parser, start_time=None):
             from abismal.prior.normal import MultivariateNormalPrior
 
             prior = MultivariateNormalPrior(rac)
+    elif parser.prior_distribution == "halfnormal":
+        from abismal.prior.normal import HalfNormalPrior
+        prior = HalfNormalPrior(rac)
+        loc_init = tf.ones_like(prior.flat_distribution().mean())
+        scale_init = parser.init_scale * loc_init
 
     posterior_kwargs = {
         "rac": rac,
