@@ -90,6 +90,8 @@ class VariationalMergingModel(tfk.models.Model):
         self.scale_model.build(shapes)
         self.standardize_intensity.build(shapes[-1])
         self.standardize_metadata.build(shapes[-3])
+        if not self.prior.built:
+            self.prior.build(shapes)
         self.built = True
 
     def standardize_inputs(self, inputs, training=None):
@@ -155,7 +157,7 @@ class VariationalMergingModel(tfk.models.Model):
         for op in self.reindexing_ops:
             _hkl = tf.ragged.map_flat_values(op, hkl_in)
             q = self.surrogate_posterior.distribution(asu_id.flat_values, _hkl.flat_values)
-            p = self.prior.distribution(asu_id.flat_values, _hkl.flat_values)
+            p = self.prior(asu_id.flat_values, _hkl.flat_values)
             z = q.sample(mc_samples)
             _kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
  

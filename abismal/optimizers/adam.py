@@ -29,7 +29,6 @@ from typing import Union, Callable
 
 from abismal.optimizers.base import AbismalOptimizer
 
-adam_optimizer_class = tfk.optimizers.legacy.Adam
 
 @tf.keras.utils.register_keras_serializable(package="abismal")
 class Adam(AbismalOptimizer):

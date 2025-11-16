@@ -72,7 +72,7 @@ args_and_kwargs = (
                     "Wilson is the defalt",
             "default": 'Wilson',
             "type": str.lower,
-            "choices" : ["wilson", "normal", 'halfnormal'],
+            "choices" : ["wilson", "normal", 'halfnormal', 'autowilson'],
         }
     ),
 

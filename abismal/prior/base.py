@@ -9,3 +9,9 @@ class PriorBase(tfk.layers.Layer):
     def flat_distribution(self):
         raise NotImplementedError(
             "Derived classes must implement flat_distribution() -> Distribution")
+
+    def call(self, asu_id=None, hkl=None, **kwargs):
+        if hkl is None:
+            return self.flat_distribution()
+        return self.distribution(asu_id, hkl)
+

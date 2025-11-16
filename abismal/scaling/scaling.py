@@ -67,6 +67,7 @@ class ImageScaler(tfk.models.Model):
         'normal' : normal_posterior,
         'gamma' : gamma_posterior,
         'foldednormal' : folded_normal_posloc_posterior,
+        'foldednormal_unconstrained' : folded_normal_posloc_posterior,
         'rice' : rice_posterior,
         'lognormal' : log_normal_posterior,
         'delta' : delta_posterior,
@@ -75,6 +76,7 @@ class ImageScaler(tfk.models.Model):
         'cauchy' : lambda : tfd.Cauchy(0., 1.),
         'laplace' : lambda : tfd.Laplace(0., 1.),
         'normal' : lambda : tfd.Normal(0., 1.),
+        'lognormal' : lambda : tfd.LogNormal(0., 1.),
         'halfnormal' : lambda : tfd.HalfNormal(1.),
         'halfcauchy' : lambda : tfd.HalfCauchy(0., 1.),
         'exponential' : lambda : tfd.Exponential(1.),
@@ -156,7 +158,9 @@ class ImageScaler(tfk.models.Model):
         if self.hidden_units is None:
             self.hidden_units = 2 * mlp_width 
 
-        kernel_initializer = 'glorot_normal'
+        #kernel_initializer = 'glorot_normal'
+        scale = 0.1 / mlp_depth
+        kernel_initializer = tfk.initializers.VarianceScaling(scale, 'fan_avg')
         self.input_image = tfk.layers.Dense(
                 mlp_width, kernel_initializer=kernel_initializer, use_bias=False)
         self.input_scale = tfk.layers.Dense(
@@ -326,9 +330,9 @@ class ImageScaler(tfk.models.Model):
         self.add_metric(tf.math.reduce_std(z), name='Σ_std')
         return z
 
-class KBImageScaler(tfk.models.Model):
+class KBImageScaler(ImageScaler):
     def build(self, shapes):
-        super.build(shapes)
+        super().build(shapes)
         self.log_B = self.add_weight(
             name='log_B', shape=(), dtype='float32', initializer='zeros'
         )
@@ -337,11 +341,20 @@ class KBImageScaler(tfk.models.Model):
         )
 
     def call(self, inputs, mc_samples=32, training=None, **kwargs):
-        z = super()(inputs, mc_samples, training, **kwargs)
+        z = super().call(inputs, mc_samples, training, **kwargs)
+        (
+            asu_id,
+            hkl,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = inputs
         B = tf.math.exp(self.log_B)
         k = tf.math.exp(self.log_k)
         self.add_metric(B, name='B')
         self.add_metric(k, name='k')
-        z = k * tf.math.exp(-B * tf.math.reciprocal(tf.math.square(resolution))) * z
+        z = tf.math.exp(self.log_k - B * tf.math.reciprocal(tf.math.square(resolution)) + z)
         return z
 

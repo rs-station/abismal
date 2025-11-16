@@ -114,6 +114,11 @@ def run_abismal(parser, start_time=None):
             prior = WilsonPrior(rac)
         loc_init = prior.flat_distribution().mean()
         scale_init = parser.init_scale * loc_init
+    elif parser.prior_distribution == "autowilson":
+        from abismal.prior.structure_factor.auto_wilson import AutoWilsonPrior
+        prior = AutoWilsonPrior(rac)
+        loc_init = prior.flat_distribution().mean()
+        scale_init = parser.init_scale * loc_init
     elif parser.prior_distribution == "normal":
         from abismal.prior.normal import NormalPrior
 
