@@ -87,6 +87,10 @@ class VariationalMergingModel(tfk.models.Model):
     def build(self, shapes):
         if self.built:
             return
+        if not self.prior.built:
+            self.prior.build(shapes)
+        if not self.surrogate_posterior.built:
+            self.surrogate_posterior.build(shapes)
         self.scale_model.build(shapes)
         self.standardize_intensity.build(shapes[-1])
         self.standardize_metadata.build(shapes[-3])
@@ -304,7 +308,7 @@ class SpreadMergingModel(VariationalMergingModel):
 
         for op in self.reindexing_ops:
             _hkl = tf.ragged.map_flat_values(op, hkl_in)
-            q = self.surrogate_posterior.distribution(inputs)
+            q = self.surrogate_posterior(asu_id.flat_values, _hkl.flat_values)
             p = self.prior.distribution(asu_id.flat_values, _hkl.flat_values)
             z = q.sample(mc_samples)
             _kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
