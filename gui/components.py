@@ -1,0 +1,304 @@
+from string import Template
+from IPython.display import display,HTML
+import reciprocalspaceship as rs
+from glob import glob
+
+viewer_template = """<!doctype html>
+<html lang="en">
+<head>
+  <title>UglyMol</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, user-scalable=no">
+  <style>
+   * { margin: 0; padding: 0; box-sizing: border-box; }
+   html, body { 
+     width: 100%;
+     height: 600px;
+     overflow: hidden;
+     font-family: sans-serif;
+     background-color: black;
+   }
+   #viewer {
+     width: 100%;
+     height: 100%;
+     position: relative;
+   }
+   #hud {
+     font-size: 15px;
+     color: #ddd;
+     background-color: rgba(0,0,0,0.6);
+     text-align: center;
+     position: absolute;
+     top: 10px;
+     left: 50%;
+     transform: translateX(-50%);
+     padding: 2px 8px;
+     border-radius: 5px;
+     z-index: 9;
+     white-space: pre-line;
+   }
+   #hud u { padding: 0 8px; text-decoration: none;
+            border: solid; border-width: 1px 0; }
+   #hud s { padding: 0 8px; text-decoration: none; opacity: 0.5; }
+   #help {
+     display: none;
+     font-size: 16px;
+     color: #eee;
+     background-color: rgba(0,0,0,0.7);
+     position: absolute;
+     left: 20px;
+     top: 50%;
+     transform: translateY(-50%);
+     cursor: default;
+     padding: 5px;
+     border-radius: 5px;
+     z-index: 9;
+     white-space: pre-line;
+   }
+   #inset {
+     width: 200px;
+     height: 200px;
+     background-color: #888;
+     position: absolute;
+     right: 0;
+     bottom: 0;
+     z-index: 2;
+     display: none;
+   }
+   a { color: #59C; }
+  </style>
+</head>
+<body>
+  <div id="viewer">
+    <header id="hud" onmousedown="event.stopPropagation();"
+                     ondblclick="event.stopPropagation();">Loading...</header>
+    <footer id="help"></footer>
+    <div id="inset"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/uglymol@0.7.2/uglymol.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mtz@0.1.0/mtz.min.js"></script> 
+
+  <script>
+    (function initUglyMol() {
+      // Check if UM is available
+      if (typeof UM === 'undefined') {
+        console.log("UM not ready, retrying...");
+        setTimeout(initUglyMol, 100);
+        return;
+      }
+      
+      console.log("UM is ready!", UM);
+      document.getElementById('hud').textContent = "Initializing viewer...";
+      
+      try {
+        var V = new UM.Viewer({viewer: "viewer", hud: "hud", help: "help"});
+        console.log("Viewer created:", V);
+        
+        /*Customizations to Default Settings*/
+        V.config.map_radius = 12;
+        V.config.water_style = "cross";
+        
+        document.getElementById('hud').textContent = "Loading PDB...";
+        
+        V.load_pdb("/files/$pdb_file");
+        
+        console.log("PDB loading initiated");
+        
+        // Wait for GemmiMtz to be available
+        if (typeof GemmiMtz === 'undefined') {
+          console.log("GemmiMtz not ready yet");
+          document.getElementById('hud').textContent = "Waiting for MTZ loader...";
+          setTimeout(function() {
+            loadMtz(V);
+          }, 500);
+        } else {
+          loadMtz(V);
+        }
+        
+      } catch(e) {
+        console.error("Error:", e);
+        document.getElementById('hud').textContent = "Error: " + e.message;
+      }
+    })();
+    
+    function loadMtz(V) {
+      try {
+        console.log("Loading MTZ...");
+        document.getElementById('hud').textContent = "Loading MTZ...";
+        
+        GemmiMtz().then(function(Module) {
+          console.log("GemmiMtz module loaded");
+          UM.load_maps_from_mtz(Module, V, "/files/$mtz_file", 
+                                $map_keys);
+          console.log("MTZ loading initiated");
+        });
+      } catch(e) {
+        console.error("MTZ loading error:", e);
+        document.getElementById('hud').textContent = "MTZ Error: " + e.message;
+      }
+    }
+  </script>
+</body>
+</html>"""
+
+
+def find_file(directory, extension):
+    files = glob(directory + f'/*{extension}')
+    if len(files) == 1:
+        return files[0]
+    elif len(files) == 0:
+        return None
+    else:
+        raise ValueError("Multiple {extension} files detected in {self.directory}")
+
+class UglyMolViewer():
+    def __init__(self, epoch, eff_id=0, asu_id=0):
+        self.epoch = epoch
+        self.eff_id = eff_id
+        self.asu_id = asu_id
+
+    @property
+    def map_keys(self):
+        defaults = [
+            '2FOFCWT',
+            'PH2FOFCWT',
+            'ANOM',
+            'PANOM',
+        ]
+
+        if self.pdb_file is None:
+            return None
+        ds = rs.read_mtz(self.mtz_file)
+        keys = [k for k in defaults if k in ds]
+        return keys
+
+    @property
+    def directory(self):
+        return f'eff_{self.eff_id}_asu_{self.asu_id}_epoch_{self.epoch}'
+
+    @property
+    def mtz_file(self):
+        files = glob(self.directory + f'/*.mtz')
+        files = [f for f in files if not f.endswith('_data.mtz')]
+        if len(files) == 1:
+            return files[0]
+        elif len(files) == 0:
+            return None
+        else:
+            raise ValueError("Multiple mtz files detected in {self.directory}")
+
+    @property
+    def pdb_file(self):
+        files = glob(self.directory + f'/*.pdb')
+        if len(files) == 1:
+            return files[0]
+        elif len(files) == 0:
+            return None
+        else:
+            raise ValueError("Multiple pdb files detected in {self.directory}")
+
+    @property
+    def template_kwargs(self):
+        kwargs = {
+            'mtz_file' : self.mtz_file,
+            'pdb_file' : self.pdb_file,
+            'map_keys' : self.map_keys,
+        }
+        return kwargs
+
+    @property
+    def html(self):
+        return Template(viewer_template).substitute(self.template_kwargs)
+
+    def display(self):
+        return display(HTML(self.html, metadata={'isolated' : True}))
+
+import argparse
+from ipywidgets import widgets
+
+class Text(widgets.Box):
+    def __init__(self, **kwargs):
+        description = ''
+        if 'description' in kwargs:
+            description = kwargs.pop('description')
+        children = [
+            widgets.Label(description),
+            widgets.Text(**kwargs),
+        ]
+        super().__init__(children)
+
+    @property
+    def label(self):
+        return self.children[0]
+
+    @property
+    def text(self):
+        return self.children[1]
+
+    @property
+    def value(self):
+        return self.text.value
+
+class ArgparseGUI:
+    def __init__(self, parser):
+        self.parser = parser
+
+    @staticmethod
+    def is_required(*args, **kwargs):
+        if args[0][0] != '-':
+            return True
+        elif 'required' in kwargs and kwargs['required']:
+            return True
+        return False
+
+    @staticmethod
+    def action_to_name(action):
+        if action.metavar is not None:
+            return action.metavar
+        return action.dest
+
+    @staticmethod
+    def action_to_widget(action):
+        name = ArgparseGUI.action_to_name(action)
+        if isinstance(action, argparse._StoreTrueAction):
+            return widgets.ToggleButton(
+                    value=False,
+                    description=name,
+                    disabled=False,
+                    button_style='', # 'success', 'info', 'warning', 'danger' or ''
+                    tooltip=action.help,
+                )
+        # Fallback text field
+        widget = Text(
+            placeholder=str(action.default),
+            tooltip=action.help,
+            description=name,
+        )
+        return widget
+
+    def to_widget(self):
+        all_widgets = {'Required' : []}
+        for group in self.parser._action_groups:
+            group_args = []
+            group_widgets = []
+            for action in group._group_actions:
+                if action.required:
+                    group_name = 'Required'
+                else:
+                    group_name = group.title
+                if group_name == 'options':
+                    #This group only contains `--help`
+                    continue
+                if group_name not in all_widgets:
+                    all_widgets[group_name] = []
+                widget = self.action_to_widget(action)
+                all_widgets[group_name].append(widget)
+
+        self.children = {k:widgets.VBox(v) for k,v in all_widgets.items()}
+        self.tab = widgets.Tab(
+            children = list(self.children.values()),
+            titles = list(self.children.keys()),
+        )
+        return self.tab
+
