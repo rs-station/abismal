@@ -1,5 +1,4 @@
-from string import Template
-from IPython.display import display,HTML
+from string import Template from IPython.display import display,HTML
 import reciprocalspaceship as rs
 from glob import glob
 
@@ -80,6 +79,29 @@ viewer_template = """<!doctype html>
   <script src="https://cdn.jsdelivr.net/npm/mtz@0.1.0/mtz.min.js"></script> 
 
   <script>
+    // Fix for macOS Command key detection
+    (function() {
+      var originalAddEventListener = EventTarget.prototype.addEventListener;
+      EventTarget.prototype.addEventListener = function(type, listener, options) {
+        if (type === 'mousedown' || type === 'mousemove' || type === 'mouseup') {
+          var wrappedListener = function(e) {
+            // Map metaKey (Command on Mac) to ctrlKey for compatibility
+            if (e.metaKey && !e.ctrlKey) {
+              Object.defineProperty(e, 'ctrlKey', {
+                get: function() { return true; }
+              });
+            }
+            return listener.call(this, e);
+          };
+          originalAddEventListener.call(this, type, wrappedListener, options);
+        } else {
+          originalAddEventListener.call(this, type, listener, options);
+        }
+      };
+    })();
+  </script>
+
+  <script>
     (function initUglyMol() {
       // Check if UM is available
       if (typeof UM === 'undefined') {
@@ -143,20 +165,10 @@ viewer_template = """<!doctype html>
 </html>"""
 
 
-def find_file(directory, extension):
-    files = glob(directory + f'/*{extension}')
-    if len(files) == 1:
-        return files[0]
-    elif len(files) == 0:
-        return None
-    else:
-        raise ValueError("Multiple {extension} files detected in {self.directory}")
-
 class UglyMolViewer():
-    def __init__(self, epoch, eff_id=0, asu_id=0):
-        self.epoch = epoch
-        self.eff_id = eff_id
-        self.asu_id = asu_id
+    def __init__(self, pdb_file=None, mtz_file=None):
+        self.pdb_file = pdb_file
+        self.mtz_file = mtz_file
 
     @property
     def map_keys(self):
@@ -172,31 +184,6 @@ class UglyMolViewer():
         ds = rs.read_mtz(self.mtz_file)
         keys = [k for k in defaults if k in ds]
         return keys
-
-    @property
-    def directory(self):
-        return f'eff_{self.eff_id}_asu_{self.asu_id}_epoch_{self.epoch}'
-
-    @property
-    def mtz_file(self):
-        files = glob(self.directory + f'/*.mtz')
-        files = [f for f in files if not f.endswith('_data.mtz')]
-        if len(files) == 1:
-            return files[0]
-        elif len(files) == 0:
-            return None
-        else:
-            raise ValueError("Multiple mtz files detected in {self.directory}")
-
-    @property
-    def pdb_file(self):
-        files = glob(self.directory + f'/*.pdb')
-        if len(files) == 1:
-            return files[0]
-        elif len(files) == 0:
-            return None
-        else:
-            raise ValueError("Multiple pdb files detected in {self.directory}")
 
     @property
     def template_kwargs(self):
@@ -301,4 +288,33 @@ class ArgparseGUI:
             titles = list(self.children.keys()),
         )
         return self.tab
+
+def find_file(directory, extension):
+    files = glob(directory + f'/*{extension}')
+    if len(files) == 1:
+        return files[0]
+    elif len(files) == 0:
+        return None
+    else:
+        raise ValueError("Multiple {extension} files detected in {self.directory}")
+
+def find_mtz_file(directory):
+    files = glob(directory + f'/*.mtz')
+    files = [f for f in files if not f.endswith('_data.mtz')]
+    if len(files) == 1:
+        return files[0]
+    elif len(files) == 0:
+        return None
+    else:
+        raise ValueError("Multiple mtz files detected in {self.directory}")
+
+def find_pdb_file(directory):
+    files = glob(directory + f'/*.pdb')
+    if len(files) == 1:
+        return files[0]
+    elif len(files) == 0:
+        return None
+    else:
+        raise ValueError("Multiple pdb files detected in {self.directory}")
+
 
