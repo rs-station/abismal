@@ -1,6 +1,10 @@
-from string import Template from IPython.display import display,HTML
+from string import Template 
+from IPython.display import display,HTML
 import reciprocalspaceship as rs
-from glob import glob
+from threading import Thread
+import pandas as pd
+from os.path import exists
+from abismal.command_line.abismal import run_abismal
 
 viewer_template = """<!doctype html>
 <html lang="en">
@@ -227,9 +231,38 @@ class Text(widgets.Box):
     def value(self):
         return self.text.value
 
+class Dropdown(widgets.Box):
+    def __init__(self, **kwargs):
+        description = ''
+        if 'description' in kwargs:
+            description = kwargs.pop('description')
+        children = [
+            widgets.Label(description),
+            widgets.Dropdown(**kwargs),
+        ]
+        super().__init__(children)
+
+    @property
+    def label(self):
+        return self.children[0]
+
+    @property
+    def dropdown(self):
+        return self.children[1]
+
+    @property
+    def value(self):
+        return self.dropdown.value
+
+
 class ArgparseGUI:
-    def __init__(self, parser):
+    def __init__(self, parser=None):
         self.parser = parser
+        if parser is None:
+            from abismal.command_line.parser import parser as abismal_parser
+            self.parser = abismal_parser
+        self.polling_period = 5. #seconds
+
 
     @staticmethod
     def is_required(*args, **kwargs):
@@ -245,6 +278,23 @@ class ArgparseGUI:
             return action.metavar
         return action.dest
 
+    def to_parser(self):
+        args = []
+        for k,v in self._all_args.items():
+            v = v.value
+            if v == '':
+                continue
+            if isinstance(k, argparse._StoreTrueAction):
+                if v == False:
+                    continue
+                else: 
+                    args.append(k.option_strings[0])
+            else:
+                if len(k.option_strings) > 0:
+                    args.append(k.option_strings[0])
+                args.append(v)
+        return self.parser.parse_args(map(str, args))
+
     @staticmethod
     def action_to_widget(action):
         name = ArgparseGUI.action_to_name(action)
@@ -256,16 +306,63 @@ class ArgparseGUI:
                     button_style='', # 'success', 'info', 'warning', 'danger' or ''
                     tooltip=action.help,
                 )
-        # Fallback text field
-        widget = Text(
-            placeholder=str(action.default),
-            tooltip=action.help,
-            description=name,
-        )
-        return widget
+        elif isinstance(action, argparse._StoreTrueAction):
+            return widgets.ToggleButton(
+                    value=False,
+                    description=name,
+                    disabled=False,
+                    button_style='', # 'success', 'info', 'warning', 'danger' or ''
+                    tooltip=action.help,
+                )
+        elif isinstance(action, argparse._StoreAction):
+            if action.choices is not None:
+                return Dropdown(
+                    options=action.choices,
+                    value=action.type(action.default),
+                    description=name,
+                    tooltip=action.help,
+                    disabled=False,
+                )
+            else:
+                # Fallback text field
+                return Text(
+                    placeholder=str(action.default),
+                    tooltip=action.help,
+                    description=name,
+                )
+
+    def run_abismal(self, *args, **kwargs):
+        from abismal.command_line.abismal import run_abismal
+        import tf_keras as tfk
+        
+        # Monkey patch to force keras format
+        original_save = tfk.saving.save_model
+        
+        def patched_save(model, filepath, *args, **kwargs):
+            kwargs['save_format'] = 'keras'
+            if not filepath.endswith('.keras'):
+                filepath = filepath.rsplit('.', 1)[0] + '.keras'
+            return original_save(model, filepath, *args, **kwargs)
+        
+        tfk.saving.save_model = patched_save
+        
+        try:
+            parser = self.to_parser()
+            run_abismal(parser)
+        finally:
+            tfk.saving.save_model = original_save
+            parser = self.to_parser()
+            run_abismal(parser)
 
     def to_widget(self):
+        self.run_button = widgets.Button(
+            description='Run Abismal',
+            tooltip='Run Abismal merging',
+        )
+        self.run_button.on_click(self.run_abismal)
+        epochs = 30
         all_widgets = {'Required' : []}
+        self._all_args = {}
         for group in self.parser._action_groups:
             group_args = []
             group_widgets = []
@@ -280,6 +377,7 @@ class ArgparseGUI:
                 if group_name not in all_widgets:
                     all_widgets[group_name] = []
                 widget = self.action_to_widget(action)
+                self._all_args[action] = widget
                 all_widgets[group_name].append(widget)
 
         self.children = {k:widgets.VBox(v) for k,v in all_widgets.items()}
@@ -287,34 +385,9 @@ class ArgparseGUI:
             children = list(self.children.values()),
             titles = list(self.children.keys()),
         )
-        return self.tab
-
-def find_file(directory, extension):
-    files = glob(directory + f'/*{extension}')
-    if len(files) == 1:
-        return files[0]
-    elif len(files) == 0:
-        return None
-    else:
-        raise ValueError("Multiple {extension} files detected in {self.directory}")
-
-def find_mtz_file(directory):
-    files = glob(directory + f'/*.mtz')
-    files = [f for f in files if not f.endswith('_data.mtz')]
-    if len(files) == 1:
-        return files[0]
-    elif len(files) == 0:
-        return None
-    else:
-        raise ValueError("Multiple mtz files detected in {self.directory}")
-
-def find_pdb_file(directory):
-    files = glob(directory + f'/*.pdb')
-    if len(files) == 1:
-        return files[0]
-    elif len(files) == 0:
-        return None
-    else:
-        raise ValueError("Multiple pdb files detected in {self.directory}")
-
+        self.widget = widgets.VBox([
+            self.tab,
+            self.run_button,
+        ])
+        return self.widget
 
