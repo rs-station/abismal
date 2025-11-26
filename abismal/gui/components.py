@@ -1,10 +1,15 @@
+import tf_keras as tfk
+from abismal.command_line.parser import parser as abismal_parser
+from abismal.command_line.abismal import run_abismal
+import argparse
+from ipywidgets import widgets
 from string import Template 
+from time import sleep
 from IPython.display import display,HTML
 import reciprocalspaceship as rs
 from threading import Thread
 import pandas as pd
 from os.path import exists
-from abismal.command_line.abismal import run_abismal
 
 viewer_template = """<!doctype html>
 <html lang="en">
@@ -205,8 +210,6 @@ class UglyMolViewer():
     def display(self):
         return display(HTML(self.html, metadata={'isolated' : True}))
 
-import argparse
-from ipywidgets import widgets
 
 class Text(widgets.Box):
     def __init__(self, **kwargs):
@@ -256,13 +259,28 @@ class Dropdown(widgets.Box):
 
 
 class ArgparseGUI:
+    skipped_actions = [
+        'help',
+        'list_devices',
+        'jit_compile',
+        'run_eagerly',
+        'debug',
+    ]
     def __init__(self, parser=None):
         self.parser = parser
         if parser is None:
-            from abismal.command_line.parser import parser as abismal_parser
             self.parser = abismal_parser
         self.polling_period = 5. #seconds
 
+    def poll(self):
+        if self._clicked:
+            self.run_abismal()
+        self._clicked = False
+
+    def polling_loop(self):
+        while True:
+            self.poll();
+            sleep(self.polling_period)
 
     @staticmethod
     def is_required(*args, **kwargs):
@@ -278,7 +296,7 @@ class ArgparseGUI:
             return action.metavar
         return action.dest
 
-    def to_parser(self):
+    def to_args(self):
         args = []
         for k,v in self._all_args.items():
             v = v.value
@@ -293,7 +311,10 @@ class ArgparseGUI:
                 if len(k.option_strings) > 0:
                     args.append(k.option_strings[0])
                 args.append(v)
-        return self.parser.parse_args(map(str, args))
+        return list(map(str, args))
+
+    def to_parser(self):
+        return self.parser.parse_args(self.to_args())
 
     @staticmethod
     def action_to_widget(action):
@@ -331,49 +352,35 @@ class ArgparseGUI:
                     description=name,
                 )
 
+
     def run_abismal(self, *args, **kwargs):
-        from abismal.command_line.abismal import run_abismal
-        import tf_keras as tfk
-        
-        # Monkey patch to force keras format
-        original_save = tfk.saving.save_model
-        
-        def patched_save(model, filepath, *args, **kwargs):
-            kwargs['save_format'] = 'keras'
-            if not filepath.endswith('.keras'):
-                filepath = filepath.rsplit('.', 1)[0] + '.keras'
-            return original_save(model, filepath, *args, **kwargs)
-        
-        tfk.saving.save_model = patched_save
-        
-        try:
-            parser = self.to_parser()
-            run_abismal(parser)
-        finally:
-            tfk.saving.save_model = original_save
-            parser = self.to_parser()
-            run_abismal(parser)
+        from subprocess import call
+        args = self.to_args()
+        self.current_process = call(['abismal'] + args)
+
+    def _set_clicked(self, *args, **kwargs):
+        self._clicked = True
 
     def to_widget(self):
+        self._clicked = False
         self.run_button = widgets.Button(
             description='Run Abismal',
             tooltip='Run Abismal merging',
         )
         self.run_button.on_click(self.run_abismal)
-        epochs = 30
         all_widgets = {'Required' : []}
         self._all_args = {}
         for group in self.parser._action_groups:
             group_args = []
             group_widgets = []
             for action in group._group_actions:
+                name = self.action_to_name(action)
+                if name in self.skipped_actions:
+                    continue
                 if action.required:
                     group_name = 'Required'
                 else:
                     group_name = group.title
-                if group_name == 'options':
-                    #This group only contains `--help`
-                    continue
                 if group_name not in all_widgets:
                     all_widgets[group_name] = []
                 widget = self.action_to_widget(action)
@@ -389,5 +396,7 @@ class ArgparseGUI:
             self.tab,
             self.run_button,
         ])
+        #self.abismal_runner = Thread(target=self.polling_loop)
+        #self.abismal_runner.start()
         return self.widget
 
