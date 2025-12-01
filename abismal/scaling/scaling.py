@@ -61,7 +61,7 @@ def elog(x):
     """ exponential-logarithmic constraint """
     neg = tf.minimum(x, 0.)
     pos = tf.maximum(x, 0.)
-    return tf.math.exp(neg) + tf.math.log1p(pos + 1.)
+    return tf.math.exp(neg) + tf.math.log1p(pos)
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class ImageScaler(tfk.models.Model):
