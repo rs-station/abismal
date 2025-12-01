@@ -21,9 +21,8 @@ def normal_posterior(output, bijector_function):
     return q
 
 def log_normal_posterior(output, bijector_function):
-    output = bijector_function(output)
     loc, scale = tf.unstack(output, axis=-1)
-    #scale = bijector_function(scale)
+    scale = bijector_function(scale)
     q = tfd.LogNormal(loc, scale)
     return q
 
@@ -49,6 +48,7 @@ def rice_posterior(output, bijector_function):
 def gamma_posterior(output, bijector_function):
     output = bijector_function(output)
     loc, scale = tf.unstack(output, axis=-1)
+    scale = scale + 1. #prevent change in concavity
     q = tfd.Gamma(loc, scale)
     return q
 
@@ -57,11 +57,19 @@ def delta_posterior(output, bijector_function):
     q = DeltaDistribution(loc)
     return q
 
+def elog(x):
+    """ exponential-logarithmic constraint """
+    neg = tf.minimum(x, 0.)
+    pos = tf.maximum(x, 0.)
+    return tf.math.exp(neg) + tf.math.log1p(pos + 1.)
+
 @tfk.saving.register_keras_serializable(package="abismal")
 class ImageScaler(tfk.models.Model):
     bijector_dict = {
         'softplus' : tf.nn.softplus,
+        'elup1' : lambda x : tf.nn.elu(x) + 1.,
         'exp' : tf.math.exp,
+        'elog' : elog,
     }
     posterior_dict = {
         'normal' : normal_posterior,
@@ -78,6 +86,7 @@ class ImageScaler(tfk.models.Model):
         'halfnormal' : lambda : tfd.HalfNormal(1.),
         'halfcauchy' : lambda : tfd.HalfCauchy(0., 1.),
         'exponential' : lambda : tfd.Exponential(1.),
+        'lognormal' : lambda :  tfd.LogNormal(0., 1.),
     }
     def __init__(
             self, 
@@ -308,8 +317,11 @@ class ImageScaler(tfk.models.Model):
                 kl_div = q.kl_divergence(p)
             except NotImplementedError:
                 q_z = q.log_prob(z)
+                z = z + self.epsilon 
                 p_z = p.log_prob(z)
                 kl_div = q_z - p_z
+                #self.add_metric(tf.math.reduce_mean(q_z), name='Σ_q_z')
+                #self.add_metric(tf.math.reduce_mean(p_z), name='Σ_p_z')
 
             kl_div = tf.reduce_mean(kl_div)
             self.add_loss(self.kl_weight * kl_div)
