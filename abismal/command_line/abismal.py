@@ -113,6 +113,7 @@ def run_abismal(parser, start_time=None):
 
             prior = WilsonPrior(rac)
         loc_init = prior.flat_distribution().mean()
+        loc_init = tf.ones_like(loc_init) * tf.math.reduce_mean(loc_init)
         scale_init = parser.init_scale * loc_init
     elif parser.prior_distribution == "normal":
         from abismal.prior.normal import NormalPrior
