@@ -22,7 +22,7 @@ class SpreadPosterior(object):
         self.Fc = Fc
         self.sites = sites
         self.mlp = mlp
-        self.wavelength_range = wavelength_range
+        self.wav_min, self.wav_max = wavelength_range
 
     def scale_bijector(self, x):
         return tf.nn.softplus(x) + self.epsilon
@@ -53,13 +53,13 @@ class SpreadPosterior(object):
         )
         return q
 
-    def distribution(self, asu_id, hkl):
+    def distribution(self, asu_id, hkl, wav=0.):
         loc = self.rac.gather(self.loc, asu_id, hkl)
         scale = self.rac.gather(self.scale, asu_id, hkl)
         q = self._distribution(loc, scale)
         return q
 
-    def flat_distribution(self=None):
+    def flat_distribution(self=None, wav=0.):
         q = self._distribution(self.loc, self.scale)
         return q
 
@@ -73,6 +73,10 @@ class SpreadPosterior(object):
             iobs,
             sigiobs,
         ) = inputs
-        wav = self.mlp(wavelength.flat_values)
+        wav = wavelength.flat_values
+        wav = (wav - wav_min) / (wav_max - wav_min)
+
         out = self.mlp(wav)
-        out = self.decod(wav)
+        out = self.decode(wav)
+
+
