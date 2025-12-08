@@ -37,7 +37,7 @@ def run_abismal(parser, start_time=None):
         StandardizationFreezer,
     )
     from abismal.io import split_dataset_train_test, set_gpu
-    from abismal.scaling import ImageScaler
+    from abismal.scaling import ImageScaler,TransformerScaler
     from abismal.surrogate_posterior.structure_factor import FoldedNormalPosterior
     from tf_keras.callbacks import ModelCheckpoint
     import gemmi
@@ -186,19 +186,12 @@ def run_abismal(parser, start_time=None):
 
     surrogate_posterior = Posterior(**posterior_kwargs)
 
-    scale_model = ImageScaler(
-        mlp_width=parser.d_model,
-        mlp_depth=parser.layers,
-        hidden_units=parser.d_model * 2,
-        activation=parser.activation,
+    scale_model = TransformerScaler(
         kl_weight=parser.scale_kl_weight,
         epsilon=parser.epsilon,
-        num_image_samples=parser.sample_reflections_per_image,
         prior_name=parser.scale_prior_distribution,
         posterior_name=parser.scale_posterior_distribution,
         bijector_name=parser.scale_posterior_bijector,
-        normalizer_name=parser.normalizer,
-        gated=parser.gated,
     )
 
     if parser.studentt_dof is not None:

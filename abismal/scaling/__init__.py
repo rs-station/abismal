@@ -1,2 +1,1 @@
-from .scaling import ImageScaler
-from .graph import GraphImageScaler
+from .scaling import ImageScaler,TransformerScaler

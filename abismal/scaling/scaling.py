@@ -338,18 +338,92 @@ class ImageScaler(tfk.models.Model):
         self.add_metric(tf.math.reduce_std(z), name='Σ_std')
         return z
 
-class KBImageScaler(ImageScaler):
+@tfk.saving.register_keras_serializable(package="abismal")
+class TransformerScaler(tfk.models.Model):
+    bijector_dict = {
+        'softplus' : tf.nn.softplus,
+        'elup1' : lambda x : tf.nn.elu(x) + 1.,
+        'exp' : tf.math.exp,
+        'elog' : elog,
+    }
+    posterior_dict = {
+        'normal' : normal_posterior,
+        'gamma' : gamma_posterior,
+        'foldednormal' : folded_normal_posloc_posterior,
+        'rice' : rice_posterior,
+        'lognormal' : log_normal_posterior,
+        'delta' : delta_posterior,
+    }
+    prior_dict = {
+        'cauchy' : lambda : tfd.Cauchy(0., 1.),
+        'laplace' : lambda : tfd.Laplace(0., 1.),
+        'normal' : lambda : tfd.Normal(0., 1.),
+        'halfnormal' : lambda : tfd.HalfNormal(1.),
+        'halfcauchy' : lambda : tfd.HalfCauchy(0., 1.),
+        'exponential' : lambda : tfd.Exponential(1.),
+        'lognormal' : lambda :  tfd.LogNormal(0., 1.),
+    }
+    def __init__(
+            self, 
+            kl_weight=1.,
+            epsilon=1e-12,
+            prior_name='exponential',
+            posterior_name='foldednormal',
+            bijector_name='softplus',
+            **kwargs, 
+        ):
+        super().__init__()
+        self.kl_weight = kl_weight
+        self.epsilon = epsilon
+        self.prior_name = prior_name.lower()
+        self.posterior_name = posterior_name.lower()
+        self.bijector_name = bijector_name
+        self.dmodel = 32
+        kernel_initializer = 'glorot_normal'
+
+        self.input_dense = tfk.layers.Dense(
+                self.dmodel, kernel_initializer=kernel_initializer, use_bias=False)
+        from abismal.layers.transformer import Transformer
+        self.transformer = Transformer()
+
+        if self.posterior_name == 'delta':
+            self.output_dense = tfk.layers.Dense(1, kernel_initializer=kernel_initializer, use_bias=output_bias)
+        else:
+            self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer, use_bias=True)
+
+    def prior_function(self):
+        return self.prior_dict[self.prior_name]()
+
+    def bijector_function(self, x):
+        return self.bijector_dict[self.bijector_name](x) + self.epsilon
+
+    def distribution_function(self, output):
+        return self.posterior_dict[self.posterior_name](output, self.bijector_function)
+
     def build(self, shapes):
-        super().build(shapes)
-        self.B = self.add_weight(
-            name='log_B', shape=(), dtype='float32', initializer='zeros'
+        (
+            asu_id,
+            hkl,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = shapes
+
+        dimage = metadata[-1] + 2
+        self.input_dense.build(
+            metadata[:-1] + [dimage] #add columns for iobs/sigiobs
         )
-        self.log_k = self.add_weight(
-            name='log_k', shape=(), dtype='float32', initializer='zeros'
+        self.transformer.build(
+            metadata[:-1] + [self.dmodel],
         )
+        self.output_dense.build(
+            metadata[:-1] + [self.dmodel] #add columns for iobs/sigiobs
+        )
+        self.built = True
 
     def call(self, inputs, mc_samples=32, training=None, **kwargs):
-        z = super().call(inputs, mc_samples, training, **kwargs)
         (
             asu_id,
             hkl,
@@ -359,9 +433,43 @@ class KBImageScaler(ImageScaler):
             iobs,
             sigiobs,
         ) = inputs
-        k = tf.math.exp(self.log_k)
-        self.add_metric(self.B, name='B')
-        self.add_metric(k, name='k')
-        z = tf.math.exp(self.log_k - self.B * tf.math.reciprocal(tf.math.square(resolution))) * z
+        scale = [metadata, iobs, sigiobs]
+        scale = tf.concat(scale, axis=-1)
+        scale = self.input_dense(scale)
+        scale = self.transformer(scale)
+        scale = self.output_dense(scale)
+
+        if ragged_tensor.is_ragged(scale):
+            q = self.distribution_function(scale.flat_values)
+        else:
+            q = self.distribution_function(scale)
+
+        z = q.sample(mc_samples) 
+
+        if not self.posterior_name.lower() == 'delta' and self.kl_weight > 0.:
+            p = self.prior_function()
+            try: #Attempt to calculate this analytically
+                kl_div = q.kl_divergence(p)
+            except NotImplementedError:
+                q_z = q.log_prob(z)
+                z = z + self.epsilon 
+                p_z = p.log_prob(z)
+                kl_div = q_z - p_z
+                #self.add_metric(tf.math.reduce_mean(q_z), name='Σ_q_z')
+                #self.add_metric(tf.math.reduce_mean(p_z), name='Σ_p_z')
+
+            kl_div = tf.reduce_mean(kl_div)
+            self.add_loss(self.kl_weight * kl_div)
+            self.add_metric(kl_div, name='KL_Σ')
+
+        if ragged_tensor.is_ragged(scale):
+            z = tf.RaggedTensor.from_row_splits(
+                tf.transpose(z), metadata.row_splits
+            )
+        else:
+            z = tf.transpose(z)
+
+        self.add_metric(tf.math.reduce_mean(z), name='Σ_mean')
+        self.add_metric(tf.math.reduce_std(z), name='Σ_std')
         return z
 
