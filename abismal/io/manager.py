@@ -153,6 +153,7 @@ class DataManager:
                     cell_tol=self.cell_tol,
                 )
                 if self.separate:
+                    self.num_cpus = 1 #multiprocessing with ray can't be done on multiple files at once
                     asu_id += 1
                 if self.cell is None:
                     self.cell = loader.cell
