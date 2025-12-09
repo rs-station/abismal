@@ -153,3 +153,43 @@ class GLUFeedForward(FeedForward):
         out = out + X
 
         return out
+
+class MLP(tfk.models.Sequential):
+    def __init__(
+        self,
+        dmodel=None,
+        depth=20,
+        hidden_units=None,
+        activation='relu',
+        kernel_initializer='glorot_normal',
+        use_bias=False,
+        normalizer='rms',
+        gated=False,
+        dout=None,
+    ):
+        self.mlp_depth = depth
+        self.hidden_units = hidden_units
+        self.activation = activation
+        self.kernel_initializer = kernel_initializer
+        self.use_bias = use_bias
+        self.normalizer = normalizer
+        self.gated = gated
+
+        FF = FeedForward
+        if gated:
+            FF = GLUFeedForward
+        layers = []
+        if dmodel is not None:
+            layers.append(tfk.layers.Dense(dmodel, use_bias=False, kernel_initializer='glorot_normal'))
+        layers.extend([
+                FF(
+                    hidden_units=self.hidden_units,
+                    activation=self.activation,
+                    kernel_initializer=self.kernel_initializer,
+                    use_bias=self.use_bias,
+                    normalizer=self.normalizer,
+                ) for _ in range(self.mlp_depth)
+        ])
+        if dout is not None:
+            layers.append(tfk.layers.Dense(dout, use_bias=True, kernel_initializer='glorot_normal'))
+        super().__init__(layers)

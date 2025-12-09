@@ -98,7 +98,7 @@ class ImageScaler(tfk.models.Model):
             epsilon=1e-12,
             num_image_samples=None,
             share_weights=True,
-            prior_name='exponential',
+            prior_name='lognormal',
             posterior_name='foldednormal',
             bijector_name='softplus',
             normalizer_name=None,
@@ -160,10 +160,7 @@ class ImageScaler(tfk.models.Model):
         self.hkl_to_imodel = hkl_to_imodel
         self.gated = gated
         self.output_bias = output_bias
-
         self.hidden_units = hidden_units
-        if self.hidden_units is None:
-            self.hidden_units = 2 * mlp_width 
 
         kernel_initializer = 'glorot_normal'
         self.input_image = tfk.layers.Dense(
@@ -173,31 +170,28 @@ class ImageScaler(tfk.models.Model):
 
         self.pool = Average(axis=-2)
 
-        if gated:
-            from abismal.layers import GLUFeedForward as FeedForward
-        else:
-            from abismal.layers import FeedForward 
 
-        self.image_network = tfk.models.Sequential([
-                FeedForward(
-                    hidden_units=self.hidden_units,
-                    activation=self.activation,
-                    kernel_initializer=kernel_initializer,
-                    use_bias=False,
-                    normalizer=normalizer_name,
-                ) for _ in range(mlp_depth)])
+        self.image_network = MLP(
+            depth=mlp_depth,
+            hidden_units=self.hidden_units,
+            activation=self.activation,
+            kernel_initializer='glorot_normal',
+            use_bias=False,
+            normalizer=normalizer_name,
+            gated=gated,
+        ) 
         if share_weights:
             self.scale_network = self.image_network
         else:
-            self.scale_network = tfk.models.Sequential([
-                FeedForward(
-                    hidden_units=self.hidden_units, 
-                    kernel_initializer=kernel_initializer, 
-                    activation=self.activation, 
-                    use_bias=False,
-                    normalizer=normalizer_name,
-                    ) for _ in range(mlp_depth)
-            ]) 
+            self.scale_network = MLP(
+                depth=mlp_depth,
+                hidden_units=self.hidden_units,
+                activation=self.activation,
+                kernel_initializer='glorot_normal',
+                use_bias=False,
+                normalizer=normalizer_name,
+                gated=gated,
+            ) 
 
         if self.posterior_name == 'delta':
             self.output_dense = tfk.layers.Dense(1, kernel_initializer=kernel_initializer, use_bias=output_bias)

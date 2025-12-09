@@ -308,7 +308,8 @@ class SpreadMergingModel(VariationalMergingModel):
 
         for op in self.reindexing_ops:
             _hkl = tf.ragged.map_flat_values(op, hkl_in)
-            q = self.surrogate_posterior(asu_id.flat_values, _hkl.flat_values)
+            _inputs = inputs[:1] + (_hkl,) + inputs[2:]
+            q = self.surrogate_posterior(_inputs)
             p = self.prior.distribution(asu_id.flat_values, _hkl.flat_values)
             z = q.sample(mc_samples)
             _kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
