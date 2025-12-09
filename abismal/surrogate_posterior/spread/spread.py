@@ -1,4 +1,5 @@
 import numpy as np
+import math
 import gemmi
 import tensorflow as tf
 from abismal.distributions import Rice
@@ -12,6 +13,18 @@ from abismal.symmetry import ReciprocalASU,ReciprocalASUCollection,ReciprocalASU
 import reciprocalspaceship as rs
 from tempfile import NamedTemporaryFile
 from subprocess import call
+
+def wav_min_max(expt_file):
+    from dxtbx.model import ExperimentList
+    wav_min = math.inf
+    wav_max = -math.inf
+    if expt_file.endswith('.expt'):
+        elist = ExperimentList.from_file(expt_file, check_format=False)
+        for expt in elist:
+            wav = expt.beam.get_wavelength()
+            wav_min = min(wav, wav_min)
+            wav_max = max(wav, wav_max)
+    return [wav_min, wav_max]
 
 
 class SpreadPosterior(StructureFactorPosteriorBase):
@@ -40,12 +53,35 @@ class SpreadPosterior(StructureFactorPosteriorBase):
             ])
         self.sites = tf.convert_to_tensor(self.sites)
 
-        self.mlp = MLP(depth=mlp_depth, dmodel=dmodel)
+        self.input_layer = tfk.layers.Dense(dmodel, kernel_initializer='glorot_normal')
+        self.mlp = MLP(depth=mlp_depth)
         self.output_layer = tfk.layers.EinsumDense(
             '...d,dab->...ab',
             output_shape=(3, self.num_atoms),
             kernel_initializer='glorot_normal',
+            bias_axes='ab',
         )
+
+    def get_config(self):
+        config = super().get_config()
+        config['rac'] = tfk.saving.serialize_keras_object(self.rac)
+        config['Freal'] = tfk.saving.serialize_keras_object(tf.math.real(self.Fc))
+        config['Fimag'] = tfk.saving.serialize_keras_object(tf.math.imag(self.Fc))
+        config['sites_dict'] = self.sites_dict
+        config['dmodel'] = self.dmodel 
+        config['mlp_depth'] = self.mlp_depth
+        config['epsilon'] = self.epsilon
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
+        config['Fc'] = tf.complex(
+            tfk.saving.deserialize_keras_object(config.pop('Freal')),
+            tfk.saving.deserialize_keras_object(config.pop('Fimag')),
+        )
+        return cls(**config)
+
 
     @property
     def cell(self):
@@ -56,18 +92,24 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         return self.rac.reciprocal_asus[0].spacegroup
 
     @staticmethod
-    def estimate_wavelength_range(expt_files):
-        from dxtbx.model import ExperimentList
-        wavs = []
-        for expt_file in expt_files:
-            if not expt_file.endswith('.expt'):
-                continue
-            elist = ExperimentList.from_file(expt_file, check_format=False)
-            for expt in elist:
-                wavs.append(
-                    expt.beam.get_wavelength()
-                )
-        return [np.min(wavs), np.max(wavs)]
+    def estimate_wavelength_range(expt_files, num_cpus=1):
+        from tqdm import tqdm
+        from joblib import Parallel,delayed
+
+        wav_min = math.inf
+        wav_max = -math.inf
+
+        #from IPython import embed;embed(colors='linux')
+        if num_cpus == 1:
+            results = map(wav_min_max, expt_files)
+        else:
+            results = Parallel(num_cpus)(delayed(wav_min_max)(efile) for efile in expt_files)
+
+        for _wav_min,_wav_max in tqdm(results, total=len(expt_files)):
+            wav_min = min(wav_min, _wav_min)
+            wav_max = max(wav_max, _wav_max)
+
+        return [wav_min, wav_max]
 
     @staticmethod
     def sites_from_file(sites_pdb, elements):
@@ -161,9 +203,10 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         if wav is None:
             wav = self.wav_min
 
-        wav = (wav - self.wav_min) / (self.wav_max - self.wav_min)
+        wav = self.encode_wav(wav)
 
-        out = self.mlp(wav)
+        out = self.input_layer(wav)
+        out = self.mlp(out)
         out = self.output_layer(out) #moments
         fp,fpp,scale = tf.unstack(out, axis=-2)
         scale = self.scale_bijector(scale)
@@ -221,4 +264,34 @@ class SpreadPosterior(StructureFactorPosteriorBase):
             sigiobs,
         ) = self.sanitize_inputs(inputs)
         return self.distribution(asu_id, hkl_in, wavelength)
+
+    def encode_wav(self, wav):
+        out = 2. * (wav - self.wav_min) / (self.wav_max - self.wav_min) - 1.
+        f = 2. * np.pi * 2 ** -tf.linspace(0., 5., 6)
+        out = tf.concat((
+            tf.math.cos(out * f),
+            tf.math.sin(out * f),
+        ), axis=-1)
+        return out
+
+    def get_results(self, npoints=100):
+        import pandas as pd
+        wav = tf.linspace(self.wav_min, self.wav_max, npoints)[:,None]
+        wav_normed = self.encode_wav(wav)
+        out = self.input_layer(wav_normed)
+        out = self.mlp(out)
+        out = self.output_layer(out) #moments
+        fp,fpp,scale = tf.unstack(out, axis=-2)
+        scale = self.scale_bijector(scale)
+        wav = wav * tf.ones_like(fp)
+        atom = tf.ones_like(scale, dtype='int32') * tf.range(scale.shape[-1])
+        results = pd.DataFrame({
+            "wavelength" : wav.numpy().flatten(),
+            "f'" : fp.numpy().flatten(),
+            "f''" : fpp.numpy().flatten(),
+            "stddev" : scale.numpy().flatten(),
+            "atom_id" : atom.numpy().flatten(),
+        })
+        results['atom_name'] = np.array(list(self.sites_dict.keys()))[atom.numpy().flatten()]
+        return results
 

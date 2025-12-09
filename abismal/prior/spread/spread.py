@@ -12,12 +12,29 @@ from abismal.prior.base import PriorBase
 
 
 class SpreadPrior(PriorBase):
-    def __init__(self, rac, Fcalc, sigma=1.):
-        super().__init__()
+    def __init__(self, rac, Fcalc, sigma=1., **kwargs):
+        super().__init__(**kwargs)
         self.rac = rac
         #self.sites = sites
         self.Fc = Fcalc
         self.sigma = sigma
+
+    def get_config(self):
+        config = super().get_config()
+        config['rac'] = tfk.saving.serialize_keras_object(self.rac)
+        config['Freal'] = tfk.saving.serialize_keras_object(tf.math.real(self.Fc))
+        config['Fimag'] = tfk.saving.serialize_keras_object(tf.math.imag(self.Fc))
+        config['sigma'] = self.sigma
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
+        config['Fc'] = tf.complex(
+            tfk.saving.deserialize_keras_object(config.pop('Freal')),
+            tfk.saving.deserialize_keras_object(config.pop('Fimag')),
+        )
+        return cls(**config)
 
     @classmethod
     def from_spread_posterior(cls, spread_posterior, sigma=1.):

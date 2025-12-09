@@ -26,12 +26,16 @@ def main():
         AnomalousPeakFinder,
         WeightSaver,
         StandardizationFreezer,
+        SpreadSaver,
     )
     from abismal.prior.spread.spread import SpreadPrior
 
     parser = ArgumentParser(__doc__)
     parser.add_argument(
         "--epochs", help="How many gradient descent epochs to run", type=int, default=30, required=False
+    )
+    parser.add_argument(
+        "--num-cpus", help="CPUs to use for data loading", type=int, default=1, required=False
     )
     parser.add_argument(
         "--mc-samples", help="Number of mc samples used in gradient estimation", type=int, default=32, required=False
@@ -76,6 +80,9 @@ def main():
         "--energy-range", default=None, type=float, nargs=2, help="Specify the energy range over which to refine f' and f''. ",
     )
     parser.add_argument(
+        "--debug", action='store_true', help='Debug mode runs eagerly.',
+    )
+    parser.add_argument(
         "integrated", type=str, nargs='+', help='The integrated diffraction data on which to conduct the "SPREAD" analysis.',
     )
     parser = parser.parse_args()
@@ -84,7 +91,7 @@ def main():
     if parser.wavelength_range is None:
         if parser.energy_range is None:
             wavs = []
-            parser.wavelength_range = SpreadPosterior.estimate_wavelength_range(parser.integrated)
+            parser.wavelength_range = SpreadPosterior.estimate_wavelength_range(parser.integrated, num_cpus=parser.num_cpus)
 
     surrogate_posterior = SpreadPosterior.from_pdb(
         pdb_file=parser.model_file,
@@ -102,7 +109,7 @@ def main():
         cell=surrogate_posterior.cell,
         spacegroup=surrogate_posterior.spacegroup,
         test_fraction=parser.test_fraction,
-        num_cpus=1,
+        num_cpus=parser.num_cpus,
         steps_per_epoch=parser.steps_per_epoch,
         #shuffle_buffer_size=10_000,
     )
@@ -147,6 +154,7 @@ def main():
     )
 
     #mtz_saver = MtzSaver(parser.out_dir, parser.reference_mtz)
+    spread_saver = SpreadSaver(parser.out_dir)
     history_saver = HistorySaver(parser.out_dir, gpu_id=0, start_time=start_time)
     weight_saver = WeightSaver(parser.out_dir)
     freezer = StandardizationFreezer()
@@ -154,8 +162,9 @@ def main():
     callbacks = [
         #mtz_saver,
         history_saver,
-        #weight_saver,
+        weight_saver,
         freezer,
+        spread_saver,
     ]
 
     if not exists(parser.out_dir):
@@ -163,10 +172,11 @@ def main():
 
     from abismal.optimizers import Adam
     opt = Adam()
-    model.compile(opt, run_eagerly=True)
+    model.compile(opt, run_eagerly=parser.debug)
 
     for x,y in train:
         z = model(x)
+        model.surrogate_posterior.get_results()
         break
 
     history = model.fit(
@@ -179,4 +189,23 @@ def main():
         verbose=parser.keras_verbosity,
     )
 
+def plot_results():
+    from argparse import ArgumentParser
+    parser = ArgumentParser("Plot results from the spread training.")
+    parser.add_argument(
+        "csv", help="A 'spread_epoch_#.csv' file to plot.", type=str
+    )
+    parser = parser.parse_args()
+    import pandas as pd
+    import seaborn as sns
+    from matplotlib import pyplot as plt
+    results = pd.read_csv(parser.csv)
+    sns.lineplot(                                                                   
+        results.melt(['wavelength', 'atom_name', 'stddev'], value_vars=["f'", "f''"]),
+        x='wavelength',
+        y='value',
+        hue='atom_name',
+        style='variable',
+    )
+    plt.show()
 
