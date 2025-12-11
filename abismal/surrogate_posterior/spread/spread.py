@@ -121,7 +121,9 @@ class SpreadPosterior(StructureFactorPosteriorBase):
                     for atom in resi:
                         elem = atom.element.name
                         if elem in elements:
-                            identifier = f"{model.num}/{chain.name}/{resi.seqid.num}/{atom.element.name}"
+                            identifier = f"{model.num}/{chain.name}/{resi.seqid.num}/{atom.name}"
+                            if identifier in sites:
+                                raise ValueError(f"Duplicate atom identifier in {sites_pdb}\nCannot proceed with analysis")
                             sites[identifier] = structure.cell.fractionalize(atom.pos).tolist() #Use the PDB's cell irrespective of rac
         return sites
 
