@@ -35,6 +35,9 @@ def main():
         "--epochs", help="How many gradient descent epochs to run", type=int, default=30, required=False
     )
     parser.add_argument(
+        "--shuffle-buffer-size", help="Buff the shuffles", type=int, default=10_000, required=False
+    )
+    parser.add_argument(
         "--num-cpus", help="CPUs to use for data loading", type=int, default=1, required=False
     )
     parser.add_argument(
@@ -47,13 +50,19 @@ def main():
         "--layers", help="The depth of the neural network", type=int, default=20, required=False
     )
     parser.add_argument(
-        "--steps-per-epoch", help="How many steps per epoch", type=int, default=None, required=False
+        "--steps-per-epoch", help="How many steps per epoch", type=int, default=1_000, required=False
     )
     parser.add_argument(
         "--batch-size", help="Number of images considered in each gradient step", type=int, default=100, required=False
     )
     parser.add_argument(
         "--test-fraction", help="Fraction of data reserved for validation", type=float, default=0., required=False
+    )
+    parser.add_argument(
+        "--scale-kl-weight", help="Scale KL divergence weight", type=float, default=1., required=False
+    )
+    parser.add_argument(
+        "--kl-weight", help="KL divergence weight", type=float, default=1., required=False
     )
     parser.add_argument(
         "--studentt-dof", help="Student's t degrees of freedom for likelihood", type=float, default=None, required=False
@@ -111,7 +120,7 @@ def main():
         test_fraction=parser.test_fraction,
         num_cpus=parser.num_cpus,
         steps_per_epoch=parser.steps_per_epoch,
-        #shuffle_buffer_size=10_000,
+        shuffle_buffer_size=parser.shuffle_buffer_size,
     )
     train,test = dm.get_train_test_splits()
 
@@ -121,7 +130,7 @@ def main():
             mlp_depth=parser.layers,
             hidden_units=None,
             activation="relu",
-            kl_weight=1.,
+            kl_weight=parser.scale_kl_weight,
             epsilon=1e-12,
             num_image_samples=None,
             share_weights=True,
@@ -148,7 +157,7 @@ def main():
         prior=prior,
         likelihood=likelihood,
         mc_samples=parser.mc_samples,
-        kl_weight=1.,
+        kl_weight=parser.kl_weight,
         reindexing_ops=reindexing_ops,
         standardization_decay=0.999,
     )
@@ -196,13 +205,16 @@ def plot_results():
         "csv", help="A 'spread_epoch_#.csv' file to plot.", type=str
     )
     parser = parser.parse_args()
+
     import pandas as pd
     import seaborn as sns
     from matplotlib import pyplot as plt
+    import reciprocalspaceship as rs
     results = pd.read_csv(parser.csv)
+    results['energy'] = rs.utils.angstroms2ev(results['wavelength'])
     sns.lineplot(                                                                   
-        results.melt(['wavelength', 'atom_name', 'stddev'], value_vars=["f'", "f''"]),
-        x='wavelength',
+        results.melt(['energy', 'atom_name', 'stddev'], value_vars=["f'", "f''"]),
+        x='energy',
         y='value',
         hue='atom_name',
         style='variable',
