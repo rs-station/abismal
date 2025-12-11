@@ -138,7 +138,6 @@ class StillsLoader(DataLoader):
         from dials.array_family import flex
         from dxtbx.model.experiment_list import ExperimentListFactory 
         table = flex.reflection_table.from_file(refl_file)
-        table.sort('id')
         elist = ExperimentListFactory.from_json_file(expt_file, check_format=False)
 
         idx = flex.size_t(np.array(table['id']))
