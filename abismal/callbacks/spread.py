@@ -8,7 +8,7 @@ class SpreadSaver(tfk.callbacks.Callback):
 
     def on_epoch_end(self, epoch, logs):
         results = self.model.surrogate_posterior.get_results()
-        out = self.fmt.format(epoch=epoch)
+        out = self.fmt.format(epoch=epoch + 1)
         results.to_csv(out)
 
 
