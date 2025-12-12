@@ -26,12 +26,46 @@ def wav_min_max(expt_file):
             wav_max = max(wav, wav_max)
     return [wav_min, wav_max]
 
+class SpreadNN(tfk.models.Model):
+    def __init__(self, wavelength_range, num_atoms, dmodel=32, mlp_depth=20, epsilon=1e-12, **kwargs):
+        super().__init__(**kwargs)
+        self.num_atoms = num_atoms
+        self.epsilon = epsilon
+        self.wav_min,self.wav_max = wavelength_range
+        self.input_layer = tfk.layers.Dense(dmodel, kernel_initializer='glorot_normal')
+        self.mlp = MLP(depth=mlp_depth)
+        self.output_layer = tfk.layers.EinsumDense(
+            '...d,dab->...ab',
+            output_shape=(3, self.num_atoms),
+            kernel_initializer='glorot_normal',
+            bias_axes='ab',
+        )
+
+    def scale_bijector(self, x):
+        return tf.nn.softplus(x) + self.epsilon
+
+    def encode_wav(self, wav):
+        out = 2. * (wav - self.wav_min) / (self.wav_max - self.wav_min) - 1.
+        f = 2. * np.pi * 2 ** tf.linspace(0., 5., 6)
+        out = tf.concat((
+            tf.math.cos(out * f),
+            tf.math.sin(out * f),
+        ), axis=-1)
+        return out
+
+    def call(self, wav):
+        wav_normed = self.encode_wav(wav)
+        out = self.input_layer(wav_normed)
+        out = self.mlp(out)
+        out = self.output_layer(out)
+        fp,fpp,scale = tf.unstack(out, axis=-2)
+        scale = self.scale_bijector(scale)
+        return fp, fpp, scale
 
 class SpreadPosterior(StructureFactorPosteriorBase):
-    def __init__(self, rac, Fc, sites_dict, wavelength_range, dmodel=32, mlp_depth=20, epsilon=1e-12, **kwargs):
+    def __init__(self, rac, Fc, sites_dict, wavelength_range, spread_model=None, dmodel=32, mlp_depth=20, epsilon=1e-12, **kwargs):
         """
         rac : ReciprocalASUCollection
-        mlp : tfk.layers.Layer
         Fc : np.array
         sites : dict{str : list[float] (3)}
         wavelength_range : list[float] (2)
@@ -53,14 +87,8 @@ class SpreadPosterior(StructureFactorPosteriorBase):
             ])
         self.sites = tf.convert_to_tensor(self.sites)
 
-        self.input_layer = tfk.layers.Dense(dmodel, kernel_initializer='glorot_normal')
-        self.mlp = MLP(depth=mlp_depth)
-        self.output_layer = tfk.layers.EinsumDense(
-            '...d,dab->...ab',
-            output_shape=(3, self.num_atoms),
-            kernel_initializer='glorot_normal',
-            bias_axes='ab',
-        )
+        if spread_model is None:
+            self.spread_model = SpreadNN(wavelength_range, self.num_atoms, dmodel, mlp_depth, epsilon)
 
     def get_config(self):
         config = super().get_config()
@@ -185,33 +213,11 @@ class SpreadPosterior(StructureFactorPosteriorBase):
 
         return cls(rac, Fc, sites, wavelength_range, **kwargs)
 
-    def scale_bijector(self, x):
-        return tf.nn.softplus(x) + self.epsilon
-
-    def distribution(self, params):
-        loc, scale = tf.unstack(params)
-        scale = self.scale_bijector(scale)
-        q = tfd.Normal(loc, scale)
-        return q
-
-    def _distribution(self, loc, scale):
-        q = tfd.Normal(
-            loc, 
-            scale, 
-        )
-        return q
-
     def distribution(self, asu_id, hkl, wav=None):
         if wav is None:
             wav = self.wav_min
 
-        wav = self.encode_wav(wav)
-
-        out = self.input_layer(wav)
-        out = self.mlp(out)
-        out = self.output_layer(out) #moments
-        fp,fpp,scale = tf.unstack(out, axis=-2)
-        scale = self.scale_bijector(scale)
+        fp,fpp,scale = self.spread_model(wav)
 
         # Rician RV params nu,sigma
         sigma = tf.math.sqrt(tf.einsum(
@@ -239,7 +245,7 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         return q
 
     def flat_distribution(self=None, wav=0.):
-        q = self._distribution(
+        q = self.distribution(
             self.rac.asu_id,
             self.rac.Hunique,
             wav,
@@ -255,36 +261,10 @@ class SpreadPosterior(StructureFactorPosteriorBase):
                 sane.append(x)
         return sane
 
-    def call(self, inputs=None):
-        (
-            asu_id,
-            hkl_in,
-            resolution,
-            wavelength,
-            metadata,
-            iobs,
-            sigiobs,
-        ) = self.sanitize_inputs(inputs)
-        return self.distribution(asu_id, hkl_in, wavelength)
-
-    def encode_wav(self, wav):
-        out = 2. * (wav - self.wav_min) / (self.wav_max - self.wav_min) - 1.
-        f = 2. * np.pi * 2 ** -tf.linspace(0., 5., 6)
-        out = tf.concat((
-            tf.math.cos(out * f),
-            tf.math.sin(out * f),
-        ), axis=-1)
-        return out
-
     def get_results(self, npoints=100):
         import pandas as pd
         wav = tf.linspace(self.wav_min, self.wav_max, npoints)[:,None]
-        wav_normed = self.encode_wav(wav)
-        out = self.input_layer(wav_normed)
-        out = self.mlp(out)
-        out = self.output_layer(out) #moments
-        fp,fpp,scale = tf.unstack(out, axis=-2)
-        scale = self.scale_bijector(scale)
+        fp,fpp,scale = self.spread_model(wav)
         wav = wav * tf.ones_like(fp)
         atom = tf.ones_like(scale, dtype='int32') * tf.range(scale.shape[-1])
         results = pd.DataFrame({
@@ -297,3 +277,14 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         results['atom_name'] = np.array(list(self.sites_dict.keys()))[atom.numpy().flatten()]
         return results
 
+    def call(self, inputs=None):
+        (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = self.sanitize_inputs(inputs)
+        return self.distribution(asu_id, hkl_in, wavelength)
