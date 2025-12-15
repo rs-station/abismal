@@ -2,12 +2,7 @@
 Estimate cchalf from abismal output.
 """
 
-
-
-def main():
-    import tf_keras as tfk
-    from abismal.io.manager import DataManager
-    from abismal.callbacks import MtzSaver
+def main(args=None):
     from argparse import ArgumentParser
     parser = ArgumentParser(__doc__)
     parser.add_argument(
@@ -28,7 +23,12 @@ def main():
     parser.add_argument(
         "--reference-mtz", type= str, default=None, help='A reference mtz file which will be used to determine the reindexing operator.',
     )
-    parser = parser.parse_args()
+    parser = parser.parse_args(args)
+
+    import tf_keras as tfk
+    from abismal.io.manager import DataManager
+    from abismal.callbacks import MtzSaver
+
     refls = []
 
 
