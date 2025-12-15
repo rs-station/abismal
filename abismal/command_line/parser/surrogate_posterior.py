@@ -8,8 +8,8 @@ args_and_kwargs = (
         (
             "--init-scale",
         ),{
-            "help": "The surrogate posteriors will be initialized with standard deviations equal to init_scale * mean(prior). The default is 0.01. ",
-            "default": 0.01,
+            "help": "The surrogate posteriors will be initialized with standard deviations equal to init_scale * mean(prior). The default is 1.0. ",
+            "default": 1.00,
             "type": float,
         }
     ),
