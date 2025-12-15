@@ -22,3 +22,10 @@ def stills_expt():
     filename = abspath(join(dirname(__file__), datapath))
     return filename
 
+
+@pytest.fixture
+def stills_stream():
+    datapath = "io/crystfel.stream"
+    filename = abspath(join(dirname(__file__), datapath))
+    return filename
+
