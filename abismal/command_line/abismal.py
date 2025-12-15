@@ -237,6 +237,8 @@ def run_abismal(parser, start_time=None):
     }
     from abismal.optimizers.optimizer_dict import optimizer_dict
 
+    if 'tfk' in parser.optimizer:
+        optimizer_kwargs.pop('lazy_vars')
     Optimizer = optimizer_dict[parser.optimizer]
     opt = Optimizer(**optimizer_kwargs)
 
