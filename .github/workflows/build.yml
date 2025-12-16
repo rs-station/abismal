@@ -30,20 +30,30 @@ jobs:
       run: |
         source $CONDA/etc/profile.d/conda.sh
         conda activate
-        which python
+        echo "Using python from $(which python)"
         python --version
-        echo $CONDA
+        echo "CONDA set to $CONDA"
         conda install -n base conda-libmamba-solver
         conda config --set solver libmamba
 
     - name: Install abismal
       run: |
-        conda install -c conda-forge python=${{ matrix.python-version }} dials
-        python -m pip install --upgrade pip
+        source $CONDA/etc/profile.d/conda.sh
+        conda create -yn abismal -c conda-forge python=${{ matrix.python-version }} dials
+        conda activate abismal
+        echo "Using python from $(which python)"
+        python --version
+        echo "Using pip from ... $(which pip)"
+        pip install --upgrade pip
         pip install -e .[dev]
 
     - name: Run tests with pytest
       run: |
+        source $CONDA/etc/profile.d/conda.sh
+        conda activate abismal
+        echo "Using python from $(which python)"
+        python --version
+        echo "Using pytest from ... $(which pytest)"
         pytest
 
     - name: Upload coverage to Codecov  
