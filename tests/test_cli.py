@@ -26,7 +26,7 @@ base_flags = (
     #"--debug",
 )
 
-def run_abismal(flags, files):
+def run_abismal(flags, files, additional_asserts=()):
     with TemporaryDirectory() as output_dir:
         chdir(output_dir)
         flags = ' ' + ' '.join(flags) + ' ' 
@@ -43,6 +43,8 @@ def run_abismal(flags, files):
         assert exists('epoch_1.keras')
         assert exists('epoch_2.keras')
         assert exists('history.csv')
+        for add in additional_asserts:
+            assert add()
 
         args = " datamanager.yml epoch_2.keras --sf-init epoch_0.keras "
         cchalf_main(args.split())
@@ -122,4 +124,22 @@ def test_multivariate_normal_posterior(conventional_mtz):
         flags,
         files,
     )
+
+def test_separate(conventional_mtz):
+    flags = base_flags + ('--separate',)
+    files = [
+        conventional_mtz,
+        conventional_mtz,
+        conventional_mtz,
+    ]
+    additional_asserts = (
+        lambda : exists('asu_1_epoch_1.mtz'),
+        lambda : exists('asu_2_epoch_1.mtz'),
+    )
+    run_abismal(
+        flags,
+        files,
+        additional_asserts
+    )
+
 
