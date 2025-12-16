@@ -1,0 +1,64 @@
+name: Build
+run-name: Production Build by ${{ github.actor }}
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: [ubuntu-latest]
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Miniconda
+      uses: conda-incubator/setup-miniconda@v3
+      with:
+        miniconda-version: "latest"
+        channels: conda-forge, defaults
+        auto-activate-base: true
+        activate-environment: ""
+
+    - name: Source Miniconda
+      run: |
+        source $CONDA/etc/profile.d/conda.sh
+        conda activate
+        echo "Using python from $(which python)"
+        python --version
+        echo "CONDA set to $CONDA"
+        conda install -n base conda-libmamba-solver
+        conda config --set solver libmamba
+
+    - name: Install abismal
+      run: |
+        source $CONDA/etc/profile.d/conda.sh
+        conda create -qyn abismal -c conda-forge python=${{ matrix.python-version }} dials
+        conda activate abismal
+        echo "Using python from $(which python)"
+        python --version
+        echo "Using pip from ... $(which pip)"
+        pip install -q --upgrade pip
+        pip install -qe .[dev]
+
+    - name: Run tests with pytest
+      run: |
+        source $CONDA/etc/profile.d/conda.sh
+        conda activate abismal
+        echo "Using python from $(which python)"
+        python --version
+        echo "Using pytest from ... $(which pytest)"
+        pytest
+
+    - name: Upload coverage to Codecov  
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+

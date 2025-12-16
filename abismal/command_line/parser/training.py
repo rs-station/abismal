@@ -59,7 +59,7 @@ args_and_kwargs = (
             "--test-fraction",
         ),{
             "help": "The fraction of images reserved for validation with default 0.01.",
-            "default": 0.01, "type": float,
+            "default": 0.10, "type": float,
         }
     ),
 
@@ -67,8 +67,8 @@ args_and_kwargs = (
         (
             "--shuffle-buffer-size",
         ),{
-            "help": "The size of the shuffle buffer which randomizes the training data with default 100_000.",
-            "default": 0,
+            "help": "The size of the shuffle buffer which randomizes the training data with default 10_000.",
+            "default": 10_000,
             "type": int,
         }
     ),

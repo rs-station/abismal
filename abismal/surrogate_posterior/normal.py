@@ -105,7 +105,7 @@ class MultivariateNormalPosteriorBase(object):
         loc = self.rac.gather(self.loc, asu_id, hkl)
         scale = self.rac.gather(self.scale, asu_id, hkl)
         scale_update = self.rac.gather(self.scale_update, asu_id, hkl)
-        q = self._distribution(loc, scale, scale_udpate)
+        q = self._distribution(loc, scale, scale_update)
         return q
 
     def flat_distribution(self):
