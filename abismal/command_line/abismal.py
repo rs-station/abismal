@@ -1,22 +1,18 @@
 #!/usr/bin/env python
 
-
-def main():
+def main(args=None):
     from time import time
     start_time = time()
     from abismal.ragged import quiet
     from abismal.command_line.parser import parser
 
-    parser = parser.parse_args()
+    parser = parser.parse_args(args)
 
     from abismal.io.tf_settings import set_log_level, set_gpu
 
     set_log_level(parser.tf_log_level)
     set_gpu(parser.gpu_id)
-    run_abismal(parser, start_time)
 
-
-def run_abismal(parser, start_time=None):
     import math
     import tensorflow as tf
     import tf_keras as tfk
