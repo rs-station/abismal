@@ -38,7 +38,7 @@ jobs:
 
     - name: Install abismal
       run: |
-        conda create -yn abismal python={{ matrix.python-version }} -c conda-forge dials
+        conda create -yn abismal python=${{ matrix.python-version }} -c conda-forge dials
         conda activate abismal
         python -m pip install --upgrade pip
         pip install -e .[dev]
