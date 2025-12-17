@@ -45,7 +45,7 @@ abismal = "abismal.command_line.abismal:main"
 "abismal.plot_history" = "abismal.command_line.plot_history:main"
 
 [tool.pytest.ini_options]
-addopts = "-n auto"
+addopts = "-n auto --cov=abismal --cov-config=.coveragerc --cov-report xml"
 testpaths = [
     "tests",
 ]
