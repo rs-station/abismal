@@ -58,7 +58,7 @@ def test_stills_loader(stills_expt, stills_refl):
 )
 def test_datamanager(
         file_format, double, separate, stills_expt, stills_refl, 
-        stills_stream, conventional_mtz, test_fraction,
+        stills_stream, conventional_mtz, test_fraction, batch_size=1
     ):
     if file_format == 'mtz':
         inputs = [conventional_mtz]
@@ -81,7 +81,7 @@ def test_datamanager(
         'cell_tol': None, #notest
         'isigi_cutoff': None, 
         'shuffle_buffer_size': 0,  #Tested in e2e
-        'batch_size': 10, 
+        'batch_size': batch_size, 
         'steps_per_epoch': None, 
         'validation_steps': None,
         'epochs': 30,
@@ -102,4 +102,5 @@ def test_datamanager(
     for x,y in train:
         assert len(x) == 7
         assert len(y) == 1
+        assert x[0].shape[0] == batch_size
 
