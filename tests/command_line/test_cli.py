@@ -143,3 +143,14 @@ def test_separate(conventional_mtz):
     )
 
 
+def test_glu(conventional_mtz):
+    flags = base_flags + ('--gated',)
+    files = [
+        conventional_mtz,
+    ]
+    run_abismal(
+        flags,
+        files,
+    )
+
+
