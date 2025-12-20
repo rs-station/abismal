@@ -282,7 +282,7 @@ def main(args=None):
     if need_to_build:
         logger.info(f"Initializing weights")
         for x, y in train:
-            model(x)
+            model(x, training=True)
             break
 
     if parser.scale_init_file is not None:
