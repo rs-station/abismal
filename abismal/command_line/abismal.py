@@ -40,8 +40,13 @@ def main(args=None):
     import logging
     from os.path import exists
     from os import mkdir
-    from abismal.likelihood import StudentTLikelihood
-    from abismal.likelihood import NormalLikelihood
+    from abismal.likelihood import (
+        StudentTLikelihood,
+        AdaptiveStudentTLikelihood,
+        LeastSquaresLikelihood,
+        NormalLikelihood,
+        EV11Likelihood
+    )
 
     if not exists(parser.out_dir):
         mkdir(parser.out_dir)
@@ -197,10 +202,18 @@ def main(args=None):
         gated=parser.gated,
     )
 
-    if parser.studentt_dof is not None:
-        likelihood = StudentTLikelihood(parser.studentt_dof)
-    else:
+    if parser.likelihood == 'normal':
         likelihood = NormalLikelihood()
+    elif parser.likelihood == 'leastsquares':
+        likelihood = LeastSquaresLikelihood()
+    elif parser.likelihood == 'studentt':
+        likelihood = StudentTLikelihood(parser.studentt_dof)
+    elif parser.likelihood == 'adaptive_studentt':
+        likelihood = AdaptiveStudentTLikelihood(parser.studentt_dof)
+    elif parser.likelihood == 'ev11':
+        likelihood = EV11Likelihood()
+    else:
+        raise ValueError(f"Likelihood named {parser.likelihood} not available.")
 
     model = VariationalMergingModel(
         scale_model,

@@ -93,8 +93,8 @@ class LocationScale(tfk.layers.Layer):
         #self.add_metric(z2, name='Z2_Frac')
         #self.add_metric(z3, name='Z3_Frac')
 
-    def call(self, ipred, iobs, sigiobs):
-        likelihood = self._likelihood(iobs, sigiobs)
+    def call(self, ipred, iobs, sigiobs, imodel=None, scale=None):
+        likelihood = self._likelihood(iobs, sigiobs, imodel, scale)
         ll = likelihood.log_prob(ipred)
         return ll
 

@@ -158,15 +158,16 @@ class VariationalMergingModel(tfk.models.Model):
             p = self.prior.distribution(asu_id.flat_values, _hkl.flat_values)
             z = q.sample(mc_samples)
             _kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
- 
+
             _kl_div = tf.RaggedTensor.from_row_splits(_kl_div[...,None], iobs.row_splits)
-            _ipred = tf.RaggedTensor.from_row_splits(tf.transpose(z), iobs.row_splits)
+            _imodel = tf.RaggedTensor.from_row_splits(tf.transpose(z), iobs.row_splits)
 
             if self.surrogate_posterior.parameterization == 'structure_factor':
-                _ipred = tf.square(_ipred)
-            _ipred = _ipred * scale
+                _imodel = tf.square(_imodel)
+            _ipred = _imodel * scale
 
-            _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
+            _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs, _imodel, scale)
+            #_ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs, _ipred)
             _ll = tf.reduce_mean(_ll, [-1, -2], keepdims=True)
 
             if ll is None:

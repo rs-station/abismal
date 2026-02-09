@@ -4,6 +4,6 @@ from tensorflow_probability import distributions as tfd
 from abismal.likelihood.location_scale import LocationScale
 
 class LaplaceLikelihood(LocationScale):
-    def _likelihood(self, iobs, sigiobs):
+    def _likelihood(self, iobs, sigiobs, *args, **kwargs):
         return tfd.Laplace(iobs, sigiobs)
 

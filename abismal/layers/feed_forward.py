@@ -145,6 +145,7 @@ class GLUFeedForward(FeedForward):
         out = self.normalize(out)
 
         out = self.ff1(out) * self.activation(self.ff2(out))
+        out = self.normalize(out)
         out = self.ff3(out)
 
         if self.dropout is not None:
