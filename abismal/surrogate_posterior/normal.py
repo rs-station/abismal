@@ -56,6 +56,8 @@ class MultivariateNormalPosteriorBase(object):
     """
     A base class for creating low-rank multivariate normal posteriors. 
     """
+    independent = False
+
     def __init__(self, rac, rank, loc_init=None, scale_init=None, epsilon=1e-12, **kwargs):
         super().__init__(rac, epsilon=epsilon, **kwargs)
 

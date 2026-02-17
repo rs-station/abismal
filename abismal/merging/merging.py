@@ -126,6 +126,104 @@ class VariationalMergingModel(tfk.models.Model):
         return out
 
     def call(self, inputs, mc_samples=None, training=None, **kwargs):
+        if self.surrogate_posterior.independent:
+            return self._call_independent(inputs, mc_samples=None, training=None, **kwargs)
+        return self._call_dependent(inputs, mc_samples=None, training=None, **kwargs)
+
+    def _call_dependent(self, inputs, mc_samples=None, training=None, **kwargs):
+        """
+        Used for posteriors in which different miller indices are statistically dependent such as the MultivariateNormalPosterior
+        """
+        if mc_samples is None:
+            mc_samples = self.mc_samples
+
+        inputs = self.standardize_inputs(inputs, training=training)
+
+        (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = inputs
+
+        scale = self.scale_model(
+            inputs,
+            mc_samples=mc_samples, 
+            **kwargs
+        )
+
+        ll = None
+        ipred = None
+        hkl = None
+        kl_div = None
+        q = self.surrogate_posterior.flat_distribution()
+        z = q.sample(mc_samples)
+        p = self.prior.flat_distribution()
+        kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
+
+        for op in self.reindexing_ops:
+            _hkl = tf.ragged.map_flat_values(op, hkl_in)
+            _z = self.surrogate_posterior.rac.gather(
+                tf.transpose(z),
+                asu_id.flat_values,
+                _hkl.flat_values,
+            )
+
+            _kl_div = self.surrogate_posterior.rac.gather(
+                kl_div,
+                asu_id.flat_values,
+                _hkl.flat_values,
+            )
+            _kl_div = tf.RaggedTensor.from_row_splits(_kl_div[...,None], iobs.row_splits)
+            _ipred = tf.RaggedTensor.from_row_splits(_z, iobs.row_splits)
+
+            if self.surrogate_posterior.parameterization == 'structure_factor':
+                _ipred = tf.square(_ipred)
+            _ipred = _ipred * scale
+
+            _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
+            _ll = tf.reduce_mean(_ll, [-1, -2], keepdims=True)
+
+            if ll is None:
+                ipred = _ipred
+                ll = _ll
+                hkl = _hkl
+                kl_div = _kl_div
+            else:
+                idx =  _ll > ll
+                ipred = tf.where(idx, _ipred, ipred)
+                ll = tf.where(idx, _ll, ll)
+                hkl = tf.where(idx, _hkl, hkl)
+                kl_div = tf.where(idx, _kl_div, kl_div)
+
+        if training:
+            self.surrogate_posterior.register_seen(asu_id.flat_values, hkl.flat_values)
+
+        self.likelihood.register_metrics(
+            ipred.flat_values, 
+            iobs.flat_values, 
+            sigiobs.flat_values,
+        )
+
+        ll = tf.reduce_mean(ll)
+        kl_div = tf.reduce_mean(kl_div) 
+
+        self.add_metric(-ll, name='NLL')
+        self.add_loss(-ll)
+
+        self.add_metric(kl_div, name='KL')
+        self.add_loss(self.kl_weight * kl_div)
+
+        ipred_avg = tf.reduce_mean(ipred, axis=-1)
+        return ipred_avg
+
+    def _call_independent(self, inputs, mc_samples=None, training=None, **kwargs):
+        """
+        The default method can be used for most posteriors
+        """
         if mc_samples is None:
             mc_samples = self.mc_samples
 
