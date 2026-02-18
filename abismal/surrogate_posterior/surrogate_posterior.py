@@ -8,13 +8,12 @@ from tensorflow_probability import bijectors as tfb
 import tf_keras as tfk
 
 class PosteriorBase(tfk.models.Model):
-    independent = True #Whether to treat samples as statistically independent
-
-    def __init__(self, rac, epsilon=1e-12, **kwargs):
+    def __init__(self, rac, epsilon=1e-12, independent=True, **kwargs):
         """
         rac : ReciprocalASUCollection
         """
         super().__init__(**kwargs)
+        self.independent = independent
         self.epsilon = epsilon
         self.rac = rac
         self.seen = self.add_weight(
@@ -30,6 +29,7 @@ class PosteriorBase(tfk.models.Model):
         config = {
             'rac' : tfk.saving.serialize_keras_object(self.rac),
             'epsilon' : self.epsilon,
+            'independent' : self.independent,
         }
         return config
 
@@ -79,7 +79,10 @@ class PosteriorBase(tfk.models.Model):
             q_z = q.log_prob(samples) 
             p_z = p.log_prob(samples)
             if not self.independent:
-                q_z = tf.expand_dims(q_z, axis=-1)
+                #it is okay to expand the dimensions to enable combining
+                #a multivariate posterior and univariate prior
+                if len(tf.shape(q_z)) < len(tf.shape(p_z)):
+                    q_z = tf.expand_dims(q_z, axis=-1)
 
             kl_div = q_z - p_z
             kl_div = tf.reduce_mean(kl_div, axis=0)

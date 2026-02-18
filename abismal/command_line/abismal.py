@@ -92,6 +92,8 @@ def main(args=None):
         reindexing_ops = reindexing_ops + [op.triplet() for op in ops]
         logger.info(f"Adding disambiguation operators: {reindexing_ops}")
 
+    posterior_kwargs = {}
+
     if parser.prior_distribution == "wilson":
         if parser.parents is not None:
             from abismal.prior.structure_factor.wilson import MultiWilsonPrior
@@ -100,6 +102,7 @@ def main(args=None):
                 rac,
                 parser.prior_correlation,
             )
+            posterior_kwargs['independent'] = False
         elif parser.posterior_type == "intensity":
             from abismal.prior.intensity.wilson import WilsonPrior
 
@@ -127,12 +130,13 @@ def main(args=None):
         loc_init = tf.ones_like(prior.flat_distribution().mean())
         scale_init = parser.init_scale * loc_init
 
-    posterior_kwargs = {
+    posterior_kwargs.update({
         "rac": rac,
         "loc_init": loc_init,
         "scale_init": scale_init,
         "epsilon": parser.epsilon,
-    }
+    })
+
     if parser.posterior_type == "intensity":
         if parser.posterior_distribution == "foldednormal":
             from abismal.surrogate_posterior.intensity import (

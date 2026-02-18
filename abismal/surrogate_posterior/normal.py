@@ -56,10 +56,9 @@ class MultivariateNormalPosteriorBase(object):
     """
     A base class for creating low-rank multivariate normal posteriors. 
     """
-    independent = False
 
-    def __init__(self, rac, rank, loc_init=None, scale_init=None, epsilon=1e-12, **kwargs):
-        super().__init__(rac, epsilon=epsilon, **kwargs)
+    def __init__(self, rac, rank, loc_init=None, independent=False, scale_init=None, epsilon=1e-12, **kwargs):
+        super().__init__(rac, epsilon=epsilon, independent=independent, **kwargs)
 
         if loc_init is None:
             loc_init = tf.ones(rac.asu_size)

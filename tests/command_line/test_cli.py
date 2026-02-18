@@ -46,7 +46,7 @@ def run_abismal(flags, files, additional_asserts=()):
         for add in additional_asserts:
             assert add()
 
-        args = " datamanager.yml epoch_2.keras --sf-init epoch_0.keras "
+        args = " datamanager.yml epoch_2.keras --run-eagerly --sf-init epoch_0.keras "
         cchalf_main(args.split())
         assert exists('abismal_xval.mtz')
 
@@ -153,4 +153,19 @@ def test_glu(conventional_mtz):
         files,
     )
 
+
+def test_multivariate_wilson_prior(conventional_mtz):
+    flags = base_flags  + (
+        f"--parents=0,0",
+        f"-r 0.0,0.99",
+        f"--prior-distribution=wilson",
+    )
+    files = [
+        conventional_mtz,
+        conventional_mtz,
+    ]
+    run_abismal(
+        flags,
+        files,
+    )
 

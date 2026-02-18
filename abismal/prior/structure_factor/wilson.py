@@ -114,12 +114,12 @@ class MultiWilsonDistribution:
         )
         return loc
 
-    def log_prob(self, z):
-        if self.parent_id is not None:
+    def log_prob(self, z, z_pa=None):
+        if z_pa is None:
             z_h = z
             z_pa = tf.gather(z, self.parent_id, axis=-1)
         else:
-            z_h, z_pa = tf.unstack(z, axis=-1)
+            z_h, z_pa = z[...,0],z[...,1]
 
         #Single wilson case for root nodes
         ll_sw = WilsonDistribution(self.centric, self.multiplicity, self.sigma).log_prob(z_h)
