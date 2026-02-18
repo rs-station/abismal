@@ -61,6 +61,17 @@ args_and_kwargs = (
         }
     ),
 
+
+    (
+        (
+            "--embed",
+        ),{
+            "help": "Embed into an IPython shell just before and just after the model is trained. Helpful for debugging.",
+            "action" : "store_true",
+        }
+    ),
+
+
     (
         (
             "--list-devices",

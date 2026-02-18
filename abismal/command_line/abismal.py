@@ -309,7 +309,8 @@ def main(args=None):
 
     logger.info("Compiling model")
     model.compile(opt, run_eagerly=parser.run_eagerly, jit_compile=parser.jit_compile)
-    if parser.debug:
+    if parser.embed:
+        logger.info("Embed selected, entering interactive, IPython shell.")
         from IPython import embed
         embed(colors='linux')
 
@@ -341,8 +342,8 @@ def main(args=None):
 
     logger.info("Finished training.")
 
-    if parser.debug:
-        logger.info("Debug mode selected, entering interactive, IPython shell.")
+    if parser.embed:
+        logger.info("Embed selected, entering interactive, IPython shell.")
         from IPython import embed
 
         embed(colors="linux")
