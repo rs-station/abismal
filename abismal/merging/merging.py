@@ -172,12 +172,6 @@ class VariationalMergingModel(tfk.models.Model):
                 _hkl.flat_values,
             )
 
-            _kl_div = self.surrogate_posterior.rac.gather(
-                kl_div,
-                asu_id.flat_values,
-                _hkl.flat_values,
-            )
-            _kl_div = tf.RaggedTensor.from_row_splits(_kl_div[...,None], iobs.row_splits)
             _ipred = tf.RaggedTensor.from_row_splits(_z, iobs.row_splits)
 
             if self.surrogate_posterior.parameterization == 'structure_factor':
@@ -191,13 +185,11 @@ class VariationalMergingModel(tfk.models.Model):
                 ipred = _ipred
                 ll = _ll
                 hkl = _hkl
-                kl_div = _kl_div
             else:
                 idx =  _ll > ll
                 ipred = tf.where(idx, _ipred, ipred)
                 ll = tf.where(idx, _ll, ll)
                 hkl = tf.where(idx, _hkl, hkl)
-                kl_div = tf.where(idx, _kl_div, kl_div)
 
         if training:
             self.surrogate_posterior.register_seen(asu_id.flat_values, hkl.flat_values)
