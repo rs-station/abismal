@@ -312,7 +312,7 @@ def main(args=None):
         model.surrogate_posterior.trainable = False
 
     logger.info("Compiling model")
-    model.compile(opt, run_eagerly=parser.run_eagerly, jit_compile=parser.jit_compile)
+    model.compile(opt, run_eagerly=parser.run_eagerly)
     if parser.embed:
         logger.info("Embed selected, entering interactive, IPython shell.")
         from IPython import embed
