@@ -23,6 +23,9 @@ def main(args=None):
     parser.add_argument(
         "--reference-mtz", type= str, default=None, help='A reference mtz file which will be used to determine the reindexing operator.',
     )
+    parser.add_argument(
+        "--run-eagerly", help="Run eagerly which is slower but more straightforward to debug.", action='store_true',
+    )
     parser = parser.parse_args(args)
 
     import tf_keras as tfk
@@ -50,7 +53,7 @@ def main(args=None):
             opt = model.optimizer.from_config(model.optimizer.get_config()) 
 
             #Now re-compile to re-initialize the optimizer momenta
-            model.compile(opt)
+            model.compile(opt, run_eagerly=parser.run_eagerly)
 
             callbacks = [
                 MtzSaver(f"half_{half_id+1}", reference_mtz=parser.reference_mtz)
