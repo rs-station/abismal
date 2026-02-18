@@ -23,7 +23,7 @@ base_flags = (
     "--shuffle-buffer-size=10",
     "--steps-per-epoch=10",
     "--num-cpus=1",
-    #"--debug",
+    "--debug",
 )
 
 def run_abismal(flags, files, additional_asserts=()):

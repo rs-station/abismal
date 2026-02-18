@@ -33,3 +33,20 @@ pip install abismal[cuda]
 
 You can now use abismal with GPU acceleration by running `conda activate abismal`. 
 You can test GPU support by typing `abismal --list-devices`. 
+
+# Running tests
+Abismal CI runs tests on each pull request. Development installs are similar to a normal install, but it is important
+to make sure that you install `abismal[dev]` in a fresh environment. 
+Running the following commands will set up an environment. 
+```
+git clone https://github.com/rs-station/abismal.git
+cd abismal
+conda create -yn abismal -c conda-forge dials python=3.12
+conda activate abismal
+pip install -e .[dev]
+```
+
+Tests are run by calling `pytest` in the root of the abismal source code directory. 
+
+
+
