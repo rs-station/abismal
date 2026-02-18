@@ -110,12 +110,12 @@ def test_posteriors(conventional_mtz, kind, distribution):
     )
 
 
-@pytest.mark.xfail(reason='Not compatible with refactored merging model')
 def test_multivariate_normal_posterior(conventional_mtz):
     flags = base_flags  + (
         f"--posterior-type=structure_factor",
         f"--posterior-distribution=normal",
         f"--posterior-rank=3",
+        f"--prior-distribution=normal",
     )
     files = [
         conventional_mtz,
