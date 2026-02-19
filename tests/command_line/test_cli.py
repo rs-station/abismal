@@ -24,6 +24,7 @@ base_flags = (
     "--steps-per-epoch=10",
     "--num-cpus=1",
     "--debug",
+    #"--embed",
 )
 
 def run_abismal(flags, files, additional_asserts=()):
@@ -169,3 +170,13 @@ def test_multivariate_wilson_prior(conventional_mtz):
         files,
     )
 
+
+def test_ev11(conventional_mtz):
+    flags = base_flags + ('--refine-uncertainties',)
+    files = [
+        conventional_mtz,
+    ]
+    run_abismal(
+        flags,
+        files,
+    )

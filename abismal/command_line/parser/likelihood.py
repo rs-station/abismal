@@ -12,4 +12,13 @@ args_and_kwargs=(
             "default": None,
         }
     ),
+
+    (
+        (
+            "--refine-uncertainties",
+        ),{
+            "help": "Refine uncertainties using the Ev11 error model.",
+            "action" : "store_true",
+        }
+    ),
 )

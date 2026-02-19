@@ -334,12 +334,13 @@ class VariationalMergingModel(tfk.models.Model):
 
         ll_vars = self.likelihood.trainable_variables
         if len(ll_vars) > 0:
+            # Note the order here matters for deserialization
             grad_ll = tape.gradient(loss, ll_vars)
             grad_ll_norm = tf.sqrt(
                 tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_ll])
             )
-            trainable_vars += ll_vars
-            gradients += grad_ll
+            trainable_vars = ll_vars + trainable_vars
+            gradients = grad_ll + gradients
             metrics["|∇ll|"] = grad_ll_norm
 
         p_vars = self.prior.trainable_variables

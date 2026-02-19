@@ -201,6 +201,10 @@ def main(args=None):
         gated=parser.gated,
     )
 
+    if parser.refine_uncertainties:
+        from abismal.likelihood.student import Ev11StudentTLikelihood as StudentTLikelihood
+        from abismal.likelihood.normal import Ev11NormalLikelihood as NormalLikelihood
+
     if parser.studentt_dof is not None:
         likelihood = StudentTLikelihood(parser.studentt_dof)
     else:

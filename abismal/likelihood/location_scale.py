@@ -1,4 +1,6 @@
 import tensorflow as tf
+from tensorflow_probability import util as tfu
+from tensorflow_probability import bijectors as tfb
 import tf_keras as tfk
 from tensorflow_probability import distributions as tfd
 
@@ -98,3 +100,26 @@ class LocationScale(tfk.layers.Layer):
         ll = likelihood.log_prob(ipred)
         return ll
 
+class Ev11Likelihood(LocationScale):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.Sdfac = tfu.TransformedVariable(1., tfb.Softplus())
+        self.Sdadd = tfu.TransformedVariable(1., tfb.Softplus())
+        self.SdB = tfu.TransformedVariable(1., tfb.Softplus())
+        self.built = True
+
+    def corrected_sigiobs(self, ipred, sigiobs):
+        ipred = tf.stop_gradient(ipred)
+        ipred = tf.maximum(ipred, 0.)
+        sigiobs = self.Sdfac * tf.math.sqrt(
+            tf.square(sigiobs) + \
+            self.SdB * ipred + \
+            self.Sdadd * tf.square(ipred)
+        )
+        return sigiobs
+
+    def call(self, ipred, iobs, sigiobs):
+        corrected_sigiobs = self.corrected_sigiobs(ipred, sigiobs)
+        likelihood = self._likelihood(iobs, corrected_sigiobs)
+        ll = likelihood.log_prob(ipred)
+        return ll
