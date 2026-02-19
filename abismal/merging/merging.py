@@ -127,8 +127,8 @@ class VariationalMergingModel(tfk.models.Model):
 
     def call(self, inputs, mc_samples=None, training=None, **kwargs):
         if self.surrogate_posterior.independent:
-            return self._call_independent(inputs, mc_samples=None, training=None, **kwargs)
-        return self._call_dependent(inputs, mc_samples=None, training=None, **kwargs)
+            return self._call_independent(inputs, mc_samples=mc_samples, training=trainign, **kwargs)
+        return self._call_dependent(inputs, mc_samples=mc_samples, training=training, **kwargs)
 
     def _call_dependent(self, inputs, mc_samples=None, training=None, **kwargs):
         """

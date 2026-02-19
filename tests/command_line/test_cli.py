@@ -2,6 +2,8 @@
 End to end tests for abismal using a limited feature set
 """
 import gemmi #this is necessary for some baffling dependency reason
+import reciprocalspaceship as rs
+import tf_keras as tfk
 import tensorflow as tf
 tf.config.set_visible_devices([], 'GPU')
 from abismal.command_line.abismal import main as abismal_main
@@ -45,6 +47,13 @@ def run_abismal(flags, files, additional_asserts=()):
         assert exists('history.csv')
         for add in additional_asserts:
             assert add()
+
+        tfk.saving.load_model("epoch_0.keras")
+        tfk.saving.load_model("epoch_1.keras")
+        tfk.saving.load_model("epoch_2.keras")
+
+        rs.read_mtz("asu_0_epoch_1.mtz")
+        rs.read_mtz("asu_0_epoch_2.mtz")
 
         args = " datamanager.yml epoch_2.keras --run-eagerly --sf-init epoch_0.keras "
         cchalf_main(args.split())
