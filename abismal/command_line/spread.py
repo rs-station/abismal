@@ -92,6 +92,9 @@ def main():
         "--debug", action='store_true', help='Debug mode runs eagerly.',
     )
     parser.add_argument(
+        "--unity-posterior", action='store_true', help='Use FCalc as the posterior.',
+    )
+    parser.add_argument(
         "integrated", type=str, nargs='+', help='The integrated diffraction data on which to conduct the "SPREAD" analysis.',
     )
     parser = parser.parse_args()
@@ -102,12 +105,15 @@ def main():
             wavs = []
             parser.wavelength_range = SpreadPosterior.estimate_wavelength_range(parser.integrated, num_cpus=parser.num_cpus)
 
+    if parser.unity_posterior:
+        from abismal.surrogate_posterior.spread.spread import DummySpreadPosterior as SpreadPosterior
     surrogate_posterior = SpreadPosterior.from_pdb(
         pdb_file=parser.model_file,
         elements=parser.elements,
         dmin=parser.dmin,
         wavelength_range=parser.wavelength_range,
         energy_range=parser.energy_range,
+        epsilon=1e-5,
     )
     prior = SpreadPrior.from_spread_posterior(surrogate_posterior)
 
@@ -204,20 +210,52 @@ def plot_results():
     parser.add_argument(
         "csv", help="A 'spread_epoch_#.csv' file to plot.", type=str
     )
+    parser.add_argument(
+        "--epoch", help="Which epoch to plot. By default the most recent.", type=int, default=None
+    )
     parser = parser.parse_args()
 
     import pandas as pd
     import seaborn as sns
     from matplotlib import pyplot as plt
     import reciprocalspaceship as rs
+    f,(ax1,ax2) = plt.subplots(2)
+
     results = pd.read_csv(parser.csv)
+
+    epoch = None
+    if 'Epoch' in results:
+        epoch = parser.epoch
+        if epoch is None:
+            epoch = results['Epoch'].max()
+        results = results[results.Epoch == epoch]
+        del results['Epoch']
+
     results['energy'] = rs.utils.angstroms2ev(results['wavelength'])
-    sns.lineplot(                                                                   
-        results.melt(['energy', 'atom_name', 'stddev'], value_vars=["f'", "f''"]),
-        x='energy',
-        y='value',
-        hue='atom_name',
-        style='variable',
-    )
+    alpha = 0.2
+    for atom,df in results.groupby("atom_name"):
+        x = df['energy']
+        y = df["f'"]
+        s = df['stddev']
+
+        fb = ax1.fill_between(
+            x, y - s, y + s, alpha=alpha
+        )
+        c = fb.properties()['facecolor'][:3]
+        ax1.plot(x, y, color=c, label=atom, alpha=1.0)
+        y = df["f''"]
+        ax2.fill_between(
+            x, y - s, y + s, alpha=alpha, color=c
+        )
+        ax2.plot(x, y, color=c, alpha=1.0)
+
+
+    if epoch is not None:
+        plt.suptitle(f"Spread Results, Epoch {epoch}")
+    ax1.set_ylabel("f' (arbtrary units)")
+    ax2.set_ylabel("f'' (arbtrary units)")
+    ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+    plt.tight_layout()
+
     plt.show()
 
