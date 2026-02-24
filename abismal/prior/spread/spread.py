@@ -17,7 +17,7 @@ class SpreadPrior(PriorBase):
         self.rac = rac
         #self.sites = sites
         self.Fc = Fcalc
-        self.sigma = sigma
+        self.sigma = sigma * np.abs(Fcalc)
 
     def get_config(self):
         config = super().get_config()
@@ -53,12 +53,12 @@ class SpreadPrior(PriorBase):
         return tfd.Normal(loc, scale)
 
     def distribution(self, asu_id, hkl):
-        scale = self.sigma * tf.ones_like(hkl[...,0], dtype='float32')
+        #scale = self.sigma * tf.ones_like(hkl[...,0], dtype='float32')
+        scale = self.rac.gather(self.sigma, asu_id, hkl)
 
         # Rician RV params nu,sigma
         fc = self.rac.gather(self.Fc, asu_id, hkl)
         nu = tf.math.abs(fc)
-        q = Rice(nu, self.sigma)
+        q = Rice(nu, scale)
         return q
-
 
