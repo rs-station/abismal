@@ -145,7 +145,13 @@ class StillsLoader(DataLoader):
         table.compute_d(elist)
         table["A_matrix"] = flex.mat3_double( [C.get_A() for C in elist.crystals()] ).select(idx)
         table["s0_vec"] = flex.vec3_double( [e.beam.get_s0() for e in elist] ).select(idx)
-        table["wavelength"] = flex.double( [e.beam.get_wavelength() for e in elist] ).select(idx)
+        if 'spot_energy_eV' in table:
+            import reciprocalspaceship as rs
+            ev = np.array(table['spot_energy_eV'])
+            wav = rs.utils.ev2angstroms(ev)
+            table["wavelength"] = flex.double(wav)
+        else:
+            table["wavelength"] = flex.double( [e.beam.get_wavelength() for e in elist] ).select(idx)
 
         h = table["miller_index"].as_vec3_double()
         Q = table["A_matrix"] * h
@@ -204,6 +210,7 @@ class StillsLoader(DataLoader):
 
         data = ((asu, hkl, d, wavelength, metadata, I, SigI), (I,))
         return data
+
 
 if __name__=='__main__':
     stream_file = '/mnt/raid/data/xtal/20210615_Neutze_collab/indexing_dark_before_merging_intensities.stream'
