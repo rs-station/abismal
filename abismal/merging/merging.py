@@ -236,12 +236,10 @@ class VariationalMergingModel(tfk.models.Model):
         self.optimizer.lazy_vars = [v._unique_id for v in q_vars]
 
         grad_q = tape.gradient(loss, q_vars)
-        grad_q_norm = tf.sqrt(
-            tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_q])
+        grad_q_norm = tf.sqrt(0. + 
+            tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_q if g is not None])
         )
         metrics["|∇q|"] = grad_q_norm
-        #grad_q = [to_indexed_slices(g) for g in grad_q] #This makes lazy adam work
-
         trainable_vars = scale_vars + q_vars 
 
         gradients = grad_scale + grad_q 
@@ -267,7 +265,7 @@ class VariationalMergingModel(tfk.models.Model):
             metrics["|∇p|"] = grad_p_norm
 
 
-        gradients = [tf.where(tf.math.is_finite(g), g, 0.) for g in gradients]
+        gradients = [None if g is None else tf.where(tf.math.is_finite(g), g, 0.) for g in gradients]
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
 
         # Update metrics (includes the metric that tracks the loss)
@@ -313,8 +311,9 @@ class SpreadMergingModel(VariationalMergingModel):
             p = self.prior.distribution(asu_id.flat_values, _hkl.flat_values)
             z = q.sample(mc_samples)
             _kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
- 
-            _kl_div = tf.RaggedTensor.from_row_splits(_kl_div[...,None], iobs.row_splits)
+            if _kl_div is not None:
+                _kl_div = tf.RaggedTensor.from_row_splits(_kl_div[...,None], iobs.row_splits)
+
             _ipred = tf.RaggedTensor.from_row_splits(tf.transpose(z), iobs.row_splits)
 
             if self.surrogate_posterior.parameterization == 'structure_factor':
@@ -328,13 +327,15 @@ class SpreadMergingModel(VariationalMergingModel):
                 ipred = _ipred
                 ll = _ll
                 hkl = _hkl
-                kl_div = _kl_div
+                if _kl_div is not None:
+                    kl_div = _kl_div
             else:
                 idx =  _ll > ll
                 ipred = tf.where(idx, _ipred, ipred)
                 ll = tf.where(idx, _ll, ll)
                 hkl = tf.where(idx, _hkl, hkl)
-                kl_div = tf.where(idx, _kl_div, kl_div)
+                if _kl_div is not None:
+                    kl_div = tf.where(idx, _kl_div, kl_div)
 
         if training:
             self.surrogate_posterior.register_seen(asu_id.flat_values, hkl.flat_values)
@@ -346,13 +347,15 @@ class SpreadMergingModel(VariationalMergingModel):
         )
 
         ll = tf.reduce_mean(ll)
-        kl_div = tf.reduce_mean(kl_div) 
+
+        if kl_div is not None:
+            kl_div = tf.reduce_mean(kl_div) 
+            self.add_metric(kl_div, name='KL')
+            self.add_loss(self.kl_weight * kl_div)
 
         self.add_metric(-ll, name='NLL')
         self.add_loss(-ll)
 
-        self.add_metric(kl_div, name='KL')
-        self.add_loss(self.kl_weight * kl_div)
 
         ipred_avg = tf.reduce_mean(ipred, axis=-1)
         return ipred_avg
