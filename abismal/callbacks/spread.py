@@ -3,12 +3,19 @@ import pandas as pd
 
 class SpreadSaver(tfk.callbacks.Callback):
     def __init__(self, prefix, npoints=100, **kwargs):
-        self.fmt = f'{prefix}/spread_epoch_{{epoch}}.csv'
+        self.csv_file = f'{prefix}/spread.csv'
+        self.first_write = True
         super().__init__(**kwargs)
 
     def on_epoch_end(self, epoch, logs):
         results = self.model.surrogate_posterior.get_results()
-        out = self.fmt.format(epoch=epoch + 1)
-        results.to_csv(out)
+        results['Epoch'] = epoch + 1
+        results.to_csv(
+            self.csv_file,
+            mode='w' if self.first_write else 'a',
+            header = self.first_write,
+        )
+        self.first_write = False
+
 
 
