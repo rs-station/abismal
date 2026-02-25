@@ -149,9 +149,8 @@ class StillsLoader(DataLoader):
             import reciprocalspaceship as rs
             ev = np.array(table['spot_energy_eV'])
             wav = rs.utils.ev2angstroms(ev)
-            table["wavelength"] = flex.double(wav)
-        else:
-            table["wavelength"] = flex.double( [e.beam.get_wavelength() for e in elist] ).select(idx)
+            table["wavelength_pred"] = flex.double(wav)
+        table["wavelength"] = flex.double( [e.beam.get_wavelength() for e in elist] ).select(idx)
 
         h = table["miller_index"].as_vec3_double()
         Q = table["A_matrix"] * h
@@ -161,9 +160,11 @@ class StillsLoader(DataLoader):
         hkl = np.array(h, dtype='int32')
         d = np.array(table['d'], dtype='float32')
         wavelength = np.array(table['wavelength'], dtype='float32')
+        delpsi = np.array(table['delpsical.rad'], dtype='float32')
         dQ = np.array(Q - Qobs, dtype='float32')
         s1 = np.array(Svec, dtype='float32')
-        xy = s1 #actually xyz
+        #xy = s1 #actually xyz
+        xy = s1[:,:2] #actually xyz
         batch = table['id'].as_numpy_array()
         idx = ~spacegroup.operations().systematic_absences(np.array(h, dtype='int32'))
 
@@ -188,13 +189,85 @@ class StillsLoader(DataLoader):
         wavelength = wavelength[idx, None]
         dQ = dQ[idx]
         xy = xy[idx]
+        delpsi = delpsi[idx, None]
         batch = batch[idx]
         I = I[idx, None]
         SigI = SigI[idx, None]
         if include_eo:
-            metadata = np.concatenate((xy, dQ), axis=-1)
+            metadata = np.concatenate((xy, delpsi), axis=-1)
         else:
             metadata = xy
+
+        batch = np.unique(batch, return_inverse=True)[1].astype(batch.dtype)
+        hkl = tf.RaggedTensor.from_value_rowids(hkl, batch)
+        d = tf.RaggedTensor.from_value_rowids(d, batch)
+        wavelength = tf.RaggedTensor.from_value_rowids(wavelength, batch)
+        metadata = tf.RaggedTensor.from_value_rowids(
+            metadata,
+            batch,
+        )
+        I = tf.RaggedTensor.from_value_rowids(I, batch)
+        SigI = tf.RaggedTensor.from_value_rowids(SigI, batch)
+        asu = tf.ones_like(I, dtype='int32') * asu_id
+
+        data = ((asu, hkl, d, wavelength, metadata, I, SigI), (I,))
+        return data
+
+    @staticmethod
+    def diXXals_to_ragged(expt_file, refl_file, cell, spacegroup, dmin, asu_id, include_eo=True, cell_tol=None, isigi_cutoff=None):
+        """
+        Convert dials monochromatic stills files to ragged tensors.
+        """
+        from dials.array_family import flex
+        from dxtbx.model.experiment_list import ExperimentListFactory 
+        import reciprocalspaceship as rs
+        table = flex.reflection_table.from_file(refl_file)
+        elist = ExperimentListFactory.from_json_file(expt_file, check_format=False)
+
+        idx = flex.size_t(np.array(table['id']))
+        table.compute_d(elist)
+        xy = np.array(table['xyzcal.mm'])[:,:2]
+        table["wavelength"] = flex.double( [e.beam.get_wavelength() for e in elist] ).select(idx)
+        wav_nominal = np.array(table["wavelength"])
+        ev = np.array(table['spot_energy_eV'])
+        wav_pred = rs.utils.ev2angstroms(ev)
+        delpsi = np.array(table['delpsical.rad'])
+        h = table["miller_index"].as_vec3_double()
+
+        metadata = np.concatenate((
+            xy,
+            #wav_nominal[:,None],
+            #wav_pred[:,None],
+            delpsi[:,None],
+        ), axis=-1).astype('float32')
+        hkl = np.array(h, dtype='int32')
+        d = np.array(table['d'], dtype='float32')
+        batch = table['id'].as_numpy_array()
+        idx = ~spacegroup.operations().systematic_absences(np.array(h, dtype='int32'))
+        I  = np.array(table['intensity.sum.value'], dtype='float32')
+        SigI  = np.array(np.sqrt(table['intensity.sum.variance']), dtype='float32')
+        wavelength = wav_pred
+
+        if dmin is not None:
+            idx &= d >= dmin
+
+        if isigi_cutoff is not None:
+            isigi = I / SigI
+            idx &= isigi >= isigi_cutoff
+
+        if cell_tol is not None:
+            ref_cell = np.array(cell.parameters)
+            cells = np.array([C.get_unit_cell().parameters() for C in elist.crystals()])
+            frac_diff = np.abs(cells - ref_cell) / ref_cell
+            idx &= np.all(frac_diff <= cell_tol, axis=1)[batch]
+
+        hkl = hkl[idx]
+        d = d[idx, None]
+        wavelength = wavelength[idx, None]
+        batch = batch[idx]
+        I = I[idx, None]
+        SigI = SigI[idx, None]
+        metadata = metadata[idx]
 
         batch = np.unique(batch, return_inverse=True)[1].astype(batch.dtype)
         hkl = tf.RaggedTensor.from_value_rowids(hkl, batch)
