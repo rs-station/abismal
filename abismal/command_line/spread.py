@@ -74,6 +74,9 @@ def main():
         "--dmin", required=True, type=float, default=None, help='Resolution cutoff for processing.',
     )
     parser.add_argument(
+        "--isigi-cutoff", required=False, type=float, default=None, help='Signal to noise cutoff for processing.',
+    )
+    parser.add_argument(
         "--model-file", type=str, required=True, help='A pdb files of the structure.',
     )
     parser.add_argument(
@@ -169,13 +172,14 @@ def main():
     )
 
     #mtz_saver = MtzSaver(parser.out_dir, parser.reference_mtz)
+    mtz_saver = MtzSaver(parser.out_dir)
     spread_saver = SpreadSaver(parser.out_dir)
     history_saver = HistorySaver(parser.out_dir, gpu_id=0, start_time=start_time)
     weight_saver = WeightSaver(parser.out_dir)
     freezer = StandardizationFreezer()
 
     callbacks = [
-        #mtz_saver,
+        mtz_saver,
         history_saver,
         weight_saver,
         freezer,

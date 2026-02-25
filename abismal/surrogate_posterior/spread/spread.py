@@ -133,16 +133,18 @@ class SpreadGP(tfk.models.Model):
 #        return None
 
 class SpreadSmoother(tfk.models.Model):
-    def __init__(self, wavelength_range, num_atoms, num_points=100, epsilon=1e-12, **kwargs):
+    def __init__(self, wavelength_range, num_atoms, num_points=100, epsilon=1e-12, train_inducing_x=False, train_bw=False, **kwargs):
         super().__init__(**kwargs)
         self.kl_weight = 1e-3
         self.num_atoms = num_atoms
         self.num_points = num_points
         self.epsilon = epsilon
         self.wav_min,self.wav_max = wavelength_range
-        #init = tfk.initializers.RandomUniform(self.wav_min, self.wav_max)
-        #self.inducing_x = self.add_weight('x', shape=(num_atoms, num_points), initializer=init)
-        self.inducing_x = tf.linspace(self.wav_min, self.wav_max, num_points)[None,:]
+        if train_inducing_x:
+            init = tfk.initializers.RandomUniform(self.wav_min, self.wav_max)
+            self.inducing_x = self.add_weight('x', shape=(num_atoms, num_points), initializer=init, trainable=train_inducing_x)
+        else:
+            self.inducing_x = tf.linspace(self.wav_min, self.wav_max, num_points)[None,:]
         self.inducing_fp = self.add_weight('fp', shape=(num_atoms, num_points), initializer='zeros')
         self.inducing_fpp = self.add_weight('fpp', shape=(num_atoms, num_points), initializer='zeros')
 
@@ -153,14 +155,18 @@ class SpreadSmoother(tfk.models.Model):
                 tfb.Exp(),
             ]),
         )
-        self.bw = 2. / num_points
-        #self.bw = tfu.TransformedVariable(
-        #    2. / num_points,
-        #    tfb.Chain([
-        #        tfb.Shift(epsilon),
-        #        tfb.Exp(),
-        #    ]),
-        #)
+        #self.bw = 2. / num_points
+
+        if train_bw:
+            self.bw = tfu.TransformedVariable(
+                2. * (self.wav_max - self.wav_min) / num_points,
+                tfb.Chain([
+                    tfb.Shift(epsilon),
+                    tfb.Exp(),
+                ]),
+            )
+        else:
+            self.bw = 2. * (self.wav_max - self.wav_min) / num_points
 
     def call(self, wav):
         self.add_metric(self.bw, "BW")
@@ -236,9 +242,8 @@ class SpreadNN(tfk.models.Model):
     def compute_kl_terms(self, q, p, samples=None):
         return None
 
-
 class SpreadPosterior(StructureFactorPosteriorBase):
-    def __init__(self, rac, Fc, sites_dict, wavelength_range, spread_model=None, dmodel=32, epsilon=1e-12, **kwargs):
+    def __init__(self, rac, Fc, sites_dict, wavelength_range, spread_model=None, dmodel=32, epsilon=1e-12, optimize_fc=True, **kwargs):
         """
         rac : ReciprocalASUCollection
         Fc : np.array
@@ -249,7 +254,23 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         super().__init__(rac, epsilon=epsilon, **kwargs)
         self.rac = rac
         self.dmodel = dmodel
-        self.Fc = Fc
+        Fc = np.array(Fc)
+        self.logFabs = self.add_weight(
+            name='logFabs',
+            shape=Fc.shape,
+            dtype='float32',
+            #initializer=tfk.initializers.Constant(tf.math.abs(Fc)),
+            initializer='zeros',
+            trainable=optimize_fc,
+        )
+        self.Fphi = self.add_weight(
+            name='Fphi',
+            shape=Fc.shape,
+            dtype='float32',
+            initializer=tfk.initializers.Constant(tf.math.angle(Fc)),
+            trainable=False,
+        )
+
         self.sites_dict = sites_dict
         self.wav_min, self.wav_max = wavelength_range
         self.num_atoms = len(sites_dict)
@@ -264,9 +285,9 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         self.sites = tf.convert_to_tensor(self.sites)
 
         if spread_model is None:
-            self.spread_model = SpreadNN(wavelength_range, self.num_atoms, dmodel=dmodel, epsilon=epsilon)
+            #self.spread_model = SpreadNN(wavelength_range, self.num_atoms, dmodel=dmodel, epsilon=epsilon)
             #self.spread_model = SpreadGP(wavelength_range, self.num_atoms, dmodel,  epsilon)
-            #self.spread_model = SpreadSmoother(wavelength_range, self.num_atoms, 100,  epsilon)
+            self.spread_model = SpreadSmoother(wavelength_range, self.num_atoms, 100,  epsilon)
 
     def get_config(self):
         config = super().get_config()
@@ -287,6 +308,14 @@ class SpreadPosterior(StructureFactorPosteriorBase):
             tfk.saving.deserialize_keras_object(config.pop('Fimag')),
         )
         return cls(**config)
+
+    @property
+    def Fc(self):
+        Fabs = tf.math.exp(self.logFabs)
+        return  tf.complex(
+            Fabs * tf.math.cos(self.Fphi),
+            Fabs * tf.math.sin(self.Fphi),
+        )
 
     @property
     def cell(self):
@@ -384,7 +413,7 @@ class SpreadPosterior(StructureFactorPosteriorBase):
             raise ValueError("Must specify either wavelength_range or energy_range")
 
         if wavelength_range is None:
-            wavelength_range = [rs.utils.ev2angstroms(e) for e in energy_range]
+            wavelength_range = sorted([rs.utils.ev2angstroms(e) for e in energy_range])
 
         ds = SpreadPosterior.reference_structure_factors(pdb_file, dmin, wavelength_range[1])
         #from IPython import embed;embed(colors='linux');xx
@@ -413,15 +442,16 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         # Rician RV params nu,sigma
         sigma = self.num_ops * tf.math.sqrt(tf.reduce_sum(tf.square(scale), axis=-1) + self.epsilon)
 
+        #TODO -- just cache the phase?
         h = tf.cast(hkl, 'float32')
-        exp_arg = 2. * np.pi * tf.einsum(
+        phase = 2. * np.pi * tf.einsum(
             "...d,osd->...os",
             h,
             self.sites,
         )
         exponential = tf.complex(
-            tf.math.cos(exp_arg),
-            tf.math.sin(exp_arg),
+            tf.math.cos(phase),
+            tf.math.sin(phase),
         )
         f = tf.complex(fp, fpp)
         fc = self.rac.gather(self.Fc, asu_id, hkl)
@@ -432,9 +462,12 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         q = Rice(nu, sigma)
         return q
 
-    def flat_distribution(self=None, wav=0.):
+    def flat_distribution(self, wav=None):
+        if wav is None:
+            wav = self.wav_min
+        wav = wav * tf.ones_like(self.rac.asu_id[:,None], dtype='float32')
         q = self.distribution(
-            self.rac.asu_id,
+            self.rac.asu_id[:,None],
             self.rac.Hunique,
             wav,
         )
