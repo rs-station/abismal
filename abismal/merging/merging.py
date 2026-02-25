@@ -236,8 +236,8 @@ class VariationalMergingModel(tfk.models.Model):
         self.optimizer.lazy_vars = [v._unique_id for v in q_vars]
 
         grad_q = tape.gradient(loss, q_vars)
-        grad_q_norm = tf.sqrt(0. + 
-            tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_q if g is not None])
+        grad_q_norm = tf.sqrt(
+            tf.reduce_mean([tf.reduce_mean(tf.square(tf.abs(g))) for g in grad_q if g is not None])
         )
         metrics["|∇q|"] = grad_q_norm
         trainable_vars = scale_vars + q_vars 
