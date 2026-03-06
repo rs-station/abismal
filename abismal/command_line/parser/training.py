@@ -92,5 +92,13 @@ args_and_kwargs = (
         }
     ),
 
+    (
+        (
+            "--enable-index-ambiguation",
+        ),{
+            "help": "Randomize the indexing solution by a random twinning operator.",
+            "action": "store_true",
+        }
+    ),
 
 )
