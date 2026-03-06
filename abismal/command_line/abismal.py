@@ -88,7 +88,7 @@ def main(args=None):
 
     reindexing_ops = ["x,y,z"]
     if not parser.disable_index_disambiguation:
-        ops = gemmi.find_twin_laws(self.cell, self.spacegroup, 3.0, False)
+        ops = gemmi.find_twin_laws(dm.cell, dm.spacegroup, 3.0, False)
         reindexing_ops = reindexing_ops + [op.triplet() for op in ops]
         logger.info(f"Adding disambiguation operators: {reindexing_ops}")
 
