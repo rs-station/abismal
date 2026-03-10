@@ -281,6 +281,8 @@ class SpreadMergingModel(VariationalMergingModel):
         if mc_samples is None:
             mc_samples = self.mc_samples
 
+        iobs,sigiobs = inputs[-2],inputs[-1]
+
         inputs = self.standardize_inputs(inputs, training=training)
 
         (
@@ -289,8 +291,8 @@ class SpreadMergingModel(VariationalMergingModel):
             resolution,
             wavelength,
             metadata,
-            iobs,
-            sigiobs,
+            _,
+            _,
         ) = inputs
 
         scale = self.scale_model(
