@@ -157,22 +157,28 @@ class SpreadSmoother(tfk.models.Model):
         )
         #self.bw = 2. / num_points
 
+        #bw = 2. * (self.wav_max - self.wav_min) / num_points,
+        bw = (self.wav_max - self.wav_min) / 10.
         if train_bw:
             self.bw = tfu.TransformedVariable(
-                2. * (self.wav_max - self.wav_min) / num_points,
+                bw,
                 tfb.Chain([
                     tfb.Shift(epsilon),
                     tfb.Exp(),
                 ]),
             )
         else:
-            self.bw = 2. * (self.wav_max - self.wav_min) / num_points
+            self.bw = bw
+        self.b_factor = self.add_weight('b', shape=(num_atoms,), dtype='float32', initializer='zeros')
 
-    def call(self, wav):
+    def call(self, wav, dHKL=None):
         self.add_metric(self.bw, "BW")
         self.add_metric(tf.math.reduce_std(self.inducing_x), "SigX")
         d = tf.square((wav[:,None,...] - self.inducing_x[None,...]) / self.bw)
         w = tf.nn.softmax(-d, axis=-1)
+        if dHKL is not None:
+            T = tf.math.exp(-0.25 * self.b_factor[None,:,None] / tf.square(dHKL[:,None,None]))
+            w = w * T
         fp = tf.einsum('...d,...d->...', self.inducing_fp, w)
         fpp = tf.einsum('...d,...d->...', self.inducing_fpp, w)
         scale  = tf.einsum('...d,...d->...', self.inducing_s, w)
@@ -243,7 +249,7 @@ class SpreadNN(tfk.models.Model):
         return None
 
 class SpreadPosterior(StructureFactorPosteriorBase):
-    def __init__(self, rac, Fc, sites_dict, wavelength_range, spread_model=None, dmodel=32, epsilon=1e-12, optimize_fc=True, **kwargs):
+    def __init__(self, rac, Fc, Fmask, sites_dict, wavelength_range, spread_model=None, dmodel=32, epsilon=1e-12, optimize_fc=False, **kwargs):
         """
         rac : ReciprocalASUCollection
         Fc : np.array
@@ -259,16 +265,45 @@ class SpreadPosterior(StructureFactorPosteriorBase):
             name='logFabs',
             shape=Fc.shape,
             dtype='float32',
-            #initializer=tfk.initializers.Constant(tf.math.abs(Fc)),
-            initializer='zeros',
+            initializer=tfk.initializers.Constant(tf.math.log(tf.math.abs(Fc))),
             trainable=optimize_fc,
         )
-        self.Fphi = self.add_weight(
-            name='Fphi',
+        self.Phi = self.add_weight(
+            name='Phi',
             shape=Fc.shape,
             dtype='float32',
             initializer=tfk.initializers.Constant(tf.math.angle(Fc)),
             trainable=False,
+        )
+
+        self.Fmask_abs = self.add_weight(
+            name='Fmask',
+            shape=Fc.shape,
+            dtype='float32',
+            initializer=tfk.initializers.Constant(tf.math.log(tf.math.abs(Fmask))),
+            trainable=False,
+        )
+        self.PHImask = self.add_weight(
+            name='PHImask',
+            shape=Fc.shape,
+            dtype='float32',
+            initializer=tfk.initializers.Constant(tf.math.angle(Fmask)),
+            trainable=False,
+        )
+
+        self.log_ksol = self.add_weight(
+            name='ksol',
+            shape=(),
+            dtype='float32',
+            initializer='zeros',
+            trainable=True,
+        )
+        self.log_bsol = self.add_weight(
+            name='bsol',
+            shape=(),
+            dtype='float32',
+            initializer='zeros',
+            trainable=True,
         )
 
         self.sites_dict = sites_dict
@@ -310,11 +345,26 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         return cls(**config)
 
     @property
+    def ksol(self):
+        return tf.math.exp(self.log_ksol)
+
+    @property
+    def bsol(self):
+        return tf.math.exp(self.log_bsol)
+
+    @property
     def Fc(self):
         Fabs = tf.math.exp(self.logFabs)
         return  tf.complex(
-            Fabs * tf.math.cos(self.Fphi),
-            Fabs * tf.math.sin(self.Fphi),
+            Fabs * tf.math.cos(self.Phi),
+            Fabs * tf.math.sin(self.Phi),
+        )
+
+    @property
+    def Fmask(self):
+        return  tf.complex(
+            self.Fmask_abs * tf.math.cos(self.PHImask),
+            self.Fmask_abs * tf.math.sin(self.PHImask),
         )
 
     @property
@@ -360,6 +410,29 @@ class SpreadPosterior(StructureFactorPosteriorBase):
                             sites[identifier] = structure.cell.fractionalize(atom.pos).tolist() #Use the PDB's cell irrespective of rac
         return sites
 
+    @staticmethod
+    def remove_sites_from_file(sites_pdb, output_pdb, elements):
+        sites = {}
+        structure = gemmi.read_pdb(sites_pdb)
+        resis = []
+        to_delete = []
+        # Deleting atoms during iteration will cause baddd things to happen. 
+        # Need to iterate first to figure out all the atoms to be deleted
+        for model in structure:
+            for chain in model:
+                for resi in chain:
+                    for atom in resi:
+                        identifier = f"{model.num}/{chain.name}/{resi.seqid.num}/{atom.name}"
+                        elem = atom.element.name
+                        if elem in elements:
+                            resis.append(resi)
+                            to_delete.append((
+                                atom.name, atom.altloc
+                            ))
+        for resi,args in zip(resis, to_delete):
+            resi.remove_atom(*args)
+        structure.write_pdb(output_pdb)
+
     def fc_to_dataset(self):
         h,k,l = self.rac.Hunique.numpy().T
         ds = rs.DataSet({
@@ -372,7 +445,7 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         return ds
 
     @staticmethod
-    def reference_structure_factors(pdb_file, dmin, wavelength=None, energy=None):
+    def reference_structure_factors(pdb_file, dmin, wavelength=None, energy=None, elements=None):
         """
         Calculate anomalous structure factors from a model at a specific wavelength in Angstroms or energy in eV
         """
@@ -381,11 +454,24 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         if wavelength is None:
             wavelength = rs.utils.ev2angstroms(energy)
 
-        with NamedTemporaryFile(suffix='.mtz') as f:
+        with NamedTemporaryFile(suffix='.mtz') as f, NamedTemporaryFile(suffix='.pdb') as p:
             mtz_file = f.name
-            command = f"gemmi sfcalc --to-mtz {mtz_file} --anomalous --dmin {dmin} --wavelength {wavelength} {pdb_file}"
+            pdb_in = p.name
+            if elements is not None:
+                SpreadPosterior.remove_sites_from_file(pdb_file, pdb_in, elements)
+            else:
+                pdb_in = pdb_file
+
+            command = f"gemmi sfcalc --ksolv=0 --to-mtz {mtz_file} --anomalous --dmin {dmin} --wavelength {wavelength} {pdb_in}"
             call(command.split())
             ds = rs.read_mtz(mtz_file)
+
+        with NamedTemporaryFile(suffix='.mtz') as f, NamedTemporaryFile(suffix='.msk') as m:
+            command = f"gemmi mask {pdb_file} {m.name}"
+            call(command.split())
+            command = f"gemmi map2sf {m.name} {f.name} Fmask PHImask --dmin {dmin}"
+            call(command.split())
+            mask = rs.read_mtz(f.name)
 
         Fc = ds.to_structurefactor('FC', 'PHIC')
         Fa = ds.to_structurefactor('FCanom', 'PHICanom')
@@ -401,6 +487,12 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         out = out.set_index(['H', 'K', 'L'])
         out = rs.concat(out.from_structurefactor('F'), axis=1)
         out = out.rename(columns={'Phi': 'PHI'})
+        out.spacegroup = ds.spacegroup
+        out.cell = ds.cell
+        idx = out.hkl_to_asu().get_hkls()
+        out['Fmask'] = mask['Fmask'].loc[map(tuple, idx)].to_numpy()
+        out['PHImask'] = mask['PHImask'].loc[map(tuple, idx)].to_numpy()
+        out = out.infer_mtz_dtypes()
         return out
 
     @classmethod
@@ -415,10 +507,9 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         if wavelength_range is None:
             wavelength_range = sorted([rs.utils.ev2angstroms(e) for e in energy_range])
 
-        ds = SpreadPosterior.reference_structure_factors(pdb_file, dmin, wavelength_range[1])
-        #from IPython import embed;embed(colors='linux');xx
-        #ds = ds.stack_anomalous()
+        ds = SpreadPosterior.reference_structure_factors(pdb_file, dmin, wavelength_range[1], elements=elements)
         ds['Fcalc'] = ds.to_structurefactor('F', 'PHI')
+        ds['Fmask'] = ds.to_structurefactor('Fmask', 'PHImask')
 
         structure = gemmi.read_pdb(pdb_file)
         cell = structure.cell
@@ -428,16 +519,19 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         rasu = ReciprocalASU(cell, spacegroup, dmin, anomalous=True)
         rac = ReciprocalASUGraph(rasu)
         Fc = ds.loc[map(tuple, rasu.Hunique), 'Fcalc']
+        Fmask = ds.loc[map(tuple, rasu.Hunique), 'Fmask']
         if standardize:
-            Fc = Fc  / np.std(np.abs(Fc))
+            Fc = Fc  #/ np.std(np.abs(Fc))
+            Fmask = Fmask  #/ np.std(np.abs(Fmask))
 
-        return cls(rac, Fc, sites, wavelength_range, **kwargs)
+        return cls(rac, Fc, Fmask, sites, wavelength_range, **kwargs)
 
     def distribution(self, asu_id, hkl, wav=None):
         if wav is None:
             wav = self.wav_min
 
-        fp,fpp,scale = self.spread_model(wav)
+        dhkl = self.rac.gather(self.rac.dHKL, asu_id, hkl)
+        fp,fpp,scale = self.spread_model(wav, dhkl)
 
         # Rician RV params nu,sigma
         sigma = self.num_ops * tf.math.sqrt(tf.reduce_sum(tf.square(scale), axis=-1) + self.epsilon)
@@ -455,10 +549,12 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         )
         f = tf.complex(fp, fpp)
         fc = self.rac.gather(self.Fc, asu_id, hkl)
-        f = fc + tf.einsum("...s,...os->...", f, exponential)
+        fmask = self.rac.gather(self.Fmask, asu_id, hkl) 
+        fmask = tf.complex(self.ksol * tf.math.exp(-self.bsol * tf.pow(dhkl, -2.)), 0.) * fmask
+
+        f = fc + fmask + tf.einsum("...s,...os->...", f, exponential)
         nu = tf.math.abs(f)
 
-        #from IPython import embed;embed(colors='linux');xx
         q = Rice(nu, sigma)
         return q
 
@@ -499,8 +595,7 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         return results
 
     def call(self, inputs=None):
-        (
-            asu_id,
+        ( asu_id,
             hkl_in,
             resolution,
             wavelength,
@@ -508,6 +603,8 @@ class SpreadPosterior(StructureFactorPosteriorBase):
             iobs,
             sigiobs,
         ) = self.sanitize_inputs(inputs)
+        self.add_metric(self.ksol, 'ksol')
+        self.add_metric(self.bsol, 'bsol')
         return self.distribution(asu_id, hkl_in, wavelength)
 
     def compute_kl_terms(self, q, p, samples=None):
