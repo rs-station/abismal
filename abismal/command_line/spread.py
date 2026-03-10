@@ -208,7 +208,7 @@ def main():
         verbose=parser.keras_verbosity,
     )
 
-def plot_results():
+def plotXX_results():
     from argparse import ArgumentParser
     parser = ArgumentParser("Plot results from the spread training.")
     parser.add_argument(
@@ -217,7 +217,11 @@ def plot_results():
     parser.add_argument(
         "--epoch", help="Which epoch to plot. By default the most recent.", type=int, default=None
     )
+    parser.add_argument(
+        "--animate", help="Animate training over epochs", action="store_true",
+    )
     parser = parser.parse_args()
+
 
     import pandas as pd
     import seaborn as sns
@@ -226,6 +230,9 @@ def plot_results():
     f,(ax1,ax2) = plt.subplots(2)
 
     results = pd.read_csv(parser.csv)
+    #results['chain'] = results['atom_name'].apply(lambda x: x.split("/")[1])
+    #results['atom'] = results['atom_name'].apply(lambda x: x.split("/")[2] + '-' + x.split('/')[3])
+    #from IPython import embed;embed(colors='linux');XX
 
     epoch = None
     if 'Epoch' in results:
@@ -242,24 +249,100 @@ def plot_results():
         y = df["f'"]
         s = df['stddev']
 
-        fb = ax1.fill_between(
+        err1 = ax1.fill_between(
             x, y - s, y + s, alpha=alpha
         )
-        c = fb.properties()['facecolor'][:3]
-        ax1.plot(x, y, color=c, label=atom, alpha=1.0)
+        c = err1.properties()['facecolor'][:3]
+        line1 = ax1.plot(x, y, color=c, label=atom, alpha=1.0)[0]
         y = df["f''"]
-        ax2.fill_between(
+        err2 = ax2.fill_between(
             x, y - s, y + s, alpha=alpha, color=c
         )
-        ax2.plot(x, y, color=c, alpha=1.0)
+        line2 = ax2.plot(x, y, color=c, alpha=1.0)[0]
 
 
     if epoch is not None:
         plt.suptitle(f"Spread Results, Epoch {epoch}")
-    ax1.set_ylabel("f' (arbtrary units)")
+    ax1.set_ylabel(r"$f^o + f'$ (arbtrary units)")
     ax2.set_ylabel("f'' (arbtrary units)")
     ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+    plt.xlabel("Energy (eV)")
     plt.tight_layout()
-
     plt.show()
 
+def plot_results():
+    from argparse import ArgumentParser
+    parser = ArgumentParser("Plot results from the spread training.")
+    parser.add_argument(
+        "csv", help="A 'spread_epoch_#.csv' file to plot.", type=str
+    )
+    parser.add_argument(
+        "--epoch", help="Which epoch to plot. By default the most recent.", type=int, default=None
+    )
+    parser.add_argument(
+        "--animate", help="Animate training over epochs", action="store_true",
+    )
+    parser.add_argument(
+        "-o", "--output", help="Output file name", type=str, default=None
+    )
+    parser = parser.parse_args()
+
+
+    import pandas as pd
+    import seaborn as sns
+    from matplotlib import pyplot as plt
+    from matplotlib.animation import FuncAnimation
+    import reciprocalspaceship as rs
+    import matplotlib as mpl
+
+    results = pd.read_csv(parser.csv)
+
+    f, (ax1, ax2) = plt.subplots(2)
+    results['energy'] = rs.utils.angstroms2ev(results['wavelength'])
+    alpha = 0.2
+
+    def update(frame_epoch):
+        ax1.clear()
+        ax2.clear()
+        
+        epoch_data = results[results.Epoch == frame_epoch]
+        
+        for atom, df in epoch_data.groupby("atom_name"):
+            x = df['energy']
+            y = df["f'"]
+            s = df['stddev']
+
+            err1 = ax1.fill_between(
+                x, y - s, y + s, alpha=alpha
+            )
+            c = err1.properties()['facecolor'][:3]
+            line1 = ax1.plot(x, y, color=c, label=atom, alpha=1.0)[0]
+
+            y = df["f''"]
+            err2 = ax2.fill_between(
+                x, y - s, y + s, alpha=alpha, color=c
+            )
+            line2 = ax2.plot(x, y, color=c, alpha=1.0)[0]
+
+        plt.suptitle(f"Spread Results, Epoch {frame_epoch}")
+        ax1.set_ylabel(r"$f^o + f'$", size=16)
+        ax2.set_ylabel(r"$f''$", size=16)
+        ax2.set_xlabel("Energy (eV)")
+        ax1.legend(bbox_to_anchor=(1.05, 1))
+        plt.tight_layout()
+
+    if parser.animate:
+        epochs = sorted(results['Epoch'].unique())
+        update(epochs[0])
+        ani = FuncAnimation(f, update, frames=epochs, repeat=True, interval=500)
+        if parser.output is not None:
+            ani.save(parser.output)
+    else:
+        epoch = parser.epoch
+        if epoch is None:
+            epoch = results['Epoch'].max()
+        update(epoch)
+        if parser.output is not None:
+            plt.save(paser.output)
+
+    plt.show()
