@@ -28,7 +28,9 @@ def main():
         StandardizationFreezer,
         SpreadSaver,
     )
-    from abismal.prior.spread.spread import SpreadPrior
+    #from abismal.prior.spread.spread import SpreadPrior
+    from abismal.prior.structure_factor.wilson import WilsonPrior
+    from abismal.optimizers.optimizer_dict import optimizer_dict
 
     parser = ArgumentParser(__doc__)
     parser.add_argument(
@@ -59,6 +61,9 @@ def main():
         "--test-fraction", help="Fraction of data reserved for validation", type=float, default=0., required=False
     )
     parser.add_argument(
+        "--epsilon", help="A small constant for numerical stability", type=float, default=1e-12, required=False
+    )
+    parser.add_argument(
         "--scale-kl-weight", help="Scale KL divergence weight", type=float, default=1., required=False
     )
     parser.add_argument(
@@ -83,7 +88,10 @@ def main():
         "--out-dir", type=str, default='./', help='Where to save the output.',
     )
     parser.add_argument(
-        "--elements", type=lambda x: x.split(','), required=True, help="List of elements for which to refine f' and f''. These should be specified as a comma-separated string ie. 'Mn,I,Fe,S'",
+        "--element", type=str, required=True, help="Name of element for which to refine f' and f''.",
+    )
+    parser.add_argument(
+        "--charge", type=int, required=False, default=0, help="Charge of the element used to calculate base form factor f0.",
     )
     parser.add_argument(
         "--wavelength-range", default=None, type=float, nargs=2, help="Specify the wavelength range over which to refine f' and f''.",
@@ -100,9 +108,26 @@ def main():
     parser.add_argument(
         "integrated", type=str, nargs='+', help='The integrated diffraction data on which to conduct the "SPREAD" analysis.',
     )
+    parser.add_argument(
+        "--optimizer", help="Name of the optimizer to use.", type=str.lower, choices=list(optimizer_dict.keys()), default='Adam'
+    )
+    parser.add_argument(
+        "--beta-1", help="Beta 1 of the optimizer", type=float, default=0.9, required=False
+    )
+    parser.add_argument(
+        "--beta-2", help="Beta 2 of the optimizer", type=float, default=0.999, required=False
+    )
+    parser.add_argument(
+        "--adam-epsilon", help="Epsilon of the optimizer", type=float, default=1e-7, required=False
+    )
+    parser.add_argument(
+        "--learning-rate", help="Learning rate of the optimizer", type=float, default=1e-3, required=False
+    )
+
     parser = parser.parse_args()
     pdb = gemmi.read_pdb(parser.model_file)
     from abismal.surrogate_posterior.spread.spread import SpreadPosterior
+
     if parser.wavelength_range is None:
         if parser.energy_range is None:
             wavs = []
@@ -112,13 +137,16 @@ def main():
         from abismal.surrogate_posterior.spread.spread import DummySpreadPosterior as SpreadPosterior
     surrogate_posterior = SpreadPosterior.from_pdb(
         pdb_file=parser.model_file,
-        elements=parser.elements,
+        element=parser.element,
         dmin=parser.dmin,
         wavelength_range=parser.wavelength_range,
         energy_range=parser.energy_range,
-        epsilon=1e-5,
+        epsilon=parser.epsilon,
+        kl_weight=parser.kl_weight,
     )
-    prior = SpreadPrior.from_spread_posterior(surrogate_posterior)
+    #prior = SpreadPrior.from_spread_posterior(surrogate_posterior)
+    prior = WilsonPrior(surrogate_posterior.rac)
+    #prior = None
 
     dm = DataManager(
         parser.integrated,
@@ -140,7 +168,7 @@ def main():
             hidden_units=None,
             activation="relu",
             kl_weight=parser.scale_kl_weight,
-            epsilon=1e-12,
+            epsilon=parser.epsilon,
             num_image_samples=None,
             share_weights=True,
             prior_name='lognormal',
@@ -166,7 +194,7 @@ def main():
         prior=prior,
         likelihood=likelihood,
         mc_samples=parser.mc_samples,
-        kl_weight=parser.kl_weight,
+        kl_weight=0.0,
         reindexing_ops=reindexing_ops,
         standardization_decay=0.999,
     )
@@ -189,8 +217,13 @@ def main():
     if not exists(parser.out_dir):
         mkdir(parser.out_dir)
 
-    from abismal.optimizers import Adam
-    opt = Adam()
+    from abismal.optimizers import Adam,AdaBelief
+    opt = optimizer_dict[parser.optimizer](
+        parser.learning_rate,
+        parser.beta_1,
+        parser.beta_2,
+        parser.adam_epsilon,
+    )
     model.compile(opt, run_eagerly=parser.debug)
 
     for x,y in train:

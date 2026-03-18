@@ -2,7 +2,7 @@ import numpy as np
 import math
 import gemmi
 import tensorflow as tf
-from abismal.distributions import Rice
+from abismal.distributions import Rice,FoldedNormal
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import math as tfm
 from tensorflow_probability import util as tfu
@@ -14,6 +14,9 @@ from abismal.symmetry import ReciprocalASU,ReciprocalASUCollection,ReciprocalASU
 import reciprocalspaceship as rs
 from tempfile import NamedTemporaryFile
 from subprocess import call
+from abismal.surrogate_posterior.spread.gp import SpreadGP
+from abismal.surrogate_posterior.spread.nn import SpreadNN
+from abismal.surrogate_posterior.spread.smoother import SpreadSmoother
 
 def wav_min_max(expt_file):
     from dxtbx.model import ExperimentList
@@ -27,229 +30,8 @@ def wav_min_max(expt_file):
             wav_max = max(wav, wav_max)
     return [wav_min, wav_max]
 
-class SpreadDistribution():
-    def __init__(fc, fp, fpp, s):
-        self.fc = fc
-        self.fp = fp
-        self.fpp = fpp
-        self.s = s
-
-    def sample(self, shape=()):
-        zp = tfd.Normal(fp, s)
-        zpp = tfd.Normal(fpp, s)
-        return np.abs(self.fc + tf.complex(zp, zpp))
-
-
-
-class SpreadGP(tfk.models.Model):
-    def __init__(self, wavelength_range, num_atoms, num_points=100, epsilon=1e-12, **kwargs):
-        super().__init__(**kwargs)
-        epsilon = 1e-3
-        small = 0.1
-        self.num_atoms = num_atoms
-        self.num_points = num_points
-        self.epsilon = epsilon
-        self.wav_min,self.wav_max = wavelength_range
-        init = tfk.initializers.RandomUniform(0., 1.)
-        self.inducing_x = self.add_weight('x', shape=(num_atoms, num_points), initializer=init)
-        self.inducing_fp = self.add_weight('fp', shape=(num_atoms, num_points), initializer='zeros')
-        self.inducing_fpp = self.add_weight('fpp', shape=(num_atoms, num_points), initializer='zeros')
-        self.inducing_s = tfu.TransformedVariable(
-            tf.eye(num_points, batch_shape=(num_atoms,)),
-            tfb.Chain([
-                tfb.CholeskyOuterProduct(),
-                tfb.FillScaleTriL(
-                    diag_bijector=tfb.Chain([
-                        tfb.Shift(epsilon),
-                        tfb.Exp(),
-                    ])
-                ),
-            ]),
-        )
-
-        #self.jitter = tfu.TransformedVariable(
-        #    small,
-        #    tfb.Chain([
-        #        tfb.Shift(epsilon),
-        #        tfb.Exp(),
-        #    ]),
-        #)
-        #self.jitter = epsilon
-        self.jitter=0.
-        self.bw = tfu.TransformedVariable(
-            small,
-            tfb.Chain([
-                tfb.Shift(epsilon),
-                tfb.Exp(),
-            ]),
-        )
-        self.kfunc = tfm.psd_kernels.ExponentiatedQuadratic(
-            length_scale = self.bw
-        ) 
-
-    def _get_variational_gps(self, wav):
-        X = (wav - self.wav_min) / (self.wav_max - self.wav_min)
-        qp = tfd.VariationalGaussianProcess(
-              self.kfunc,
-              X[None,None,...],
-              self.inducing_x[None,...,None],
-              self.inducing_fp[None,...],
-              self.inducing_s[None,...],
-              observation_noise_variance=0.,
-              jitter=self.jitter,
-        )
-        qpp = tfd.VariationalGaussianProcess(
-              self.kfunc,
-              X[None,None,...],
-              self.inducing_x[None,...,None],
-              self.inducing_fpp[None,...],
-              self.inducing_s[None,...],
-              observation_noise_variance=0.,
-              jitter=self.jitter,
-        )
-        return qp, qpp
-
-    def call(self, wav):
-        qp, qpp = self._get_variational_gps(wav)
-
-        fp = tf.transpose(tf.squeeze(qp.mean(), axis=0))
-        fpp = tf.transpose(tf.squeeze(qpp.mean(), axis=0))
-        scale = tf.transpose(tf.squeeze(qp.stddev(), axis=0))
-        self.add_metric(self.bw, "BW")
-        self.add_metric(self.jitter, "Jitter")
-
-#        kl_div = tf.reduce_mean(
-#            qp.surrogate_posterior_kl_divergence_prior()
-#        ) + tf.reduce_mean(
-#            qpp.surrogate_posterior_kl_divergence_prior()
-#        )
-#
-#        self.add_metric(kl_div, "KL")
-#        self.add_loss(kl_div)
-
-        return fp, fpp, scale
-
-#    def compute_kl_terms(self, q, p, samples=None):
-#        return None
-
-class SpreadSmoother(tfk.models.Model):
-    def __init__(self, wavelength_range, num_atoms, num_points=100, epsilon=1e-12, train_inducing_x=False, train_bw=False, **kwargs):
-        super().__init__(**kwargs)
-        self.kl_weight = 1e-3
-        self.num_atoms = num_atoms
-        self.num_points = num_points
-        self.epsilon = epsilon
-        self.wav_min,self.wav_max = wavelength_range
-        if train_inducing_x:
-            init = tfk.initializers.RandomUniform(self.wav_min, self.wav_max)
-            self.inducing_x = self.add_weight('x', shape=(num_atoms, num_points), initializer=init, trainable=train_inducing_x)
-        else:
-            self.inducing_x = tf.linspace(self.wav_min, self.wav_max, num_points)[None,:]
-        self.inducing_fp = self.add_weight('fp', shape=(num_atoms, num_points), initializer='zeros')
-        self.inducing_fpp = self.add_weight('fpp', shape=(num_atoms, num_points), initializer='zeros')
-
-        self.inducing_s = tfu.TransformedVariable(
-            1e-3 * tf.ones((num_atoms, num_points)),
-            tfb.Chain([
-                tfb.Shift(epsilon),
-                tfb.Exp(),
-            ]),
-        )
-        #self.bw = 2. / num_points
-
-        #bw = 2. * (self.wav_max - self.wav_min) / num_points,
-        bw = (self.wav_max - self.wav_min) / 10.
-        if train_bw:
-            self.bw = tfu.TransformedVariable(
-                bw,
-                tfb.Chain([
-                    tfb.Shift(epsilon),
-                    tfb.Exp(),
-                ]),
-            )
-        else:
-            self.bw = bw
-        self.b_factor = self.add_weight('b', shape=(num_atoms,), dtype='float32', initializer='zeros')
-
-    def call(self, wav, dHKL=None):
-        self.add_metric(self.bw, "BW")
-        self.add_metric(tf.math.reduce_std(self.inducing_x), "SigX")
-        d = tf.square((wav[:,None,...] - self.inducing_x[None,...]) / self.bw)
-        w = tf.nn.softmax(-d, axis=-1)
-        if dHKL is not None:
-            T = tf.math.exp(-0.25 * self.b_factor[None,:,None] / tf.square(dHKL[:,None,None]))
-            w = w * T
-        fp = tf.einsum('...d,...d->...', self.inducing_fp, w)
-        fpp = tf.einsum('...d,...d->...', self.inducing_fpp, w)
-        scale  = tf.einsum('...d,...d->...', self.inducing_s, w)
-
-        return fp, fpp, scale
-
-    def compute_kl_terms(self, q, p, samples=None):
-        qp = tfd.Normal(self.inducing_fp, self.inducing_s)
-        qpp = tfd.Normal(self.inducing_fpp, self.inducing_s)
-        p = tfd.Normal(0., 1.)
-
-        kl_div = tf.reduce_mean(
-            qp.kl_divergence(p) + qpp.kl_divergence(p)
-        )
-        self.add_loss(self.kl_weight * kl_div)
-        self.add_metric(kl_div, 'Custom_KL')
-
-        return None
-
-class SpreadNN(tfk.models.Model):
-    def __init__(self, wavelength_range, num_atoms, epsilon=1e-12, dmodel=32, mlp_depth=5, activation='swish', gated=True, **kwargs):
-        super().__init__(**kwargs)
-        self.kl_weight = 1e-5
-        self.num_atoms = num_atoms
-        self.epsilon = epsilon
-        self.wav_min,self.wav_max = wavelength_range
-        self.input_layer = tfk.layers.Dense(dmodel, kernel_initializer='glorot_normal')
-        self.mlp = MLP(depth=mlp_depth, activation=activation, gated=gated)
-        self.output_layer = tfk.layers.EinsumDense(
-            '...d,dab->...ab',
-            output_shape=(3, self.num_atoms),
-            kernel_initializer='glorot_normal',
-            bias_axes='ab',
-        )
-
-    def scale_bijector(self, x):
-        return tf.nn.softplus(x) + self.epsilon
-
-    def encode_wav(self, wav):
-        out = 2. * (wav - self.wav_min) / (self.wav_max - self.wav_min) - 1.
-        f = 2. * np.pi * 2 ** tf.linspace(0., 5., 6)
-        out = tf.concat((
-            tf.math.cos(out * f),
-            tf.math.sin(out * f),
-        ), axis=-1)
-        return out
-
-    def call(self, wav):
-        wav_normed = self.encode_wav(wav)
-        out = self.input_layer(wav_normed)
-        out = self.mlp(out)
-        out = self.output_layer(out)
-        fp,fpp,scale = tf.unstack(out, axis=-2)
-        scale = self.scale_bijector(scale)
-
-        qp = tfd.Normal(fp, scale)
-        qpp = tfd.Normal(fpp, scale)
-        p = tfd.Normal(0., 1.)
-
-        kl_div = tf.reduce_mean(
-            qp.kl_divergence(p) + qpp.kl_divergence(p)
-        )
-        self.add_loss(self.kl_weight * kl_div)
-        self.add_metric(kl_div, 'Custom_KL')
-        return fp, fpp, scale
-
-    def compute_kl_terms(self, q, p, samples=None):
-        return None
-
 class SpreadPosterior(StructureFactorPosteriorBase):
-    def __init__(self, rac, Fc, Fmask, sites_dict, wavelength_range, spread_model=None, dmodel=32, epsilon=1e-12, optimize_fc=False, **kwargs):
+    def __init__(self, rac, Fc, Fmask, sites_dict, wavelength_range, element_name, charge=0, spread_model=None, dmodel=32, epsilon=1e-12, optimize_fc=False, atomic_b_init=20., bsol_init=0.5, ksol_init=1.0, kl_weight=1e-2, standardize=True, **kwargs):
         """
         rac : ReciprocalASUCollection
         Fc : np.array
@@ -258,9 +40,27 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         epsilon : float
         """
         super().__init__(rac, epsilon=epsilon, **kwargs)
+        std = 1.
+
         self.rac = rac
         self.dmodel = dmodel
+        cell = self.rac.reciprocal_asus[0].cell 
+
+        dHKL = self.rac.dHKL
+        rd2 = np.power(dHKL, -2.)
+        self.element_name = element_name
+        if charge is not None:
+            gemmi.IT92_set_ignore_charge(False)
+            coeff = gemmi.IT92_get_exact(gemmi.Element(element_name), charge)  # for Mg2+
+        self.f0 = np.array(list(map(coeff.calculate_sf, 0.25 * rd2)), 'float32')
+
         Fc = np.array(Fc)
+        if standardize: 
+            std = np.abs(Fc).std()
+            Fc = Fc / std
+            Fmask = Fmask / std
+            self.f0 = self.f0 / std
+
         self.logFabs = self.add_weight(
             name='logFabs',
             shape=Fc.shape,
@@ -275,7 +75,6 @@ class SpreadPosterior(StructureFactorPosteriorBase):
             initializer=tfk.initializers.Constant(tf.math.angle(Fc)),
             trainable=False,
         )
-
         self.Fmask_abs = self.add_weight(
             name='Fmask',
             shape=Fc.shape,
@@ -291,21 +90,6 @@ class SpreadPosterior(StructureFactorPosteriorBase):
             trainable=False,
         )
 
-        self.log_ksol = self.add_weight(
-            name='ksol',
-            shape=(),
-            dtype='float32',
-            initializer='zeros',
-            trainable=True,
-        )
-        self.log_bsol = self.add_weight(
-            name='bsol',
-            shape=(),
-            dtype='float32',
-            initializer='zeros',
-            trainable=True,
-        )
-
         self.sites_dict = sites_dict
         self.wav_min, self.wav_max = wavelength_range
         self.num_atoms = len(sites_dict)
@@ -317,12 +101,58 @@ class SpreadPosterior(StructureFactorPosteriorBase):
                 op.apply_to_xyz(v) for v in sites_dict.values()
             ])
             self.num_ops += 1
-        self.sites = tf.convert_to_tensor(self.sites)
+
+        sites = tf.convert_to_tensor(self.sites)
+        self.sites = self.add_weight(
+            name='sites',
+            shape=(self.num_ops, self.num_atoms, 3),
+            dtype='float32',
+            initializer=tfk.initializers.Constant(sites),
+            trainable=False,
+        )
 
         if spread_model is None:
             #self.spread_model = SpreadNN(wavelength_range, self.num_atoms, dmodel=dmodel, epsilon=epsilon)
             #self.spread_model = SpreadGP(wavelength_range, self.num_atoms, dmodel,  epsilon)
-            self.spread_model = SpreadSmoother(wavelength_range, self.num_atoms, 100,  epsilon)
+            self.spread_model = SpreadSmoother(wavelength_range, self.num_atoms, 100,  epsilon, kl_weight=kl_weight)
+
+        self._ksol = self.add_weight(
+            name='_ksol',
+            shape=(),
+            dtype='float32',
+            initializer=tfk.initializers.Constant(tf.math.log(ksol_init)),
+            trainable=True,
+        )
+        self._bsol = self.add_weight(
+            name='bsol',
+            shape=(),
+            dtype='float32',
+            initializer=tfk.initializers.Constant(tf.math.log(bsol_init)),
+            trainable=True,
+        )
+
+        self._k = self.add_weight(
+            name='k',
+            shape=(),
+            dtype='float32',
+            initializer='zeros',
+            trainable=True,
+        )
+
+        log_b_init = tf.math.log(atomic_b_init)
+        self._atomic_b_factor = self.add_weight(
+            'atomic_b', 
+            shape=(self.num_atoms,), 
+            dtype='float32', 
+            initializer=tfk.initializers.Constant(log_b_init),
+            trainable=False,
+        )
+        self._b = self.add_weight(
+            'b', 
+            shape=(), 
+            dtype='float32', 
+            initializer='zeros'
+        )
 
     def get_config(self):
         config = super().get_config()
@@ -344,13 +174,27 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         )
         return cls(**config)
 
+
+    @property
+    def k(self):
+        return tf.math.exp(self._k)
+
+    @property
+    def b(self):
+        #return self._b
+        return -tf.math.exp(self._b)
+
     @property
     def ksol(self):
-        return tf.math.exp(self.log_ksol)
+        return tf.math.exp(self._ksol)
 
     @property
     def bsol(self):
-        return tf.math.exp(self.log_bsol)
+        return tf.math.exp(self._bsol)
+
+    @property
+    def atomic_b_factor(self):
+        return tf.math.exp(self._atomic_b_factor)
 
     @property
     def Fc(self):
@@ -397,6 +241,7 @@ class SpreadPosterior(StructureFactorPosteriorBase):
     @staticmethod
     def sites_from_file(sites_pdb, elements):
         sites = {}
+        b_factors = {}
         structure = gemmi.read_pdb(sites_pdb)
         for model in structure:
             for chain in model:
@@ -405,10 +250,11 @@ class SpreadPosterior(StructureFactorPosteriorBase):
                         elem = atom.element.name
                         if elem in elements:
                             identifier = f"{model.num}/{chain.name}/{resi.seqid.num}/{atom.name}"
+                            b_factors[identifier] = atom.b_iso
                             if identifier in sites:
                                 raise ValueError(f"Duplicate atom identifier in {sites_pdb}\nCannot proceed with analysis")
                             sites[identifier] = structure.cell.fractionalize(atom.pos).tolist() #Use the PDB's cell irrespective of rac
-        return sites
+        return sites, b_factors
 
     @staticmethod
     def remove_sites_from_file(sites_pdb, output_pdb, elements):
@@ -467,7 +313,8 @@ class SpreadPosterior(StructureFactorPosteriorBase):
             ds = rs.read_mtz(mtz_file)
 
         with NamedTemporaryFile(suffix='.mtz') as f, NamedTemporaryFile(suffix='.msk') as m:
-            command = f"gemmi mask {pdb_file} {m.name}"
+            #Note the spacing needs to be specified to match oversampling of the atoms' fft
+            command = f"gemmi mask --spacing={dmin / 3.0} {pdb_file} {m.name}"
             call(command.split())
             command = f"gemmi map2sf {m.name} {f.name} Fmask PHImask --dmin {dmin}"
             call(command.split())
@@ -496,18 +343,16 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         return out
 
     @classmethod
-    def from_pdb(cls, pdb_file, elements, dmin, wavelength_range=None, energy_range=None, standardize=True, **kwargs):
+    def from_pdb(cls, pdb_file, element, dmin, charge=0, wavelength_range=None, energy_range=None, standardize=False, **kwargs):
         """
         Build the spread posterior from a pdb file containing anomalous scatterers and an mtz file with "F(+/-)" and "PHI(+/-)" columns. 
         """
-        valid = (wavelength_range is not None) ^ (energy_range is not None)
-        if not valid:
+        if wavelength_range is None and energy_range is None:
             raise ValueError("Must specify either wavelength_range or energy_range")
-
         if wavelength_range is None:
             wavelength_range = sorted([rs.utils.ev2angstroms(e) for e in energy_range])
 
-        ds = SpreadPosterior.reference_structure_factors(pdb_file, dmin, wavelength_range[1], elements=elements)
+        ds = SpreadPosterior.reference_structure_factors(pdb_file, dmin, wavelength_range[1], elements=[element])
         ds['Fcalc'] = ds.to_structurefactor('F', 'PHI')
         ds['Fmask'] = ds.to_structurefactor('Fmask', 'PHImask')
 
@@ -515,28 +360,53 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         cell = structure.cell
         spacegroup = gemmi.SpaceGroup(structure.spacegroup_hm)
 
-        sites = cls.sites_from_file(pdb_file, elements)
+        sites,b_factors = cls.sites_from_file(pdb_file, [element])
+        b_factors = np.array(list(b_factors.values()), dtype='float32')
         rasu = ReciprocalASU(cell, spacegroup, dmin, anomalous=True)
         rac = ReciprocalASUGraph(rasu)
         Fc = ds.loc[map(tuple, rasu.Hunique), 'Fcalc']
         Fmask = ds.loc[map(tuple, rasu.Hunique), 'Fmask']
         if standardize:
-            Fc = Fc  #/ np.std(np.abs(Fc))
-            Fmask = Fmask  #/ np.std(np.abs(Fmask))
+            scale = np.std(np.abs(Fc))
+            Fc = Fc / scale
+            Fmask = Fmask / scale
 
-        return cls(rac, Fc, Fmask, sites, wavelength_range, **kwargs)
+        return cls(rac, Fc, Fmask, sites, wavelength_range, element_name=element, charge=charge, atomic_b_init=b_factors, **kwargs)
 
     def distribution(self, asu_id, hkl, wav=None):
         if wav is None:
             wav = self.wav_min
 
         dhkl = self.rac.gather(self.rac.dHKL, asu_id, hkl)
+        invd2 = tf.pow(dhkl, -2.)
+
+        #Scale corrections
+        k = tf.complex(self.k, 0.)
+        T = tf.complex(
+            tf.math.exp(-self.b * invd2),
+            0.,
+        )
+        ksol = tf.complex(self.ksol, 0.)
+        Tsol = tf.complex(
+            tf.math.exp(-self.bsol * invd2),
+            0.,
+        )
+
+        # Complex scattering factors
         fp,fpp,scale = self.spread_model(wav, dhkl)
+        f0 = self.rac.gather(self.f0, asu_id, hkl)
+
+        # Atomic b-factor correction
+        Ta = tf.math.exp(-0.25 * self.atomic_b_factor[None,:] * invd2[:,None])
+        fp = Ta * fp
+        fpp = Ta * fpp
+        f0 = f0[:,None] * Ta
+        scale = Ta * scale
 
         # Rician RV params nu,sigma
-        sigma = self.num_ops * tf.math.sqrt(tf.reduce_sum(tf.square(scale), axis=-1) + self.epsilon)
+        sigma = tf.math.sqrt(self.num_ops * tf.reduce_sum(tf.square(scale), axis=-1) + self.epsilon)
 
-        #TODO -- just cache the phase?
+        #TODO -- just cache the phase and use gather
         h = tf.cast(hkl, 'float32')
         phase = 2. * np.pi * tf.einsum(
             "...d,osd->...os",
@@ -547,15 +417,16 @@ class SpreadPosterior(StructureFactorPosteriorBase):
             tf.math.cos(phase),
             tf.math.sin(phase),
         )
-        f = tf.complex(fp, fpp)
+        fs = tf.complex(f0 + fp, fpp)
+        fs = tf.einsum("...s,...os->...", fs, exponential)
         fc = self.rac.gather(self.Fc, asu_id, hkl)
-        fmask = self.rac.gather(self.Fmask, asu_id, hkl) 
-        fmask = tf.complex(self.ksol * tf.math.exp(-self.bsol * tf.pow(dhkl, -2.)), 0.) * fmask
+        fmask = ksol * Tsol * self.rac.gather(self.Fmask, asu_id, hkl) 
 
-        f = fc + fmask + tf.einsum("...s,...os->...", f, exponential)
+        f = k * T * (fc + fmask + fs)
         nu = tf.math.abs(f)
 
         q = Rice(nu, sigma)
+        #q = FoldedNormal(nu, sigma, self.epsilon)
         return q
 
     def flat_distribution(self, wav=None):
@@ -605,12 +476,10 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         ) = self.sanitize_inputs(inputs)
         self.add_metric(self.ksol, 'ksol')
         self.add_metric(self.bsol, 'bsol')
+        self.add_metric(self.k, 'k')
+        self.add_metric(self.b, 'b')
+        self.add_metric(tf.math.reduce_mean(self.atomic_b_factor), "atomic_b_ave")
         return self.distribution(asu_id, hkl_in, wavelength)
-
-    def compute_kl_terms(self, q, p, samples=None):
-        if hasattr(self.spread_model, 'compute_kl_terms'):
-            return self.spread_model.compute_kl_terms(q, p, samples)
-        return super().compute_kl_terms(q, p, samples)
 
 class DummySpreadPosterior(SpreadPosterior):
     def __init__(self, rac, Fc, sites_dict, wavelength_range, spread_model=None, dmodel=32, mlp_depth=20, epsilon=1e-12, snr=100., **kwargs):

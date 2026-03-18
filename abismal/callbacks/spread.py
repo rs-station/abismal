@@ -7,15 +7,21 @@ class SpreadSaver(tfk.callbacks.Callback):
         self.first_write = True
         super().__init__(**kwargs)
 
-    def on_epoch_end(self, epoch, logs):
+    def write_epoch_results(self, epoch):
         results = self.model.surrogate_posterior.get_results()
-        results['Epoch'] = epoch + 1
+        results['Epoch'] = epoch
         results.to_csv(
             self.csv_file,
             mode='w' if self.first_write else 'a',
             header = self.first_write,
         )
         self.first_write = False
+
+    def on_train_begin(self, logs):
+        self.write_epoch_results(0)
+
+    def on_epoch_end(self, epoch, logs):
+        self.write_epoch_results(epoch + 1)
 
 
 

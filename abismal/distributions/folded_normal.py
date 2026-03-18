@@ -58,6 +58,7 @@ class FoldedNormal(tfd.Distribution):
     def __init__(self,
                loc,
                scale,
+               low=0.0,
                validate_args=False,
                allow_nan_stats=True,
                name='FoldedNormal'):
@@ -83,6 +84,8 @@ class FoldedNormal(tfd.Distribution):
               loc, dtype=dtype, name='loc')
           self._scale = tensor_util.convert_nonref_to_tensor(
               scale, dtype=dtype, name='scale')
+          self._low = tensor_util.convert_nonref_to_tensor(
+              low, dtype=dtype, name='low')
           super(FoldedNormal, self).__init__(
               dtype=dtype,
               reparameterization_type=reparameterization.FULLY_REPARAMETERIZED,
@@ -119,6 +122,11 @@ class FoldedNormal(tfd.Distribution):
         """Distribution parameter for the pre-transformed standard deviation."""
         return self._scale
 
+    @property
+    def low(self):
+        """Distribution parameter for the location of the fold."""
+        return self._low
+
     def _event_shape_tensor(self):
         return tf.constant([], dtype=tf.int32)
 
@@ -138,9 +146,10 @@ class FoldedNormal(tfd.Distribution):
         loc = tf.convert_to_tensor(self.loc)
         scale = tf.convert_to_tensor(self.scale)
         shape = ps.concat([[n], self._batch_shape_tensor(loc=loc, scale=scale)], axis=0)
-        return stateless_folded_normal(shape, loc, scale, seed)
+        return stateless_folded_normal(shape, loc, scale, seed) + self.low
 
     def _log_prob(self,  value):
+        value = value - self.low
         loc,scale = self.loc,self.scale
         result = tfm.log_add_exp(
             tfd.Normal(loc, scale).log_prob(value), 
@@ -156,7 +165,7 @@ class FoldedNormal(tfd.Distribution):
             s * tf.sqrt(2/math.pi) * tf.math.exp(-0.5 * c * c) + 
             u * tf.math.erf(c/math.sqrt(2))
         )
-        return mean
+        return mean 
 
     def _mean(self):
         u = self.loc
@@ -171,7 +180,7 @@ class FoldedNormal(tfd.Distribution):
             idx,
             tf.abs(u),
             self._folded_normal_mean(u_safe, s_safe)
-        )
+        ) + self.low
 
     def _variance(self):
         u = self.loc
