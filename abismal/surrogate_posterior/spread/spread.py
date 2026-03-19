@@ -31,7 +31,7 @@ def wav_min_max(expt_file):
     return [wav_min, wav_max]
 
 class SpreadPosterior(StructureFactorPosteriorBase):
-    def __init__(self, rac, Fc, Fmask, sites_dict, wavelength_range, element_name, charge=0, spread_model=None, dmodel=32, epsilon=1e-12, optimize_fc=False, atomic_b_init=20., bsol_init=0.5, ksol_init=1.0, kl_weight=1e-2, standardize=True, **kwargs):
+    def __init__(self, rac, sites_dict, wavelength_range, element_name, charge=0, spread_model=None, dmodel=32, epsilon=1e-12, kl_weight=1e-2, atomic_b_init='zeros', **kwargs):
         """
         rac : ReciprocalASUCollection
         Fc : np.array
@@ -41,6 +41,7 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         """
         super().__init__(rac, epsilon=epsilon, **kwargs)
         std = 1.
+        self.kl_weight = kl_weight
 
         self.rac = rac
         self.dmodel = dmodel
@@ -53,41 +54,28 @@ class SpreadPosterior(StructureFactorPosteriorBase):
             gemmi.IT92_set_ignore_charge(False)
             coeff = gemmi.IT92_get_exact(gemmi.Element(element_name), charge)  # for Mg2+
         self.f0 = np.array(list(map(coeff.calculate_sf, 0.25 * rd2)), 'float32')
+        self.f0 = self.f0 / self.f0.max()
 
-        Fc = np.array(Fc)
-        if standardize: 
-            std = np.abs(Fc).std()
-            Fc = Fc / std
-            Fmask = Fmask / std
-            self.f0 = self.f0 / std
-
-        self.logFabs = self.add_weight(
-            name='logFabs',
-            shape=Fc.shape,
+        self.Freal = self.add_weight(
+            name='Freal',
+            shape=rac.asu_size,
             dtype='float32',
-            initializer=tfk.initializers.Constant(tf.math.log(tf.math.abs(Fc))),
-            trainable=optimize_fc,
+            initializer='zeros',
+            trainable=True,
         )
-        self.Phi = self.add_weight(
-            name='Phi',
-            shape=Fc.shape,
+        self.Fimag = self.add_weight(
+            name='Fimag',
+            shape=rac.asu_size,
             dtype='float32',
-            initializer=tfk.initializers.Constant(tf.math.angle(Fc)),
-            trainable=False,
+            initializer='zeros',
+            trainable=True,
         )
-        self.Fmask_abs = self.add_weight(
-            name='Fmask',
-            shape=Fc.shape,
-            dtype='float32',
-            initializer=tfk.initializers.Constant(tf.math.log(tf.math.abs(Fmask))),
-            trainable=False,
-        )
-        self.PHImask = self.add_weight(
-            name='PHImask',
-            shape=Fc.shape,
-            dtype='float32',
-            initializer=tfk.initializers.Constant(tf.math.angle(Fmask)),
-            trainable=False,
+        self.SigF = tfu.TransformedVariable(
+            tf.ones(rac.asu_size),
+            tfb.Chain([
+                tfb.Shift(epsilon),
+                tfb.Exp(),
+            ]),
         )
 
         self.sites_dict = sites_dict
@@ -111,48 +99,18 @@ class SpreadPosterior(StructureFactorPosteriorBase):
             trainable=False,
         )
 
-        if spread_model is None:
-            #self.spread_model = SpreadNN(wavelength_range, self.num_atoms, dmodel=dmodel, epsilon=epsilon)
-            #self.spread_model = SpreadGP(wavelength_range, self.num_atoms, dmodel,  epsilon)
-            self.spread_model = SpreadSmoother(wavelength_range, self.num_atoms, 100,  epsilon, kl_weight=kl_weight)
-
-        self._ksol = self.add_weight(
-            name='_ksol',
-            shape=(),
-            dtype='float32',
-            initializer=tfk.initializers.Constant(tf.math.log(ksol_init)),
-            trainable=True,
-        )
-        self._bsol = self.add_weight(
-            name='bsol',
-            shape=(),
-            dtype='float32',
-            initializer=tfk.initializers.Constant(tf.math.log(bsol_init)),
-            trainable=True,
-        )
-
-        self._k = self.add_weight(
-            name='k',
-            shape=(),
-            dtype='float32',
-            initializer='zeros',
-            trainable=True,
-        )
-
-        log_b_init = tf.math.log(atomic_b_init)
         self._atomic_b_factor = self.add_weight(
             'atomic_b', 
             shape=(self.num_atoms,), 
             dtype='float32', 
-            initializer=tfk.initializers.Constant(log_b_init),
+            initializer=atomic_b_init,
             trainable=False,
         )
-        self._b = self.add_weight(
-            'b', 
-            shape=(), 
-            dtype='float32', 
-            initializer='zeros'
-        )
+
+        if spread_model is None:
+            #self.spread_model = SpreadNN(wavelength_range, self.num_atoms, dmodel=dmodel, epsilon=epsilon)
+            #self.spread_model = SpreadGP(wavelength_range, self.num_atoms, dmodel,  epsilon)
+            self.spread_model = SpreadSmoother(wavelength_range, self.num_atoms, 100,  epsilon, kl_weight=kl_weight)
 
     def get_config(self):
         config = super().get_config()
@@ -174,41 +132,20 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         )
         return cls(**config)
 
-
-    @property
-    def k(self):
-        return tf.math.exp(self._k)
-
-    @property
-    def b(self):
-        #return self._b
-        return -tf.math.exp(self._b)
-
-    @property
-    def ksol(self):
-        return tf.math.exp(self._ksol)
-
-    @property
-    def bsol(self):
-        return tf.math.exp(self._bsol)
-
     @property
     def atomic_b_factor(self):
         return tf.math.exp(self._atomic_b_factor)
 
     @property
     def Fc(self):
-        Fabs = tf.math.exp(self.logFabs)
-        return  tf.complex(
-            Fabs * tf.math.cos(self.Phi),
-            Fabs * tf.math.sin(self.Phi),
+        Fimag = tf.where(
+            self.rac.centric, 
+            0.,
+            self.Fimag,
         )
-
-    @property
-    def Fmask(self):
-        return  tf.complex(
-            self.Fmask_abs * tf.math.cos(self.PHImask),
-            self.Fmask_abs * tf.math.sin(self.PHImask),
+        return tf.complex(
+            self.Freal,
+            Fimag,
         )
 
     @property
@@ -355,6 +292,8 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         ds = SpreadPosterior.reference_structure_factors(pdb_file, dmin, wavelength_range[1], elements=[element])
         ds['Fcalc'] = ds.to_structurefactor('F', 'PHI')
         ds['Fmask'] = ds.to_structurefactor('Fmask', 'PHImask')
+        from IPython import embed
+        embed(colors='linux')
 
         structure = gemmi.read_pdb(pdb_file)
         cell = structure.cell
@@ -371,26 +310,14 @@ class SpreadPosterior(StructureFactorPosteriorBase):
             Fc = Fc / scale
             Fmask = Fmask / scale
 
-        return cls(rac, Fc, Fmask, sites, wavelength_range, element_name=element, charge=charge, atomic_b_init=b_factors, **kwargs)
+        return cls(rac, sites, wavelength_range, element_name=element, charge=charge,  **kwargs)
 
-    def distribution(self, asu_id, hkl, wav=None):
+    def distribution(self, asu_id, hkl, wav=None, with_kl=False):
         if wav is None:
             wav = self.wav_min
 
         dhkl = self.rac.gather(self.rac.dHKL, asu_id, hkl)
         invd2 = tf.pow(dhkl, -2.)
-
-        #Scale corrections
-        k = tf.complex(self.k, 0.)
-        T = tf.complex(
-            tf.math.exp(-self.b * invd2),
-            0.,
-        )
-        ksol = tf.complex(self.ksol, 0.)
-        Tsol = tf.complex(
-            tf.math.exp(-self.bsol * invd2),
-            0.,
-        )
 
         # Complex scattering factors
         fp,fpp,scale = self.spread_model(wav, dhkl)
@@ -403,8 +330,25 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         f0 = f0[:,None] * Ta
         scale = Ta * scale
 
+        fc = self.rac.gather(self.Fc, asu_id, hkl)
+        SigF = self.rac.gather(self.SigF, asu_id, hkl)
+
+        if with_kl:
+            Freal = tfd.Normal(
+                tf.math.real(fc),
+                SigF
+            )
+            Fimag = tfd.Normal(
+                tf.math.imag(fc),
+                SigF
+            )
+            p = tfd.Normal(0., 1.)
+            kl = tf.reduce_mean(0.5 * Freal.kl_divergence(p) + 0.5 * Fimag.kl_divergence(p))
+            self.add_metric(kl, 'Fkl')
+            self.add_loss(self.kl_weight * kl)
+
         # Rician RV params nu,sigma
-        sigma = tf.math.sqrt(self.num_ops * tf.reduce_sum(tf.square(scale), axis=-1) + self.epsilon)
+        sigma = tf.math.sqrt(self.num_ops * tf.reduce_sum(tf.square(scale), axis=-1) + self.epsilon + tf.square(SigF))
 
         #TODO -- just cache the phase and use gather
         h = tf.cast(hkl, 'float32')
@@ -419,10 +363,8 @@ class SpreadPosterior(StructureFactorPosteriorBase):
         )
         fs = tf.complex(f0 + fp, fpp)
         fs = tf.einsum("...s,...os->...", fs, exponential)
-        fc = self.rac.gather(self.Fc, asu_id, hkl)
-        fmask = ksol * Tsol * self.rac.gather(self.Fmask, asu_id, hkl) 
 
-        f = k * T * (fc + fmask + fs)
+        f = (fc + fs)
         nu = tf.math.abs(f)
 
         q = Rice(nu, sigma)
@@ -474,12 +416,8 @@ class SpreadPosterior(StructureFactorPosteriorBase):
             iobs,
             sigiobs,
         ) = self.sanitize_inputs(inputs)
-        self.add_metric(self.ksol, 'ksol')
-        self.add_metric(self.bsol, 'bsol')
-        self.add_metric(self.k, 'k')
-        self.add_metric(self.b, 'b')
         self.add_metric(tf.math.reduce_mean(self.atomic_b_factor), "atomic_b_ave")
-        return self.distribution(asu_id, hkl_in, wavelength)
+        return self.distribution(asu_id, hkl_in, wavelength, with_kl=True)
 
 class DummySpreadPosterior(SpreadPosterior):
     def __init__(self, rac, Fc, sites_dict, wavelength_range, spread_model=None, dmodel=32, mlp_depth=20, epsilon=1e-12, snr=100., **kwargs):
