@@ -31,6 +31,7 @@ def main(args=None):
         AnomalousPeakFinder,
         WeightSaver,
         StandardizationFreezer,
+        DifferenceMap,
     )
     from abismal.io import split_dataset_train_test, set_gpu
     from abismal.scaling import ImageScaler
@@ -262,7 +263,15 @@ def main(args=None):
         for i, eff_file in enumerate(parser.eff_files.split(",")):
             pfx = f"eff_{i}"
             if parser.anomalous:
-                f = AnomalousPeakFinder(
+                phenix_runner = AnomalousPeakFinder(
+                    parser.out_dir,
+                    eff_file,
+                    epoch_stride=parser.phenix_frequency,
+                    asu_id=0,
+                    output_prefix=pfx,
+                )
+            elif parser.separate:
+                phenix_runner = DifferenceMap(
                     parser.out_dir,
                     eff_file,
                     epoch_stride=parser.phenix_frequency,
@@ -270,14 +279,14 @@ def main(args=None):
                     output_prefix=pfx,
                 )
             else:
-                f = PhenixRunner(
+                phenix_runner = PhenixRunner(
                     parser.out_dir,
                     eff_file,
                     epoch_stride=parser.phenix_frequency,
                     asu_id=0,
                     output_prefix=pfx,
                 )
-            callbacks.append(f)
+            callbacks.append(phenix_runner)
 
     need_to_build = False
     need_to_build |= parser.debug
