@@ -41,7 +41,7 @@ class DataManager:
             num_cpus=None, separate=False, wavelength=None, ray_log_level="ERROR",
             test_fraction=0., separate_friedel_mates=False, cell_tol=None, isigi_cutoff=None, 
             shuffle_buffer_size=0, batch_size=100, steps_per_epoch=None, validation_steps=None,
-            epochs=30,
+            epochs=30, ambiguate=False
         ):
         if separate_friedel_mates and separate:
             raise ValueError("Cannot combine --separate-friedel-mates and --separate")
@@ -64,6 +64,7 @@ class DataManager:
         self.steps_per_epoch = steps_per_epoch
         self.validation_steps = validation_steps
         self.epochs = epochs
+        self.ambiguate = ambiguate
 
     def get_config(self):
         conf = {
@@ -84,6 +85,7 @@ class DataManager:
             'steps_per_epoch' : self.steps_per_epoch,
             'validation_steps' : self.validation_steps,
             'epochs' : self.epochs,
+            'ambiguate' : self.ambiguate,
         }
         return conf
 
@@ -114,6 +116,7 @@ class DataManager:
             steps_per_epoch = parser.steps_per_epoch,
             validation_steps = parser.validation_steps,
             epochs = parser.epochs,
+            ambiguate = parser.enable_index_ambiguation,
         )
 
     @property
@@ -222,6 +225,10 @@ class DataManager:
         if self.separate_friedel_mates:
             self.num_asus = 2
 
+        if self.ambiguate:
+            from abismal.io.ambiguation import Ambiguator
+            amb = Ambiguator.from_symmetry(self.cell, self.spacegroup)
+            data = data.map(amb)
         return data
 
     @property
