@@ -41,8 +41,8 @@ args_and_kwargs = (
     (
         ("--normalizer",),
         {
-            "help": "Optional pre-normalization function for feed forward layers. The default is 'rms'",
-            "default": "rms",
+            "help": "Optional pre-normalization function for feed forward layers. The default is 'l2'",
+            "default": "l2",
             "type": str,
             "choices": FeedForward.norm_dict.keys(),
         },

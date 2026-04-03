@@ -95,7 +95,7 @@ def main(args=None):
 
     posterior_kwargs = {}
 
-    if parser.prior_distribution == "wilson":
+    if parser.prior_distribution in ["wilson", "empirical_wilson"]:
         if parser.parents is not None:
             from abismal.prior.structure_factor.wilson import MultiWilsonPrior
 
@@ -106,12 +106,16 @@ def main(args=None):
             posterior_kwargs['independent'] = False
         elif parser.posterior_type == "intensity":
             from abismal.prior.intensity.wilson import WilsonPrior
-
-            prior = WilsonPrior(rac)
+            if parser.prior_distribution == 'empirical_wilson':
+                raise NotImplementedError("Sorry: intensity posteriors do not support empirical scales yet!")
+            else:
+                prior = WilsonPrior(rac)
         else:
             from abismal.prior.structure_factor.wilson import WilsonPrior
-
-            prior = WilsonPrior(rac)
+            if parser.prior_distribution == 'empirical_wilson':
+                prior = WilsonPrior.with_empirical_sigma(rac, train)
+            else:
+                prior = WilsonPrior(rac)
         loc_init = prior.flat_distribution().mean()
         loc_init = tf.ones_like(loc_init) * tf.math.reduce_mean(loc_init)
         scale_init = parser.init_scale * loc_init
