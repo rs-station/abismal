@@ -33,6 +33,7 @@ class WilsonPriorBase(PriorBase):
         mean = tf.zeros(bins)
         size = tf.zeros(bins)
         from tqdm import tqdm
+        overall_mean = 0.
         for i,(batch, _) in tqdm(enumerate(dataset), total=maxiter):
             if i > maxiter:
                 break
@@ -60,8 +61,12 @@ class WilsonPriorBase(PriorBase):
             size = size + batch_size
             mean = mean + (batch_size / size) * (batch_mean - mean)
 
+
         if standardize:
-            mean = mean / tf.math.reduce_std(mean)
+            k = tf.math.reduce_sum(
+                mean * size / tf.math.reduce_sum(size)
+            )
+            mean = mean / k
         sigma = tf.gather(mean, labels)
         return cls(rac, sigma)
 

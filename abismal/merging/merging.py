@@ -8,7 +8,7 @@ from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 from abismal.symmetry import Op
 import tf_keras as tfk
-from abismal.layers import Standardize
+from abismal.layers import Standardize,Normalize
 
 def to_indexed_slices(tensor):
     """
@@ -50,7 +50,7 @@ class VariationalMergingModel(tfk.models.Model):
         if reindexing_ops is None:
             reindexing_ops = ["x,y,z"]
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
-        self.standardize_intensity = Standardize(
+        self.standardize_intensity = Normalize(
             center=False, 
             decay=standardization_decay, 
         )

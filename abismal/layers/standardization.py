@@ -96,5 +96,11 @@ class Standardize(tfk.layers.Layer):
             self.update(data)
         return self.standardize(data)
 
-
-
+@tfk.saving.register_keras_serializable(package="abismal")
+class Normalize(Standardize):
+    def standardize(self, data):
+        mean,var = self._debiased_mean_variance()
+        #std = tf.clip_by_value(tf.sqrt(var), self.epsilon, np.inf)
+        #if self.center:
+            #return (data - mean) / std
+        return data / mean

@@ -1,5 +1,7 @@
 import tensorflow as tf
 from tensorflow_probability import distributions as tfd
+from tensorflow_probability import util as tfu
+from tensorflow_probability import bijectors as tfb
 from tensorflow.python.ops.ragged import ragged_tensor
 import tf_keras as tfk
 from abismal.layers import *
@@ -63,6 +65,12 @@ def elog(x):
     pos = tf.maximum(x, 0.)
     return tf.math.exp(neg) + tf.math.log1p(pos)
 
+def rescale_distribution(p, mean=1.):
+    return tfd.TransformedDistribution(
+        p,
+        tfb.Scale(1. / p.mean())
+    )
+
 @tfk.saving.register_keras_serializable(package="abismal")
 class ImageScaler(tfk.models.Model):
     bijector_dict = {
@@ -105,6 +113,7 @@ class ImageScaler(tfk.models.Model):
             hkl_to_imodel=False,
             gated=False,
             output_bias=True,
+            optimize_prior_scale=False,
             **kwargs, 
         ):
         """
@@ -160,6 +169,16 @@ class ImageScaler(tfk.models.Model):
         self.hkl_to_imodel = hkl_to_imodel
         self.gated = gated
         self.output_bias = output_bias
+        self.prior = self.prior_dict[prior_name]()
+        self.prior_scale = None
+        if optimize_prior_scale:
+            self.prior_scale  = tfu.TransformedVariable(
+                1.0,
+                tfb.Chain([
+                    tfb.Shift(1e-3),
+                    tfb.Exp(),
+                ]),
+            )
 
         self.hidden_units = hidden_units
         if self.hidden_units is None:
@@ -238,8 +257,8 @@ class ImageScaler(tfk.models.Model):
         out = tf.gather(tensor, idx, axis=1, batch_dims=1)
         return out
 
-    def prior_function(self):
-        return self.prior_dict[self.prior_name]()
+    #def prior_function(self):
+    #    return self.prior_dict[self.prior_name]()
 
     def bijector_function(self, x):
         return self.bijector_dict[self.bijector_name](x) + self.epsilon
@@ -312,7 +331,8 @@ class ImageScaler(tfk.models.Model):
         z = q.sample(mc_samples) 
 
         if not self.posterior_name.lower() == 'delta' and self.kl_weight > 0.:
-            p = self.prior_function()
+            #p = self.prior_function()
+            p = self.prior
             try: #Attempt to calculate this analytically
                 kl_div = q.kl_divergence(p)
             except NotImplementedError:
@@ -327,6 +347,10 @@ class ImageScaler(tfk.models.Model):
             self.add_loss(self.kl_weight * kl_div)
             self.add_metric(kl_div, name='KL_Σ')
 
+        if self.prior_scale is not None:
+            self.add_metric(self.prior_scale, name="G")
+            z = z * self.prior_scale
+
         if ragged_tensor.is_ragged(scale):
             z = tf.RaggedTensor.from_row_splits(
                 tf.transpose(z), metadata.row_splits
@@ -336,32 +360,5 @@ class ImageScaler(tfk.models.Model):
 
         self.add_metric(tf.math.reduce_mean(z), name='Σ_mean')
         self.add_metric(tf.math.reduce_std(z), name='Σ_std')
-        return z
-
-class KBImageScaler(ImageScaler):
-    def build(self, shapes):
-        super().build(shapes)
-        self.B = self.add_weight(
-            name='log_B', shape=(), dtype='float32', initializer='zeros'
-        )
-        self.log_k = self.add_weight(
-            name='log_k', shape=(), dtype='float32', initializer='zeros'
-        )
-
-    def call(self, inputs, mc_samples=32, training=None, **kwargs):
-        z = super().call(inputs, mc_samples, training, **kwargs)
-        (
-            asu_id,
-            hkl,
-            resolution,
-            wavelength,
-            metadata,
-            iobs,
-            sigiobs,
-        ) = inputs
-        k = tf.math.exp(self.log_k)
-        self.add_metric(self.B, name='B')
-        self.add_metric(k, name='k')
-        z = tf.math.exp(self.log_k - self.B * tf.math.reciprocal(tf.math.square(resolution))) * z
         return z
 
