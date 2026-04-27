@@ -157,6 +157,7 @@ class StillsLoader(DataLoader):
         wavelength = np.array(table['wavelength'], dtype='float32')
         dQ = np.array(Q - Qobs, dtype='float32')
         s1 = np.array(Svec, dtype='float32')
+        delpsical = np.array(table['delpsical.rad'])
         xy = s1 #actually xyz
         batch = table['id'].as_numpy_array()
         idx = ~spacegroup.operations().systematic_absences(np.array(h, dtype='int32'))
@@ -182,11 +183,12 @@ class StillsLoader(DataLoader):
         wavelength = wavelength[idx, None]
         dQ = dQ[idx]
         xy = xy[idx]
+        delpsical = delpsical[idx, None]
         batch = batch[idx]
         I = I[idx, None]
         SigI = SigI[idx, None]
         if include_eo:
-            metadata = np.concatenate((xy, dQ), axis=-1)
+            metadata = np.concatenate((delpsical, xy, dQ), axis=-1)
         else:
             metadata = xy
 

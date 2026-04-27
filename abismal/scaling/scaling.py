@@ -88,13 +88,13 @@ class ImageScaler(tfk.models.Model):
         'delta' : delta_posterior,
     }
     prior_dict = {
-        'cauchy' : lambda : tfd.Cauchy(0., 1.),
-        'laplace' : lambda : tfd.Laplace(0., 1.),
-        'normal' : lambda : tfd.Normal(0., 1.),
-        'halfnormal' : lambda : tfd.HalfNormal(1.),
-        'halfcauchy' : lambda : tfd.HalfCauchy(0., 1.),
-        'exponential' : lambda : tfd.Exponential(1.),
-        'lognormal' : lambda :  tfd.LogNormal(0., 1.),
+        'cauchy' : lambda x=0.,y=1.: tfd.Cauchy(x, y),
+        'laplace' : lambda x=0.,y=1.: tfd.Laplace(x, y),
+        'normal' : lambda x=0.,y=1.: tfd.Normal(x, y),
+        'halfnormal' : lambda x=0.,y=1.: tfd.HalfNormal(y),
+        'halfcauchy' : lambda x=0.,y=1.: tfd.HalfCauchy(y),
+        'exponential' : lambda x=0.,y=1.: tfd.Exponential(y),
+        'lognormal' : lambda x=0.,y=1.:  tfd.LogNormal(x, y),
     }
     def __init__(
             self, 
@@ -113,6 +113,7 @@ class ImageScaler(tfk.models.Model):
             hkl_to_imodel=False,
             gated=False,
             output_bias=True,
+            optimize_prior_scale=False,
             optimize_prior_scale=False,
             **kwargs, 
         ):
@@ -170,21 +171,16 @@ class ImageScaler(tfk.models.Model):
         self.gated = gated
         self.output_bias = output_bias
         self.prior = self.prior_dict[prior_name]()
-        self.prior_scale = None
-        if optimize_prior_scale:
-            self.prior_scale  = tfu.TransformedVariable(
-                1.0,
-                tfb.Chain([
-                    tfb.Shift(1e-3),
-                    tfb.Exp(),
-                ]),
-            )
-
+        self.prior_dense = None
         self.hidden_units = hidden_units
         if self.hidden_units is None:
             self.hidden_units = 2 * mlp_width 
+        ffepsilon = epsilon
 
         kernel_initializer = 'glorot_normal'
+        if optimize_prior_scale:
+            self.prior_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer, use_bias=False)
+
         self.input_image = tfk.layers.Dense(
                 mlp_width, kernel_initializer=kernel_initializer, use_bias=False)
         self.input_scale = tfk.layers.Dense(
@@ -204,6 +200,7 @@ class ImageScaler(tfk.models.Model):
                     kernel_initializer=kernel_initializer,
                     use_bias=False,
                     normalizer=normalizer_name,
+                    epsilon=ffepsilon,
                 ) for _ in range(mlp_depth)])
         if share_weights:
             self.scale_network = self.image_network
@@ -215,6 +212,7 @@ class ImageScaler(tfk.models.Model):
                     activation=self.activation, 
                     use_bias=False,
                     normalizer=normalizer_name,
+                    epsilon=ffepsilon,
                     ) for _ in range(mlp_depth)
             ]) 
 
@@ -314,25 +312,55 @@ class ImageScaler(tfk.models.Model):
             #Subsample reflections per image 
             image = ImageScaler.sample_refls(image, self.num_image_samples)
 
-        image = self.input_image(image)
-        image = tf.ragged.map_flat_values(self.image_network, image)
+        unpooled_image = self.input_image(image)
+        image = tf.ragged.map_flat_values(self.image_network, unpooled_image)
         image = self.pool(image)
-
+        #if self.normalizer_name != 'activation':
+        #    image = self.image_network.layers[0].normalize(image)
+            
         scale = tf.ragged.map_flat_values(self.input_scale, scale)
         scale = scale + image
         scale = tf.ragged.map_flat_values(self.scale_network, scale)
-        scale = tf.ragged.map_flat_values(self.output_dense, scale)
+        q_params = tf.ragged.map_flat_values(self.output_dense, scale)
 
-        if ragged_tensor.is_ragged(scale):
-            q = self.distribution_function(scale.flat_values)
+        if ragged_tensor.is_ragged(q_params):
+            q = self.distribution_function(q_params.flat_values)
         else:
-            q = self.distribution_function(scale)
+            q = self.distribution_function(q_params)
 
         z = q.sample(mc_samples) 
 
         if not self.posterior_name.lower() == 'delta' and self.kl_weight > 0.:
             #p = self.prior_function()
-            p = self.prior
+            #Okay this needs to be clamped somehow for safety...
+            if self.prior_dense:
+                p_params = tf.ragged.map_flat_values(self.prior_dense, image) * tf.ones_like(iobs)
+                k,b = tf.unstack(p_params.flat_values, axis=-1)
+                k = self.bijector_function(k)
+                rd2 = tf.squeeze(tf.math.pow(resolution.flat_values, -2.), -1)
+                kb = k * tf.math.exp(-b * rd2)
+                p = self.prior_dict[self.prior_name]()
+                #from IPython import embed;embed(colors='linux');XX
+                #k,b,m,s = tf.unstack(p_params.flat_values, axis=-1)
+                #s = self.bijector_function(s)
+                #p_params  = tf.ragged.map_flat_values(self.prior_dense, image + tf.math.pow(resolution, -2.))
+                #p = self.prior_dict[self.prior_name](m, s)
+                p = tfd.TransformedDistribution(
+                    p,
+                    tfb.Scale(kb),
+                )
+                self.add_metric(tf.reduce_mean(k), 'pΣ_k')
+                self.add_metric(tf.reduce_mean(b), 'pΣ_b')
+                #self.add_metric(tf.reduce_mean(m), 'pΣ_loc')
+                #self.add_metric(tf.reduce_mean(s), 'pΣ_scale')
+            else:
+                p = self.prior_dict[self.prior_name]()
+
+            #from IPython import embed;embed(colors='linux');XX
+            #prior_mean = (tf.reduce_mean(iobs, axis=-2, keepdims=True) * tf.ones_like(iobs)).flat_values
+            #p = self.prior_dict[self.prior_name](tf.squeeze(prior_mean, axis=-1))
+            #p = self.prior
+
             try: #Attempt to calculate this analytically
                 kl_div = q.kl_divergence(p)
             except NotImplementedError:
@@ -347,11 +375,7 @@ class ImageScaler(tfk.models.Model):
             self.add_loss(self.kl_weight * kl_div)
             self.add_metric(kl_div, name='KL_Σ')
 
-        if self.prior_scale is not None:
-            self.add_metric(self.prior_scale, name="G")
-            z = z * self.prior_scale
-
-        if ragged_tensor.is_ragged(scale):
+        if ragged_tensor.is_ragged(q_params):
             z = tf.RaggedTensor.from_row_splits(
                 tf.transpose(z), metadata.row_splits
             )

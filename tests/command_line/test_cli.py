@@ -93,15 +93,17 @@ def test_stream(stills_stream):
 
 @pytest.mark.parametrize(
     ('kind', 'distribution'), (
-        ('structure_factor', 'normal'), 
-        ('structure_factor', 'foldednormal'), 
-        ('structure_factor', 'rice'), 
+        ('structure_factor', 'normal'),
+        ('structure_factor', 'foldednormal'),
+        ('structure_factor', 'rice'),
+        ('structure_factor', 'nakagami'),
         pytest.param('structure_factor', 'gamma', marks=pytest.mark.xfail(reason='Not implemented')),
-        ('structure_factor', 'truncatednormal'), 
+        ('structure_factor', 'truncatednormal'),
         ('intensity', 'normal'),
         ('intensity', 'foldednormal'),
         pytest.param('intensity', 'rice', marks=pytest.mark.xfail(reason='Not implemented')),
         ('intensity', 'gamma'),
+        pytest.param('intensity', 'nakagami', marks=pytest.mark.xfail(reason='Not implemented')),
         pytest.param('intensity', 'truncatednormal', marks=pytest.mark.xfail(reason='Not implemented')),
     )
 )

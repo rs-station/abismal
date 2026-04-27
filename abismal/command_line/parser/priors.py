@@ -87,4 +87,13 @@ args_and_kwargs = (
             "choices" : ImageScaler.prior_dict.keys(),
         }
     ),
+
+    (
+        (
+            "--optimize-scale-prior",
+        ),{
+            "help": "Optimize the width of the scale prior.",
+            "action": 'store_true',
+        }
+    ),
 )

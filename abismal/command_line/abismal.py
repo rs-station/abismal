@@ -153,6 +153,8 @@ def main(args=None):
             from abismal.surrogate_posterior.intensity.gamma import (
                 GammaPosterior as Posterior,
             )
+        elif parser.posterior_distribution == "nakagami":
+            raise ValueError("Nakagami distributed intensity posteriors are not supported.")
         elif parser.posterior_distribution == "normal":
             if parser.posterior_rank == 1:
                 from abismal.surrogate_posterior.intensity.normal import (
@@ -176,6 +178,10 @@ def main(args=None):
         elif parser.posterior_distribution == "rice":
             from abismal.surrogate_posterior.structure_factor.rice import (
                 RicePosterior as Posterior,
+            )
+        elif parser.posterior_distribution == "nakagami":
+            from abismal.surrogate_posterior.structure_factor.nakagami import (
+                NakagamiPosterior as Posterior,
             )
         elif parser.posterior_distribution == "normal":
             if parser.posterior_rank == 1:
@@ -204,6 +210,7 @@ def main(args=None):
         bijector_name=parser.scale_posterior_bijector,
         normalizer_name=parser.normalizer,
         gated=parser.gated,
+        optimize_prior_scale=parser.optimize_scale_prior,
     )
 
     if parser.studentt_dof is not None:

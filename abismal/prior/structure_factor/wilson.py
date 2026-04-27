@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from abismal.distributions import FoldedNormal,Rice
+from abismal.distributions import FoldedNormal,Nakagami,Rice
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
@@ -10,39 +10,45 @@ from abismal.prior.base import PriorBase
 from abismal.prior.wilson import WilsonPriorBase
 
 
+# Wilson's distributions on structure factor amplitudes are both Nakagami:
+#   centric:  Nakagami(m=1/2, Omega=eps*Sigma) = HalfNormal(scale=sqrt(eps*Sigma))
+#   acentric: Nakagami(m=1,   Omega=eps*Sigma) = Weibull(2, sqrt(eps*Sigma))
+
 def centric_wilson(epsilon, sigma=1.):
-    return tfd.HalfNormal(tf.math.sqrt(epsilon * sigma))
+    return Nakagami(0.5, epsilon * sigma)
 
 def acentric_wilson(epsilon, sigma=1.):
-    return tfd.Weibull(2., tf.math.sqrt(epsilon * sigma))
+    return Nakagami(1.0, epsilon * sigma)
+
+def wilson_distribution(centric, epsilon, sigma=1.):
+    """Single Nakagami distribution covering both centric and acentric Wilson priors."""
+    omega = tf.convert_to_tensor(epsilon * sigma)
+    m = tf.where(
+        centric,
+        tf.constant(0.5, dtype=omega.dtype),
+        tf.constant(1.0, dtype=omega.dtype),
+    )
+    return Nakagami(m, omega)
+
 
 class WilsonDistribution:
+    """Thin wrapper kept for backward compatibility.
+
+    Preserves the ``mean/stddev/log_prob`` interface used by
+    ``MultiWilsonDistribution``; the underlying object is a single
+    ``Nakagami`` whose concentration is chosen per reflection.
+    """
     def __init__(self, centric, epsilon, sigma=1.):
-        self.p_centric = centric_wilson(epsilon, sigma)
-        self.p_acentric = acentric_wilson(epsilon, sigma)
-        self.centric = centric
+        self._dist = wilson_distribution(centric, epsilon, sigma)
 
     def mean(self):
-        return tf.where(
-            self.centric,
-            self.p_centric.mean(),
-            self.p_acentric.mean(),
-        )
+        return self._dist.mean()
 
     def stddev(self):
-        return tf.where(
-            self.centric,
-            self.p_centric.stddev(),
-            self.p_acentric.stddev(),
-        )
+        return self._dist.stddev()
 
     def log_prob(self, z):
-        ll = tf.where(
-            self.centric,
-            self.p_centric.log_prob(z),
-            self.p_acentric.log_prob(z),
-        )
-        return ll
+        return self._dist.log_prob(z)
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class WilsonPrior(WilsonPriorBase):
@@ -59,7 +65,9 @@ class WilsonPrior(WilsonPriorBase):
             epsilon = self.rac.gather(self.rac.epsilon, asu_id, hkl)
             if len(tf.shape(sigma)) > 0:
                 sigma = self.rac.gather(sigma, asu_id, hkl)
-        p = WilsonDistribution(centric, epsilon, sigma)
+        # Return a real tfd.Distribution (Nakagami) so that KL against a
+        # Nakagami posterior dispatches to the registered analytical form.
+        p = wilson_distribution(centric, epsilon, sigma)
         return p
 
     def flat_distribution(self):

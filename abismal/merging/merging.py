@@ -50,9 +50,12 @@ class VariationalMergingModel(tfk.models.Model):
         if reindexing_ops is None:
             reindexing_ops = ["x,y,z"]
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
+        #from abismal.layers.standardization import BinnedNormalize
+        #self.standardize_intensity = BinnedNormalize(
+        #    self.surrogate_posterior.rac,
+        #)
         self.standardize_intensity = Normalize(
-            center=False, 
-            decay=standardization_decay, 
+            decay=standardization_decay
         )
         self.standardize_metadata = Standardize(
             decay=standardization_decay
@@ -93,36 +96,11 @@ class VariationalMergingModel(tfk.models.Model):
         self.built = True
 
     def standardize_inputs(self, inputs, training=None):
-        (
-            asu_id,
-            hkl_in,
-            resolution,
-            wavelength,
-            metadata,
-            iobs,
-            sigiobs,
-        ) = inputs
+        out = inputs
         if self.standardize_intensity is not None:
-            iobs = tf.ragged.map_flat_values(
-                self.standardize_intensity, iobs, training=training) 
-            sigiobs = tf.ragged.map_flat_values(
-                self.standardize_intensity.standardize, sigiobs)
+            out = self.standardize_intensity(out, training=training) 
         if self.standardize_metadata is not None:
-            metadata = tf.ragged.map_flat_values(
-                self.standardize_metadata, metadata, training=training)
-
-        self.add_metric(self.standardize_intensity.std, "Istd")
-        #self.add_metric(self.standardize_intensity.count, "Icount") #This is only useful for debugging
-
-        out = (
-            asu_id,
-            hkl_in, resolution,
-            wavelength,
-            metadata,
-            iobs,
-            sigiobs,
-        ) 
-
+            out = self.standardize_metadata(out, training=training)
         return out
 
     def call(self, inputs, mc_samples=None, training=None, **kwargs):

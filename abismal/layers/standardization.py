@@ -5,7 +5,7 @@ from tensorflow_probability import stats as tfs
 
 
 @tfk.saving.register_keras_serializable(package="abismal")
-class Standardize(tfk.layers.Layer):
+class StandardizeBase(tfk.layers.Layer):
     def __init__(self, center=True, decay=0.999, epsilon=1e-6, **kwargs):
         super().__init__(**kwargs)
         self.decay = decay
@@ -84,23 +84,144 @@ class Standardize(tfk.layers.Layer):
             axis=0, #TODO: if tf.rank(x) > 2, this should be (0, ... , tf.rank(x) - 2) i think
         )
 
-    def standardize(self, data):
+    def standardize(self, data, **kwargs):
         mean,var = self._debiased_mean_variance()
         std = tf.clip_by_value(tf.sqrt(var), self.epsilon, np.inf)
         if self.center:
             return (data - mean) / std
         return data / std
 
-    def call(self, data, training=None):
+class Standardize(StandardizeBase):
+    def call(self, inputs, training=None, **kwwargs):
+        (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = inputs
+
         if training and self.trainable:
-            self.update(data)
-        return self.standardize(data)
+            self.update(metadata.flat_values)
+            #tf.ragged.map_flat_values(self.update, metadata)
+
+        metadata = tf.ragged.map_flat_values(self.standardize, metadata)
+        out = (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        )
+        return out
+
+class Normalize(Standardize):
+    def normalize(self, data, **kwargs):
+        mean,var = self._debiased_mean_variance()
+        std = tf.clip_by_value(tf.sqrt(var), self.epsilon, np.inf)
+        return data / mean 
+
+    def call(self, inputs, training=None, **kwwargs):
+        (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = inputs
+
+        if training and self.trainable:
+            self.update(iobs.flat_values)
+            #tf.ragged.map_flat_values(self.update, metadata)
+
+        iobs = tf.ragged.map_flat_values(self.normalize, iobs)
+        sigiobs = tf.ragged.map_flat_values(self.normalize, sigiobs)
+        out = (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        )
+        return out
 
 @tfk.saving.register_keras_serializable(package="abismal")
-class Normalize(Standardize):
-    def standardize(self, data):
-        mean,var = self._debiased_mean_variance()
-        #std = tf.clip_by_value(tf.sqrt(var), self.epsilon, np.inf)
-        #if self.center:
-            #return (data - mean) / std
-        return data / mean
+class BinnedNormalize(tfk.layers.Layer):
+    def __init__(self, rac, bins=20, epsilon=1e-3, **kwargs):
+        super().__init__(**kwargs)
+        self.rac = rac
+        self.bins = bins
+        self.epsilon = epsilon
+        self.mean = self.add_weight("mean", shape=bins, initializer='zeros', trainable=False)
+        self.size = self.add_weight("size", shape=bins, initializer='zeros', trainable=False)
+        from reciprocalspaceship.utils import bin_by_percentile
+        self.labels,self.edges = bin_by_percentile(rac.dHKL, ascending=False)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'rac' : tfk.saving.serialize_keras_object(self.rac),
+            'bins' : self.bins,
+            'epsilon' : self.epsilon,
+        })
+        return config
+
+    def update(self, data, idx):
+        X = tf.squeeze(data, axis=-1)
+        mask = tf.ones_like(X)
+
+        batch_size = tf.scatter_nd(idx, mask, (self.bins,))
+        batch_mean = tf.scatter_nd(idx, X, (self.bins,)) / batch_size
+
+        self.size.assign(self.size + batch_size)
+        self.mean.assign(self.mean + (batch_size / self.size) * (batch_mean - self.mean))
+
+    def standardize(self, inputs, idx=None):
+        (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = inputs
+        if idx is None:
+            idx = self.rac.gather(labels, asu_id, hkl_in)
+        mean = tf.gather(self.mean, idx) + self.epsilon
+        out = (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs / mean,
+            sigiobs / mean,
+        )
+        return out
+
+    def call(self, inputs, training=None):
+        (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = inputs
+        idx = self.rac.gather(self.labels, asu_id, hkl_in)[...,None]
+        if training and self.trainable:
+            self.update(iobs.flat_values, idx.flat_values)
+            #tf.ragged.map_flat_values(self.update, iobs, idx)
+        out = self.standardize(inputs, idx)
+        return out
+
