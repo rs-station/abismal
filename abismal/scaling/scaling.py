@@ -114,7 +114,7 @@ class ImageScaler(tfk.models.Model):
             gated=False,
             output_bias=True,
             optimize_prior_scale=False,
-            optimize_prior_scale=False,
+            ff_scale_factor=None,
             **kwargs, 
         ):
         """
@@ -173,13 +173,14 @@ class ImageScaler(tfk.models.Model):
         self.prior = self.prior_dict[prior_name]()
         self.prior_dense = None
         self.hidden_units = hidden_units
+        self.ff_scale_factor = ff_scale_factor
         if self.hidden_units is None:
             self.hidden_units = 2 * mlp_width 
         ffepsilon = epsilon
 
         kernel_initializer = 'glorot_normal'
         if optimize_prior_scale:
-            self.prior_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer, use_bias=False)
+            self.prior_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer, use_bias=output_bias)
 
         self.input_image = tfk.layers.Dense(
                 mlp_width, kernel_initializer=kernel_initializer, use_bias=False)
@@ -201,6 +202,7 @@ class ImageScaler(tfk.models.Model):
                     use_bias=False,
                     normalizer=normalizer_name,
                     epsilon=ffepsilon,
+                    scale_factor=ff_scale_factor,
                 ) for _ in range(mlp_depth)])
         if share_weights:
             self.scale_network = self.image_network
@@ -213,6 +215,7 @@ class ImageScaler(tfk.models.Model):
                     use_bias=False,
                     normalizer=normalizer_name,
                     epsilon=ffepsilon,
+                    scale_factor=ff_scale_factor,
                     ) for _ in range(mlp_depth)
             ]) 
 
@@ -319,9 +322,9 @@ class ImageScaler(tfk.models.Model):
         #    image = self.image_network.layers[0].normalize(image)
             
         scale = tf.ragged.map_flat_values(self.input_scale, scale)
-        scale = scale + image
-        scale = tf.ragged.map_flat_values(self.scale_network, scale)
-        q_params = tf.ragged.map_flat_values(self.output_dense, scale)
+        p_latent = tf.ragged.map_flat_values(self.scale_network, scale)
+        q_latent = tf.ragged.map_flat_values(self.scale_network, scale + image)
+        q_params = tf.ragged.map_flat_values(self.output_dense, q_latent)
 
         if ragged_tensor.is_ragged(q_params):
             q = self.distribution_function(q_params.flat_values)
@@ -334,25 +337,27 @@ class ImageScaler(tfk.models.Model):
             #p = self.prior_function()
             #Okay this needs to be clamped somehow for safety...
             if self.prior_dense:
-                p_params = tf.ragged.map_flat_values(self.prior_dense, image) * tf.ones_like(iobs)
-                k,b = tf.unstack(p_params.flat_values, axis=-1)
-                k = self.bijector_function(k)
-                rd2 = tf.squeeze(tf.math.pow(resolution.flat_values, -2.), -1)
-                kb = k * tf.math.exp(-b * rd2)
-                p = self.prior_dict[self.prior_name]()
+                p_params = tf.ragged.map_flat_values(self.prior_dense, p_latent) * tf.ones_like(iobs)
+                m,s = tf.unstack(p_params.flat_values, axis=-1)
+                s = self.bijector_function(s)
+                #k,b = tf.unstack(p_params.flat_values, axis=-1)
+                #k = self.bijector_function(k)
+                #rd2 = tf.squeeze(tf.math.pow(resolution.flat_values, -2.), -1)
+                #kb = k * tf.math.exp(-b * rd2)
+                p = self.prior_dict[self.prior_name](m,s)
                 #from IPython import embed;embed(colors='linux');XX
                 #k,b,m,s = tf.unstack(p_params.flat_values, axis=-1)
                 #s = self.bijector_function(s)
                 #p_params  = tf.ragged.map_flat_values(self.prior_dense, image + tf.math.pow(resolution, -2.))
                 #p = self.prior_dict[self.prior_name](m, s)
-                p = tfd.TransformedDistribution(
-                    p,
-                    tfb.Scale(kb),
-                )
-                self.add_metric(tf.reduce_mean(k), 'pΣ_k')
-                self.add_metric(tf.reduce_mean(b), 'pΣ_b')
-                #self.add_metric(tf.reduce_mean(m), 'pΣ_loc')
-                #self.add_metric(tf.reduce_mean(s), 'pΣ_scale')
+                #p = tfd.TransformedDistribution(
+                #    p,
+                #    tfb.Scale(kb),
+                #)
+                #self.add_metric(tf.reduce_mean(k), 'pΣ_k')
+                #self.add_metric(tf.reduce_mean(b), 'pΣ_b')
+                self.add_metric(tf.reduce_mean(m), 'pΣ_loc')
+                self.add_metric(tf.reduce_mean(s), 'pΣ_scale')
             else:
                 p = self.prior_dict[self.prior_name]()
 

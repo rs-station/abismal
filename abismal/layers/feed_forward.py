@@ -17,6 +17,8 @@ class FeedForward(tfk.layers.Layer):
         "l2": lambda s, x: x * tf.math.rsqrt(tf.reduce_sum(tf.square(x), axis=-1, keepdims=True) + s.epsilon * s.epsilon),
         "rms": lambda s, x: x * tf.math.rsqrt(tf.reduce_mean(tf.square(x), axis=-1, keepdims=True) + s.epsilon * s.epsilon),
         "activation": lambda s, x: s.activation(x),
+        "batch": lambda s, x: (x - tf.math.reduce_mean(x, axis=-2, keepdims=True)) / (tf.math.reduce_std(x, axis=-2, keepdims=True) + s.epsilon),
+        "batch_l2": lambda s, x: x * tf.math.rsqrt(tf.reduce_sum(tf.square(x), axis=-2, keepdims=True) + s.epsilon * s.epsilon),
     }
 
     def __init__(
@@ -28,6 +30,7 @@ class FeedForward(tfk.layers.Layer):
         normalizer="rms",
         use_bias=False,
         epsilon=1e-3,
+        scale_factor=None,
         **kwargs,
     ):
         """
@@ -61,6 +64,7 @@ class FeedForward(tfk.layers.Layer):
         self.kernel_initializer = kernel_initializer
         self.normalizer = normalizer
         self.epsilon = epsilon
+        self.scale_factor = scale_factor
 
         if dropout is not None:
             self.dropout = tfk.layers.Dropout(dropout)
@@ -81,9 +85,12 @@ class FeedForward(tfk.layers.Layer):
             use_bias=self.use_bias,
             **kwargs,
         )
+        kinit = self.kernel_initializer
+        if self.normalizer == 'activation':
+            kinit = 'zeros'
         self.ff2 = tfk.layers.Dense(
             self.units,
-            kernel_initializer=self.kernel_initializer,
+            kernel_initializer=kinit,
             use_bias=self.use_bias,
             **kwargs,
         )
@@ -103,6 +110,9 @@ class FeedForward(tfk.layers.Layer):
 
         if self.dropout is not None:
             out = self.dropout(out)
+
+        if self.scale_factor is not None:
+            out = out * self.scale_factor
 
         out = out + X
         return out
@@ -150,6 +160,9 @@ class GLUFeedForward(FeedForward):
 
         if self.dropout is not None:
             out = self.dropout(out)
+
+        if self.scale_factor is not None:
+            out = out * self.scale_factor
 
         out = out + X
 
