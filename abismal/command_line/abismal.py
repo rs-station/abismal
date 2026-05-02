@@ -211,6 +211,7 @@ def main(args=None):
         normalizer_name=parser.normalizer,
         gated=parser.gated,
         optimize_prior_scale=parser.optimize_scale_prior,
+        ff_scale_factor_exponent=parser.ff_scale_exp,
     )
 
     if parser.studentt_dof is not None:

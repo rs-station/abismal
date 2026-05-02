@@ -54,6 +54,8 @@ class VariationalMergingModel(tfk.models.Model):
         #self.standardize_intensity = BinnedNormalize(
         #    self.surrogate_posterior.rac,
         #)
+        #self.standardize_intensity = None
+        #self.standardize_metadata = None
         self.standardize_intensity = Normalize(
             decay=standardization_decay
         )
@@ -91,8 +93,10 @@ class VariationalMergingModel(tfk.models.Model):
         if self.built:
             return
         self.scale_model.build(shapes)
-        self.standardize_intensity.build(shapes[-1])
-        self.standardize_metadata.build(shapes[-3])
+        if self.standardize_intensity  is not None:
+            self.standardize_intensity.build(shapes[-1])
+        if self.standardize_metadata is not None:
+            self.standardize_metadata.build(shapes[-3])
         self.built = True
 
     def standardize_inputs(self, inputs, training=None):
@@ -115,7 +119,7 @@ class VariationalMergingModel(tfk.models.Model):
         if mc_samples is None:
             mc_samples = self.mc_samples
 
-        inputs = self.standardize_inputs(inputs, training=training)
+        #inputs = self.standardize_inputs(inputs, training=training)
 
         (
             asu_id,

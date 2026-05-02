@@ -58,10 +58,20 @@ class ConvexCombinations(tfk.layers.Layer):
         return points
 
 class Average(tfk.layers.Layer):
-    def __init__(self, axis, keepdims=True):
+    def __init__(self, axis, keepdims=True, dropout=None):
         super().__init__()
         self.axis = axis
         self.keepdims = keepdims
+        self.dropout = dropout
 
     def call(self, data, **kwargs):
+        if self.dropout is not None:
+            mask = tf.ones_like(data)
+            mask = tf.nn.dropout(mask, self.dropout)
+            out = tf.reduce_sum(
+                data * mask, self.axis, self.keepdims
+            ) / tf.reduce_sum(
+                mask, self.axis, self.keepdims
+            )
+            return out
         return tf.reduce_mean(data, self.axis, self.keepdims)

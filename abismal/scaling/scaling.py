@@ -7,6 +7,13 @@ import tf_keras as tfk
 from abismal.layers import *
 from abismal.distributions import FoldedNormal,Rice
 
+def batch_normalize(x, epsilon=1e-3):
+    out = (
+        x - tf.reduce_mean(x, axis=(0, 1), keepdims=True)
+    ) / (
+        tf.math.reduce_std(x, axis=(0, 1), keepdims=True) 
+    )
+    return out
 
 class DeltaDistribution():
     def __init__(self, loc):
@@ -114,7 +121,7 @@ class ImageScaler(tfk.models.Model):
             gated=False,
             output_bias=True,
             optimize_prior_scale=False,
-            ff_scale_factor=None,
+            ff_scale_factor_exponent=None,
             **kwargs, 
         ):
         """
@@ -173,7 +180,12 @@ class ImageScaler(tfk.models.Model):
         self.prior = self.prior_dict[prior_name]()
         self.prior_dense = None
         self.hidden_units = hidden_units
-        self.ff_scale_factor = ff_scale_factor
+        self.ff_scale_factor_exponent = ff_scale_factor_exponent
+
+        ff_scale_factor = None
+        if ff_scale_factor_exponent is not None:
+            ff_scale_factor = mlp_depth ** -ff_scale_factor_exponent
+
         if self.hidden_units is None:
             self.hidden_units = 2 * mlp_width 
         ffepsilon = epsilon
@@ -187,7 +199,7 @@ class ImageScaler(tfk.models.Model):
         self.input_scale = tfk.layers.Dense(
                 mlp_width, kernel_initializer=kernel_initializer, use_bias=False) #Should use_bias?
 
-        self.pool = Average(axis=-2)
+        self.pool = Average(axis=-2, dropout=0.1)
 
         if gated:
             from abismal.layers import GLUFeedForward as FeedForward
@@ -303,13 +315,15 @@ class ImageScaler(tfk.models.Model):
             iobs,
             sigiobs,
         ) = inputs
-        scale = metadata
+
+        #iobs = batch_normalize(iobs)
+        #sigiobs = batch_normalize(iobs)
         image = [metadata, iobs, sigiobs]
         if self.hkl_to_imodel:
             image.append(0.02 * tf.cast(hkl, metadata.dtype))
 
-
         image = tf.concat(image, axis=-1)
+        scale = metadata
 
         if self.num_image_samples is not None:
             #Subsample reflections per image 
@@ -320,7 +334,7 @@ class ImageScaler(tfk.models.Model):
         image = self.pool(image)
         #if self.normalizer_name != 'activation':
         #    image = self.image_network.layers[0].normalize(image)
-            
+
         scale = tf.ragged.map_flat_values(self.input_scale, scale)
         p_latent = tf.ragged.map_flat_values(self.scale_network, scale)
         q_latent = tf.ragged.map_flat_values(self.scale_network, scale + image)
@@ -358,6 +372,7 @@ class ImageScaler(tfk.models.Model):
                 #self.add_metric(tf.reduce_mean(b), 'pΣ_b')
                 self.add_metric(tf.reduce_mean(m), 'pΣ_loc')
                 self.add_metric(tf.reduce_mean(s), 'pΣ_scale')
+                self.add_metric(tf.reduce_mean(m/s), 'pΣ_width')
             else:
                 p = self.prior_dict[self.prior_name]()
 

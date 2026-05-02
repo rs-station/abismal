@@ -74,4 +74,15 @@ args_and_kwargs = (
             "type": float,
         },
     ),
+    (
+        ("--ff-scale-exp",),
+        {
+            "help": "Scale factor eponent for residual layers that controls regularization. "
+                    "Values between 1 and 0.5 are reasonable with bigger values meaning more regularization. "
+                    "See https://arxiv.org/html/2510.03470v1. Their lambda = pow(n, -ff_scale_exp). "
+                    "A value of zero disables this feature which is appropriate when normalizers are used.",
+            "default": None,
+            "type": float,
+        },
+    ),
 )

@@ -85,12 +85,9 @@ class FeedForward(tfk.layers.Layer):
             use_bias=self.use_bias,
             **kwargs,
         )
-        kinit = self.kernel_initializer
-        if self.normalizer == 'activation':
-            kinit = 'zeros'
         self.ff2 = tfk.layers.Dense(
             self.units,
-            kernel_initializer=kinit,
+            kernel_initializer=self.kernel_initializer,
             use_bias=self.use_bias,
             **kwargs,
         )
