@@ -54,14 +54,14 @@ class VariationalMergingModel(tfk.models.Model):
         #self.standardize_intensity = BinnedNormalize(
         #    self.surrogate_posterior.rac,
         #)
-        #self.standardize_intensity = None
-        #self.standardize_metadata = None
-        self.standardize_intensity = Normalize(
-            decay=standardization_decay
-        )
-        self.standardize_metadata = Standardize(
-            decay=standardization_decay
-        )
+        self.standardize_intensity = None
+        self.standardize_metadata = None
+        #self.standardize_intensity = Normalize(
+        #    decay=standardization_decay
+        #)
+        #self.standardize_metadata = Standardize(
+        #    decay=standardization_decay
+        #)
 
     def get_config(self):
         ops = self.reindexing_ops

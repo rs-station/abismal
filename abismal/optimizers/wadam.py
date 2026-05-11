@@ -72,14 +72,26 @@ class WAdam(AbismalOptimizer):
                 (beta_2 - 1.) * v + (1. - beta_2) * delta * (g - m), 
                 0.
             ))
-            variable.assign_sub(tf.where(
+            update = tf.where(
                 nonzero, 
                 (m * alpha) / (tf.sqrt(v) + self.epsilon),
                 0.,
-            ))
+            )
+            #w = tfp.distributions.Normal(m, tf.sqrt(v) + self.epsilon).prob(g)
+            #w = tf.math.exp(tfp.distributions.Normal(m, tf.sqrt(v) + self.epsilon).unnormalized_log_prob(g))
+            #update = tf.where(
+            #    nonzero, 
+            #    alpha * g * w,
+            #    0.,
+            #)
         else:
             m.assign_add((1. - beta_1) * delta)
             v.assign_add((beta_2 - 1.) * v + (1. - beta_2) * delta * (g - m))
-            variable.assign_sub((m * alpha) / (tf.sqrt(v) + self.epsilon))
+            update = (m * alpha) / (tf.sqrt(v) + self.epsilon)
+            #w = tfp.distributions.Normal(m, tf.sqrt(v) + self.epsilon).prob(g)
+            #w = tf.math.exp(tfp.distributions.Normal(m, tf.sqrt(v) + self.epsilon).unnormalized_log_prob(g))
+            #update = alpha * g * w
+
+        variable.assign_sub(update)
 
 

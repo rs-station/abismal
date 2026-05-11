@@ -85,4 +85,12 @@ args_and_kwargs = (
             "type": float,
         },
     ),
+    (
+        ("--dropout",),
+        {
+            "help": "Apply dropout when pooling reflections. ",
+            "default": None,
+            "type": float,
+        },
+    ),
 )

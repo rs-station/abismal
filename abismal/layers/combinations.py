@@ -57,6 +57,13 @@ class ConvexCombinations(tfk.layers.Layer):
         points = tf.einsum("...ab,...ac->...bc", score, data)
         return points
 
+def random_like(x):
+    out = tf.random.uniform(
+        tfk.backend.shape(x),
+        dtype=tfk.backend.dtype(x),
+    )
+    return out
+
 class Average(tfk.layers.Layer):
     def __init__(self, axis, keepdims=True, dropout=None):
         super().__init__()
@@ -65,13 +72,15 @@ class Average(tfk.layers.Layer):
         self.dropout = dropout
 
     def call(self, data, **kwargs):
+        out = data
         if self.dropout is not None:
-            mask = tf.ones_like(data)
-            mask = tf.nn.dropout(mask, self.dropout)
-            out = tf.reduce_sum(
-                data * mask, self.axis, self.keepdims
-            ) / tf.reduce_sum(
-                mask, self.axis, self.keepdims
-            )
-            return out
-        return tf.reduce_mean(data, self.axis, self.keepdims)
+            #mask = tf.ragged.map_flat_values(random_like, data[...,:1])
+            #w = tf.cast(mask >= self.dropout, tfk.backend.dtype(data))
+            #w = w * tf.math.reciprocal_no_nan(
+            #    tf.math.reduce_sum(w, self.axis, self.keepdims)
+            #)
+            #out = tf.reduce_sum(w * data, self.axis, self.keepdims)
+            #return out
+            out = tf.nn.dropout(out, self.dropout)
+        out = tf.reduce_mean(out, self.axis, self.keepdims)
+        return out

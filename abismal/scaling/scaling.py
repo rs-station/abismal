@@ -1,4 +1,5 @@
 import tensorflow as tf
+import numpy as np
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
@@ -9,9 +10,9 @@ from abismal.distributions import FoldedNormal,Rice
 
 def batch_normalize(x, epsilon=1e-3):
     out = (
-        x - tf.reduce_mean(x, axis=(0, 1), keepdims=True)
+        x - tf.reduce_mean(x, axis=0, keepdims=True)
     ) / (
-        tf.math.reduce_std(x, axis=(0, 1), keepdims=True) 
+        tf.math.reduce_std(x, axis=0, keepdims=True) + epsilon
     )
     return out
 
@@ -122,6 +123,8 @@ class ImageScaler(tfk.models.Model):
             output_bias=True,
             optimize_prior_scale=False,
             ff_scale_factor_exponent=None,
+            dropout=None,
+            random_seed=1234,
             **kwargs, 
         ):
         """
@@ -161,6 +164,8 @@ class ImageScaler(tfk.models.Model):
             Optionally use a gated architecture instead of a vanilla residual multilayer perceptron
         output_bias : bool (optional)
             Use bias in the output layer. 
+        dropout : float (optional)
+            Use dropout when pooling reflections. 
         """
         super().__init__(**kwargs)
         self.kl_weight = kl_weight
@@ -178,9 +183,12 @@ class ImageScaler(tfk.models.Model):
         self.gated = gated
         self.output_bias = output_bias
         self.prior = self.prior_dict[prior_name]()
-        self.prior_dense = None
         self.hidden_units = hidden_units
         self.ff_scale_factor_exponent = ff_scale_factor_exponent
+        self.dropout = dropout
+        self.optimize_prior_scale = optimize_prior_scale
+        self.random_seed = random_seed
+        input_bias=False
 
         ff_scale_factor = None
         if ff_scale_factor_exponent is not None:
@@ -190,16 +198,18 @@ class ImageScaler(tfk.models.Model):
             self.hidden_units = 2 * mlp_width 
         ffepsilon = epsilon
 
-        kernel_initializer = 'glorot_normal'
+        #kernel_initializer = 'glorot_normal'
+        kernel_initializer = tfk.initializers.VarianceScaling(scale=1./mlp_depth, mode='fan_avg', seed=random_seed)
         if optimize_prior_scale:
-            self.prior_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer, use_bias=output_bias)
+            self.output_prior = tfk.layers.Dense(2, kernel_initializer=kernel_initializer, use_bias=output_bias)
+            self.input_prior = tfk.layers.Dense(self.mlp_width, kernel_initializer=kernel_initializer, use_bias=input_bias)
 
         self.input_image = tfk.layers.Dense(
-                mlp_width, kernel_initializer=kernel_initializer, use_bias=False)
+                mlp_width, kernel_initializer=kernel_initializer, use_bias=input_bias)
         self.input_scale = tfk.layers.Dense(
-                mlp_width, kernel_initializer=kernel_initializer, use_bias=False) #Should use_bias?
+                mlp_width, kernel_initializer=kernel_initializer, use_bias=input_bias) #Should use_bias?
 
-        self.pool = Average(axis=-2, dropout=0.1)
+        self.pool = Average(axis=-2, dropout=dropout)
 
         if gated:
             from abismal.layers import GLUFeedForward as FeedForward
@@ -254,6 +264,10 @@ class ImageScaler(tfk.models.Model):
             'hkl_to_imodel' : self.hkl_to_imodel,
             'gated' : self.gated,
             'output_bias' : self.output_bias, 
+            'optimize_prior_scale': self.optimize_prior_scale,
+            'ff_scale_factor_exponent' : self.ff_scale_factor_exponent,
+            'dropout': self.dropout,
+            'random_seed': self.random_seed,
         })
         return config
 
@@ -298,6 +312,9 @@ class ImageScaler(tfk.models.Model):
         )
 
         self.input_scale.build(metadata)
+        if self.optimize_prior_scale:
+            self.input_prior.build(metadata)
+            self.output_prior.build(metadata[:-1] + [self.mlp_width])
         self.image_network.build(metadata[:-1] + [self.mlp_width])
         if not self.share_weights:
             self.scale_network.build(metadata[:-1] + [self.mlp_width])
@@ -318,11 +335,20 @@ class ImageScaler(tfk.models.Model):
 
         #iobs = batch_normalize(iobs)
         #sigiobs = batch_normalize(iobs)
+        #metadata = tf.ragged.map_flat_values(batch_normalize, metadata)
+        #iobs = tf.math.sign(iobs) * tf.math.log(tf.math.abs(iobs) + self.epsilon)
+        #sigiobs = tf.math.sign(sigiobs) * tf.math.log(tf.math.abs(sigiobs) + self.epsilon)
+
         image = [metadata, iobs, sigiobs]
+        n = 2
         if self.hkl_to_imodel:
             image.append(0.02 * tf.cast(hkl, metadata.dtype))
+            n = n + 3
 
         image = tf.concat(image, axis=-1)
+        image = tf.ragged.map_flat_values(batch_normalize, image)
+        metadata = image[...,:-n]
+
         scale = metadata
 
         if self.num_image_samples is not None:
@@ -336,7 +362,6 @@ class ImageScaler(tfk.models.Model):
         #    image = self.image_network.layers[0].normalize(image)
 
         scale = tf.ragged.map_flat_values(self.input_scale, scale)
-        p_latent = tf.ragged.map_flat_values(self.scale_network, scale)
         q_latent = tf.ragged.map_flat_values(self.scale_network, scale + image)
         q_params = tf.ragged.map_flat_values(self.output_dense, q_latent)
 
@@ -348,38 +373,20 @@ class ImageScaler(tfk.models.Model):
         z = q.sample(mc_samples) 
 
         if not self.posterior_name.lower() == 'delta' and self.kl_weight > 0.:
-            #p = self.prior_function()
-            #Okay this needs to be clamped somehow for safety...
-            if self.prior_dense:
-                p_params = tf.ragged.map_flat_values(self.prior_dense, p_latent) * tf.ones_like(iobs)
+            if self.optimize_prior_scale:
+                p_latent = tf.ragged.map_flat_values(self.input_prior, metadata)
+                p_latent = tf.ragged.map_flat_values(self.scale_network, p_latent)
+                p_params = tf.ragged.map_flat_values(self.output_prior, p_latent) * tf.ones_like(iobs)
                 m,s = tf.unstack(p_params.flat_values, axis=-1)
                 s = self.bijector_function(s)
-                #k,b = tf.unstack(p_params.flat_values, axis=-1)
-                #k = self.bijector_function(k)
-                #rd2 = tf.squeeze(tf.math.pow(resolution.flat_values, -2.), -1)
-                #kb = k * tf.math.exp(-b * rd2)
                 p = self.prior_dict[self.prior_name](m,s)
-                #from IPython import embed;embed(colors='linux');XX
-                #k,b,m,s = tf.unstack(p_params.flat_values, axis=-1)
-                #s = self.bijector_function(s)
-                #p_params  = tf.ragged.map_flat_values(self.prior_dense, image + tf.math.pow(resolution, -2.))
-                #p = self.prior_dict[self.prior_name](m, s)
-                #p = tfd.TransformedDistribution(
-                #    p,
-                #    tfb.Scale(kb),
-                #)
-                #self.add_metric(tf.reduce_mean(k), 'pΣ_k')
-                #self.add_metric(tf.reduce_mean(b), 'pΣ_b')
-                self.add_metric(tf.reduce_mean(m), 'pΣ_loc')
-                self.add_metric(tf.reduce_mean(s), 'pΣ_scale')
-                self.add_metric(tf.reduce_mean(m/s), 'pΣ_width')
+                p_mean = p.mean()
+                p_std = p.stddev()
+                self.add_metric(tf.reduce_mean(p_mean), 'pΣ_loc')
+                self.add_metric(tf.reduce_mean(p_std), 'pΣ_scale')
+                self.add_metric(tf.reduce_mean(p_mean / p_std), 'pΣ_width')
             else:
                 p = self.prior_dict[self.prior_name]()
-
-            #from IPython import embed;embed(colors='linux');XX
-            #prior_mean = (tf.reduce_mean(iobs, axis=-2, keepdims=True) * tf.ones_like(iobs)).flat_values
-            #p = self.prior_dict[self.prior_name](tf.squeeze(prior_mean, axis=-1))
-            #p = self.prior
 
             try: #Attempt to calculate this analytically
                 kl_div = q.kl_divergence(p)

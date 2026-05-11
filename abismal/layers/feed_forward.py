@@ -17,7 +17,8 @@ class FeedForward(tfk.layers.Layer):
         "l2": lambda s, x: x * tf.math.rsqrt(tf.reduce_sum(tf.square(x), axis=-1, keepdims=True) + s.epsilon * s.epsilon),
         "rms": lambda s, x: x * tf.math.rsqrt(tf.reduce_mean(tf.square(x), axis=-1, keepdims=True) + s.epsilon * s.epsilon),
         "activation": lambda s, x: s.activation(x),
-        "batch": lambda s, x: (x - tf.math.reduce_mean(x, axis=-2, keepdims=True)) / (tf.math.reduce_std(x, axis=-2, keepdims=True) + s.epsilon),
+        #"batch": lambda s, x: (x - tf.math.reduce_mean(x, axis=-2, keepdims=True)) / (tf.math.reduce_std(x, axis=-2, keepdims=True) + s.epsilon),
+        "batch": lambda s, x: (x - tf.math.reduce_mean(x, axis=-2, keepdims=True)) * tf.math.rsqrt(tf.math.reduce_variance(x, axis=-2, keepdims=True) + s.epsilon * s.epsilon),
         "batch_l2": lambda s, x: x * tf.math.rsqrt(tf.reduce_sum(tf.square(x), axis=-2, keepdims=True) + s.epsilon * s.epsilon),
     }
 

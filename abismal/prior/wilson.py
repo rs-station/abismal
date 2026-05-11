@@ -27,7 +27,7 @@ class WilsonPriorBase(PriorBase):
         self.built = True #This is always true
 
     @classmethod
-    def with_empirical_sigma(cls, rac, dataset, bins=20, maxiter=100, isigi_cutoff=0.0, standardize=True, **kwargs):
+    def with_empirical_sigma(cls, rac, dataset, bins=20, maxiter=100, isigi_cutoff=0.0, standardize=True, interpolate=True, **kwargs):
         from reciprocalspaceship.utils import bin_by_percentile
         labels,edges = bin_by_percentile(rac.dHKL, ascending=False)
         mean = tf.zeros(bins)
@@ -61,13 +61,26 @@ class WilsonPriorBase(PriorBase):
             size = size + batch_size
             mean = mean + (batch_size / size) * (batch_mean - mean)
 
-
         if standardize:
             k = tf.math.reduce_sum(
                 mean * size / tf.math.reduce_sum(size)
             )
             mean = mean / k
-        sigma = tf.gather(mean, labels)
+
+        if interpolate:
+            from scipy.interpolate import interp1d
+            eps = 1e-3
+            x = np.concatenate((
+                [edges[0]+eps], 
+                0.5 * (edges[1:] + edges[:-1]),
+                [edges[-1]-eps],
+            ))
+            y = np.concatenate(([mean[0]], mean, [mean[-1]]))
+            sigma = interp1d(x**-2., y)(rac.dHKL**-2)
+            sigma = tf.cast(sigma, 'float32')
+        else:
+            sigma = tf.gather(mean, labels)
+
         return cls(rac, sigma)
 
     def get_config(self):

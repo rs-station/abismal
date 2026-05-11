@@ -107,17 +107,17 @@ def main(args=None):
         elif parser.posterior_type == "intensity":
             from abismal.prior.intensity.wilson import WilsonPrior
             if parser.prior_distribution == 'empirical_wilson':
-                raise NotImplementedError("Sorry: intensity posteriors do not support empirical scales yet!")
+                prior = WilsonPrior.with_empirical_sigma(rac, train, standardize=False)
             else:
                 prior = WilsonPrior(rac)
         else:
             from abismal.prior.structure_factor.wilson import WilsonPrior
             if parser.prior_distribution == 'empirical_wilson':
-                prior = WilsonPrior.with_empirical_sigma(rac, train)
+                prior = WilsonPrior.with_empirical_sigma(rac, train, standardize=False)
             else:
                 prior = WilsonPrior(rac)
         loc_init = prior.flat_distribution().mean()
-        loc_init = tf.ones_like(loc_init) * tf.math.reduce_mean(loc_init)
+        #loc_init = tf.ones_like(loc_init) * tf.math.reduce_mean(loc_init)
         scale_init = parser.init_scale * loc_init
     elif parser.prior_distribution == "normal":
         from abismal.prior.normal import NormalPrior
@@ -212,6 +212,7 @@ def main(args=None):
         gated=parser.gated,
         optimize_prior_scale=parser.optimize_scale_prior,
         ff_scale_factor_exponent=parser.ff_scale_exp,
+        dropout=parser.dropout,
     )
 
     if parser.studentt_dof is not None:
