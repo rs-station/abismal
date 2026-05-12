@@ -58,7 +58,7 @@ def rice_posterior(output, bijector_function):
 def gamma_posterior(output, bijector_function):
     output = bijector_function(output)
     loc, scale = tf.unstack(output, axis=-1)
-    scale = scale + 1. #prevent change in concavity
+    #scale = scale + 1. #prevent change in concavity
     q = tfd.Gamma(loc, scale)
     return q
 
@@ -79,6 +79,53 @@ def rescale_distribution(p, mean=1.):
         tfb.Scale(1. / p.mean())
     )
 
+def cauchy_prior(loc=0., scale=1., bijector_function=None):
+    if bijector_function is not None:
+        scale = bijector_function(scale)
+    return tfd.Cauchy(loc, scale)
+
+def laplace_prior(loc=0., scale=1., bijector_function=None):
+    if bijector_function is not None:
+        scale = bijector_function(scale)
+    return tfd.Laplace(loc, scale)
+
+def normal_prior(loc=0., scale=1., bijector_function=None):
+    if bijector_function is not None:
+        scale = bijector_function(scale)
+    return tfd.Normal(loc, scale)
+
+def lognormal_prior(loc=0., scale=1., bijector_function=None):
+    if bijector_function is not None:
+        scale = bijector_function(scale)
+    return tfd.LogNormal(loc, scale)
+
+def halfcauchy_prior(loc=0., scale=1., bijector_function=None):
+    if bijector_function is not None:
+        scale = bijector_function(scale)
+    return tfd.HalfCauchy(scale)
+
+def halfnormal_prior(loc=0., scale=1., bijector_function=None):
+    if bijector_function is not None:
+        scale = bijector_function(scale)
+    return tfd.HalfNormal(scale)
+
+def exponential_prior(loc=0., scale=1., bijector_function=None):
+    if bijector_function is not None:
+        scale = bijector_function(scale)
+    return tfd.Exponential(scale)
+
+def foldednormal_prior(loc=0., scale=1., bijector_function=None):
+    if bijector_function is not None:
+        scale = bijector_function(scale)
+        loc = bijector_function(loc)
+    return FoldedNormal(loc, scale)
+
+def gamma_prior(rate=1., conc=1., bijector_function=None):
+    if bijector_function is not None:
+        rate = bijector_function(rate)
+        conc = bijector_function(conc)
+    return tfd.Gamma(rate, conc)
+
 @tfk.saving.register_keras_serializable(package="abismal")
 class ImageScaler(tfk.models.Model):
     bijector_dict = {
@@ -96,13 +143,15 @@ class ImageScaler(tfk.models.Model):
         'delta' : delta_posterior,
     }
     prior_dict = {
-        'cauchy' : lambda x=0.,y=1.: tfd.Cauchy(x, y),
-        'laplace' : lambda x=0.,y=1.: tfd.Laplace(x, y),
-        'normal' : lambda x=0.,y=1.: tfd.Normal(x, y),
-        'halfnormal' : lambda x=0.,y=1.: tfd.HalfNormal(y),
-        'halfcauchy' : lambda x=0.,y=1.: tfd.HalfCauchy(y),
-        'exponential' : lambda x=0.,y=1.: tfd.Exponential(y),
-        'lognormal' : lambda x=0.,y=1.:  tfd.LogNormal(x, y),
+        'cauchy' : cauchy_prior,
+        'laplace' : laplace_prior,
+        'normal' : normal_prior,
+        'halfnormal' : halfnormal_prior,
+        'halfcauchy' : halfcauchy_prior,
+        'exponential' : exponential_prior,
+        'lognormal' : lognormal_prior,
+        'foldednormal' : foldednormal_prior,
+        'gamma' : gamma_prior,
     }
     def __init__(
             self, 
@@ -182,7 +231,6 @@ class ImageScaler(tfk.models.Model):
         self.hkl_to_imodel = hkl_to_imodel
         self.gated = gated
         self.output_bias = output_bias
-        self.prior = self.prior_dict[prior_name]()
         self.hidden_units = hidden_units
         self.ff_scale_factor_exponent = ff_scale_factor_exponent
         self.dropout = dropout
@@ -378,8 +426,8 @@ class ImageScaler(tfk.models.Model):
                 p_latent = tf.ragged.map_flat_values(self.scale_network, p_latent)
                 p_params = tf.ragged.map_flat_values(self.output_prior, p_latent) * tf.ones_like(iobs)
                 m,s = tf.unstack(p_params.flat_values, axis=-1)
-                s = self.bijector_function(s)
-                p = self.prior_dict[self.prior_name](m,s)
+                #s = self.bijector_function(s)
+                p = self.prior_dict[self.prior_name](m, s, self.bijector_function)
                 p_mean = p.mean()
                 p_std = p.stddev()
                 self.add_metric(tf.reduce_mean(p_mean), 'pΣ_loc')
