@@ -36,7 +36,7 @@ def main(args=None):
     from abismal.io import split_dataset_train_test, set_gpu
     from abismal.scaling import ImageScaler
     from abismal.surrogate_posterior.structure_factor import FoldedNormalPosterior
-    from tf_keras.callbacks import ModelCheckpoint
+    from tf_keras.callbacks import ModelCheckpoint,EarlyStopping
     import gemmi
     import logging
     from os.path import exists
@@ -271,6 +271,12 @@ def main(args=None):
         weight_saver,
         freezer,
     ]
+    if parser.stop_early:
+        monitor = parser.early_stopping_criterion
+        mode = 'min'
+        if 'CC' in monitor:
+            mode = 'max'
+        callbacks.append(EarlyStopping(monitor=monitor, patience=parser.early_stopping_patience, mode=mode))
 
     if parser.eff_files is not None:
         for i, eff_file in enumerate(parser.eff_files.split(",")):

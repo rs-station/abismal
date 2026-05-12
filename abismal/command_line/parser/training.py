@@ -94,6 +94,36 @@ args_and_kwargs = (
 
     (
         (
+            "--disable-early-stoppping",
+        ),{
+            "help": "Disable early stopping during training.",
+            "action": "store_false",
+            "dest" : "stop_early",
+        }
+    ),
+
+    (
+        (
+            "--early-stopping-patience",
+        ),{
+            "help": "How many epochs to wait after training progress stalls.",
+            "type" : int,
+            "default": 5,
+        }
+    ),
+
+    (
+        (
+            "--early-stopping-criterion",
+        ),{
+            "help": "Which metric to use for early termination.",
+            "choices" : ['val_loss', 'val_NLL', 'val_CCpred', 'val_wCCpred'],
+            "default": 'val_wCCpred',
+        }
+    ),
+
+    (
+        (
             "--enable-index-ambiguation",
         ),{
             "help": "Randomize the indexing solution by a random twinning operator.",
