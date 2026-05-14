@@ -94,16 +94,6 @@ args_and_kwargs = (
 
     (
         (
-            "--disable-early-stoppping",
-        ),{
-            "help": "Disable early stopping during training.",
-            "action": "store_false",
-            "dest" : "stop_early",
-        }
-    ),
-
-    (
-        (
             "--early-stopping-patience",
         ),{
             "help": "How many epochs to wait after training progress stalls.",
@@ -117,7 +107,7 @@ args_and_kwargs = (
             "--early-stopping-criterion",
         ),{
             "help": "Which metric to use for early termination.",
-            "choices" : ['val_loss', 'val_NLL', 'val_CCpred', 'val_wCCpred'],
+            "choices" : ['val_loss', 'val_NLL', 'val_CCpred', 'val_wCCpred', 'KL', 'val_KL'],
             "default": 'val_wCCpred',
         }
     ),
