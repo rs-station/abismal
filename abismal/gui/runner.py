@@ -15,6 +15,40 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
+def _jupyter_server_root_dir(file_path):
+    """Return the JupyterLab server root_dir that contains file_path, or None.
+
+    On OOD/JupyterLab the server's root_dir often differs from the kernel cwd,
+    and /files/ URLs resolve relative to root_dir — so paths for embedded
+    iframes must be computed relative to it, not to os.getcwd().
+    """
+    try:
+        from jupyter_server.serverapp import list_running_servers
+    except ImportError:
+        return None
+    abs_file = os.path.abspath(file_path)
+    matches = []
+    for info in list_running_servers():
+        root = info.get('root_dir')
+        if not root:
+            continue
+        root_abs = os.path.abspath(root)
+        if abs_file == root_abs or abs_file.startswith(root_abs + os.sep):
+            matches.append(root_abs)
+    if not matches:
+        return None
+    return max(matches, key=len)
+
+
+def _file_url_path(path):
+    """Return a path usable under /files/<...> in JupyterLab."""
+    abs_path = os.path.abspath(path)
+    root = _jupyter_server_root_dir(abs_path)
+    if root is not None:
+        return os.path.relpath(abs_path, root)
+    return os.path.relpath(abs_path)
+
+
 class AbismalRunner:
     """
     Runs abismal as a detached subprocess with live output widgets.
@@ -394,8 +428,8 @@ class AbismalRunner:
 
     def _render_epoch(self, pdb_file, mtz_file):
         try:
-            pdb_rel = os.path.relpath(pdb_file)
-            mtz_rel = os.path.relpath(mtz_file)
+            pdb_rel = _file_url_path(pdb_file)
+            mtz_rel = _file_url_path(mtz_file)
         except ValueError:
             pdb_rel, mtz_rel = pdb_file, mtz_file
 

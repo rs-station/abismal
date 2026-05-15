@@ -148,39 +148,92 @@ class ArgparseGUIBase:
         return None
 
     def run_abismal(self, button=None):
-        import os
         from abismal.gui.runner import AbismalRunner
+        from abismal.gui.cleanup import find_abismal_outputs
         parsed = self.to_parser()
         out_dir = str(parsed.out_dir)
         has_phenix = getattr(parsed, "eff_files", None) is not None
 
         runner = AbismalRunner.attach(out_dir, has_phenix=has_phenix)
         if runner is not None:
-            runner.log_widget.append_stdout(
+            runner._append_log(
                 f'[Reconnected to running process PID {runner._pid}]\n'
             )
             runner.resume()
-        else:
-            if os.path.exists(os.path.join(out_dir, 'history.csv')):
-                self.widget.children = (
-                    self.top_section,
-                    self.tab,
-                    self.run_button,
-                    widgets.HTML(
-                        '<span style="color:red;font-weight:bold;">'
-                        f'Output directory "{out_dir}" already contains results. '
-                        'Choose a different directory or remove the existing results.'
-                        '</span>'
-                    ),
-                )
-                return
-            args = self.to_args()
-            runner = AbismalRunner(
-                args, out_dir, has_phenix=has_phenix,
-                total_epochs=parsed.epochs,
+            self.widget.children = (
+                self.top_section, self.tab, self.run_button, runner.to_widget(),
             )
-            runner.start()
-        self.widget.children = (self.top_section, self.tab, self.run_button, runner.to_widget())
+            return
+
+        existing = find_abismal_outputs(out_dir)
+        if existing:
+            self._show_overwrite_confirm(out_dir, existing, parsed, has_phenix)
+            return
+
+        self._launch_runner(parsed, has_phenix)
+
+    def _launch_runner(self, parsed, has_phenix):
+        from abismal.gui.runner import AbismalRunner
+        out_dir = str(parsed.out_dir)
+        args = self.to_args()
+        runner = AbismalRunner(
+            args, out_dir, has_phenix=has_phenix,
+            total_epochs=parsed.epochs,
+        )
+        runner.start()
+        self.widget.children = (
+            self.top_section, self.tab, self.run_button, runner.to_widget(),
+        )
+
+    def _show_overwrite_confirm(self, out_dir, existing, parsed, has_phenix):
+        from abismal.gui.cleanup import cleanup_abismal_outputs
+
+        warning = widgets.HTML(
+            '<div style="color:#b00;font-weight:bold;margin-bottom:4px;">'
+            f'Output directory <code>{out_dir}</code> already contains abismal '
+            'outputs. The following will be removed:'
+            '</div>'
+        )
+        file_list_html = widgets.HTML(
+            value='<ul style="margin:0;">' + ''.join(
+                f'<li><code>{p}</code></li>' for p in existing
+            ) + '</ul>',
+        )
+        file_list_box = widgets.Box(
+            [file_list_html],
+            layout=widgets.Layout(
+                max_height='250px',
+                overflow_y='auto',
+                border='1px solid lightgray',
+                padding='4px',
+                display='block',
+                width='100%',
+            ),
+        )
+        overwrite_btn = widgets.Button(
+            description='Overwrite and Run',
+            button_style='danger',
+            icon='trash',
+        )
+        cancel_btn = widgets.Button(
+            description='Cancel',
+        )
+        button_row = widgets.HBox([overwrite_btn, cancel_btn])
+        confirm_box = widgets.VBox([warning, file_list_box, button_row])
+
+        normal_children = (self.top_section, self.tab, self.run_button)
+
+        def _on_overwrite(_):
+            cleanup_abismal_outputs(out_dir)
+            self._launch_runner(parsed, has_phenix)
+
+        def _on_cancel(_):
+            self.widget.children = normal_children
+
+        overwrite_btn.on_click(_on_overwrite)
+        cancel_btn.on_click(_on_cancel)
+
+        self.widget.children = normal_children + (confirm_box,)
 
     def to_widget(self):
         self.run_button = widgets.Button(
