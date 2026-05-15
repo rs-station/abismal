@@ -38,6 +38,7 @@ class VariationalMergingModel(tfk.models.Model):
             epsilon=1e-6, 
             reindexing_ops=None, 
             standardization_decay=0.999,
+            standardize=False,
             **kwargs):
         super().__init__(**kwargs)
         self.epsilon = epsilon
@@ -50,18 +51,17 @@ class VariationalMergingModel(tfk.models.Model):
         if reindexing_ops is None:
             reindexing_ops = ["x,y,z"]
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
-        #from abismal.layers.standardization import BinnedNormalize
-        #self.standardize_intensity = BinnedNormalize(
-        #    self.surrogate_posterior.rac,
-        #)
-        self.standardize_intensity = None
-        self.standardize_metadata = None
-        #self.standardize_intensity = Normalize(
-        #    decay=standardization_decay
-        #)
-        #self.standardize_metadata = Standardize(
-        #    decay=standardization_decay
-        #)
+        self.standardize = standardize
+        if standardize:
+            self.standardize_intensity = Normalize(
+                decay=standardization_decay
+            )
+            self.standardize_metadata = Standardize(
+                decay=standardization_decay
+            )
+        else:
+            self.standardize_intensity = None
+            self.standardize_metadata = None
 
     def get_config(self):
         ops = self.reindexing_ops
@@ -78,6 +78,7 @@ class VariationalMergingModel(tfk.models.Model):
             'kl_weight' : 1.,
             'epsilon' : self.epsilon,
             'reindexing_ops' : ops,
+            'standardize' : self.standardize,
         })
         for k in ['scale_model', 'surrogate_posterior', 'likelihood', 'prior']:
             config[k] = tfk.saving.serialize_keras_object(config[k])

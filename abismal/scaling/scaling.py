@@ -174,6 +174,7 @@ class ImageScaler(tfk.models.Model):
             ff_scale_factor_exponent=None,
             dropout=None,
             random_seed=1234,
+            batch_normalize=False,
             **kwargs, 
         ):
         """
@@ -236,6 +237,7 @@ class ImageScaler(tfk.models.Model):
         self.dropout = dropout
         self.optimize_prior_scale = optimize_prior_scale
         self.random_seed = random_seed
+        self.batch_normalize = batch_normalize
         input_bias=False
 
         ff_scale_factor = None
@@ -316,6 +318,7 @@ class ImageScaler(tfk.models.Model):
             'ff_scale_factor_exponent' : self.ff_scale_factor_exponent,
             'dropout': self.dropout,
             'random_seed': self.random_seed,
+            'batch_normalize' : self.batch_normalize,
         })
         return config
 
@@ -394,7 +397,8 @@ class ImageScaler(tfk.models.Model):
             n = n + 3
 
         image = tf.concat(image, axis=-1)
-        image = tf.ragged.map_flat_values(batch_normalize, image)
+        if self.batch_normalize:
+            image = tf.ragged.map_flat_values(batch_normalize, image)
         metadata = image[...,:-n]
 
         scale = metadata
