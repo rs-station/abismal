@@ -1,7 +1,15 @@
 title = "IO"
 description = "Arguments controlling file inputs and outputs."
 
-from multiprocessing import cpu_count
+
+import os
+def available_cpus():
+    if hasattr(os, 'sched_getaffinity'):
+        return len(os.sched_getaffinity(0))
+    n = os.environ.get('SLURM_CPUS_PER_TASK')
+    if n:
+        return int(n)
+    return os.cpu_count() or 1
 
 args_and_kwargs=(
     (
@@ -20,7 +28,7 @@ args_and_kwargs=(
             "--num-cpus",
         ),{
         "help": "Number of CPUs to use for parsing CrystFEL .stream files with default 1.",
-        "default": max(1, cpu_count() - 1),
+        "default": available_cpus(),
         "type": int,
         }
     ),
