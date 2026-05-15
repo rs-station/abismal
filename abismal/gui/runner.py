@@ -1,3 +1,4 @@
+import html
 import json
 import threading
 import glob
@@ -38,15 +39,21 @@ class AbismalRunner:
         self.console_log = os.path.join(self.out_dir, 'console.log')
         self.pid_file = os.path.join(self.out_dir, 'abismal.pid')
 
-        self.log_widget = widgets.Output()
+        self._log_text = ''
+        self.log_widget = widgets.HTML(value=self._render_log_html())
         self.log_box = widgets.Box(
             [self.log_widget],
             layout=widgets.Layout(
                 height='300px',
-                overflow_y='scroll',
+                overflow_y='auto',
                 border='1px solid #ccc',
             ),
         )
+        self.log_box.add_class('abismal-log-scroll')
+        self._log_js_widget = widgets.Output(
+            layout=widgets.Layout(height='0px', overflow='hidden'),
+        )
+        self._init_log_autoscroll_js()
         self.progress_widget = widgets.IntProgress(
             min=0,
             max=total_epochs or 1,
@@ -164,6 +171,7 @@ class AbismalRunner:
         sections += [
             widgets.HTML("<b>Log Output</b>"),
             self.log_box,
+            self._log_js_widget,
         ]
         return widgets.VBox(sections)
 
@@ -180,6 +188,56 @@ class AbismalRunner:
         except OSError:
             return False
 
+    def _render_log_html(self):
+        return (
+            '<pre style="margin:0;font-family:monospace;font-size:12px;'
+            'white-space:pre-wrap;line-height:1.3;">'
+            + html.escape(self._log_text)
+            + '</pre>'
+        )
+
+    def _append_log(self, line):
+        self._log_text += line
+        self.log_widget.value = self._render_log_html()
+
+    def _init_log_autoscroll_js(self):
+        js = """
+        (function() {
+            function attach(box) {
+                if (box.__abismal_autoscroll) return;
+                box.__abismal_autoscroll = true;
+                var stickBottom = true;
+                var ignoreNext = false;
+                box.addEventListener('scroll', function() {
+                    if (ignoreNext) { ignoreNext = false; return; }
+                    stickBottom = (box.scrollTop + box.clientHeight)
+                                  >= (box.scrollHeight - 5);
+                });
+                var observer = new MutationObserver(function() {
+                    if (stickBottom) {
+                        ignoreNext = true;
+                        box.scrollTop = box.scrollHeight;
+                    }
+                });
+                observer.observe(box, {
+                    childList: true, subtree: true, characterData: true,
+                });
+                ignoreNext = true;
+                box.scrollTop = box.scrollHeight;
+            }
+            var attempts = 0;
+            var iv = setInterval(function() {
+                document.querySelectorAll('.abismal-log-scroll').forEach(attach);
+                if (++attempts > 50) clearInterval(iv);
+            }, 100);
+        })();
+        """
+        self._log_js_widget.outputs = ({
+            'output_type': 'display_data',
+            'data': {'application/javascript': js},
+            'metadata': {},
+        },)
+
     def _begin_monitoring(self):
         self._tailer_thread = threading.Thread(target=self._tail, daemon=True)
         self._tailer_thread.start()
@@ -192,7 +250,7 @@ class AbismalRunner:
             while True:
                 line = f.readline()
                 if line:
-                    self.log_widget.append_stdout(line)
+                    self._append_log(line)
                     m = epoch_re.match(line)
                     if m:
                         cur, total = int(m.group(1)), int(m.group(2))
@@ -204,7 +262,7 @@ class AbismalRunner:
                 else:
                     # Process done — drain any lines written just before exit.
                     for line in f:
-                        self.log_widget.append_stdout(line)
+                        self._append_log(line)
                         m = epoch_re.match(line)
                         if m:
                             cur, total = int(m.group(1)), int(m.group(2))
