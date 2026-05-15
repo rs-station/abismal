@@ -16,23 +16,21 @@ import matplotlib.pyplot as plt
 
 
 def _jupyter_server_root_dir(file_path):
-    """Return the JupyterLab server root_dir that contains file_path, or None.
-
-    On OOD/JupyterLab the server's root_dir often differs from the kernel cwd,
-    and /files/ URLs resolve relative to root_dir — so paths for embedded
-    iframes must be computed relative to it, not to os.getcwd().
+    """Return the JupyterLab server root_dir that directly contains file_path,
+    or None. Does not follow symlinks under root_dir — see _file_url_path for
+    the symlink-aware version used to build /files/ URLs.
     """
     try:
         from jupyter_server.serverapp import list_running_servers
     except ImportError:
         return None
-    abs_file = os.path.abspath(file_path)
+    abs_file = os.path.realpath(file_path)
     matches = []
     for info in list_running_servers():
         root = info.get('root_dir')
         if not root:
             continue
-        root_abs = os.path.abspath(root)
+        root_abs = os.path.realpath(root)
         if abs_file == root_abs or abs_file.startswith(root_abs + os.sep):
             matches.append(root_abs)
     if not matches:
@@ -40,12 +38,57 @@ def _jupyter_server_root_dir(file_path):
     return max(matches, key=len)
 
 
+def _resolve_via_symlink(abs_file, root_abs):
+    """If a top-level entry under root_abs is a symlink whose target is
+    abs_file or one of its ancestors, return the URL path that reaches
+    abs_file via that symlink. Otherwise None.
+    """
+    try:
+        entries = os.listdir(root_abs)
+    except OSError:
+        return None
+    for name in entries:
+        link = os.path.join(root_abs, name)
+        if not os.path.islink(link):
+            continue
+        try:
+            target = os.path.realpath(link)
+        except OSError:
+            continue
+        if abs_file == target:
+            return name
+        if abs_file.startswith(target + os.sep):
+            return os.path.join(name, os.path.relpath(abs_file, target))
+    return None
+
+
 def _file_url_path(path):
-    """Return a path usable under /files/<...> in JupyterLab."""
-    abs_path = os.path.abspath(path)
-    root = _jupyter_server_root_dir(abs_path)
-    if root is not None:
-        return os.path.relpath(abs_path, root)
+    """Return a path usable under /files/<...> in JupyterLab.
+
+    Tries (in order) for each running JupyterLab server:
+      1. Direct containment under server root_dir.
+      2. Containment via a top-level symlink in root_dir (common on shared
+         systems where projects are symlinked from $HOME).
+    Falls back to os.path.relpath when nothing matches.
+    """
+    abs_path = os.path.realpath(path)
+    try:
+        from jupyter_server.serverapp import list_running_servers
+        servers = list(list_running_servers())
+    except ImportError:
+        servers = []
+
+    for info in servers:
+        root = info.get('root_dir')
+        if not root:
+            continue
+        root_abs = os.path.realpath(root)
+        if abs_path == root_abs or abs_path.startswith(root_abs + os.sep):
+            return os.path.relpath(abs_path, root_abs)
+        via_link = _resolve_via_symlink(abs_path, root_abs)
+        if via_link is not None:
+            return via_link
+
     return os.path.relpath(abs_path)
 
 
