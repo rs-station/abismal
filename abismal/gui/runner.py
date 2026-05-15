@@ -92,6 +92,43 @@ def _file_url_path(path):
     return os.path.relpath(abs_path)
 
 
+def _files_url(path):
+    """Return a full URL (path-only) for path under /files/, including the
+    JupyterLab server base URL prefix. Behind reverse proxies (OOD), the
+    base URL has a path component (e.g. /node/<host>/<port>/) that an
+    iframe-rooted /files/... fetch would otherwise drop, since the iframe
+    inherits the proxy origin but not the server's base path.
+    """
+    abs_path = os.path.realpath(path)
+    try:
+        from jupyter_server.serverapp import list_running_servers
+        from urllib.parse import urlparse
+        servers = list(list_running_servers())
+    except ImportError:
+        servers = []
+        urlparse = None
+
+    for info in servers:
+        root = info.get('root_dir')
+        if not root:
+            continue
+        root_abs = os.path.realpath(root)
+        if abs_path == root_abs or abs_path.startswith(root_abs + os.sep):
+            rel = os.path.relpath(abs_path, root_abs)
+        else:
+            rel = _resolve_via_symlink(abs_path, root_abs)
+        if rel is None:
+            continue
+        url = info.get('url') or '/'
+        base = urlparse(url).path or '/'
+        if not base.endswith('/'):
+            base += '/'
+        return f"{base}files/{rel}"
+
+    # Fallback: no matching server; assume default base and cwd-relative path.
+    return f"/files/{os.path.relpath(abs_path)}"
+
+
 class AbismalRunner:
     """
     Runs abismal as a detached subprocess with live output widgets.
@@ -471,8 +508,8 @@ class AbismalRunner:
 
     def _render_epoch(self, pdb_file, mtz_file):
         try:
-            pdb_rel = _file_url_path(pdb_file)
-            mtz_rel = _file_url_path(mtz_file)
+            pdb_rel = _files_url(pdb_file)
+            mtz_rel = _files_url(mtz_file)
         except ValueError:
             pdb_rel, mtz_rel = pdb_file, mtz_file
 
@@ -516,8 +553,8 @@ class AbismalRunner:
                 f'"{self._viewer_id}";}}catch(e){{return false;}}}});'
                 f'if(t)t.contentWindow.postMessage({{'
                 f'type:"reload",'
-                f'pdb_file:"/files/{pdb_rel}",'
-                f'mtz_file:"/files/{mtz_rel}",'
+                f'pdb_file:"{pdb_rel}",'
+                f'mtz_file:"{mtz_rel}",'
                 f'map_keys:{json.dumps(map_keys)}'
                 f'}},"*");'
                 f'}})();'

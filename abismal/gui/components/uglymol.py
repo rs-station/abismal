@@ -141,11 +141,11 @@ viewer_template = """<!doctype html>
         V.config.map_radius = 12;
         V.config.water_style = "cross";
         document.getElementById('hud').textContent = 'Loading PDB...';
-        V.load_pdb('/files/$pdb_file');
+        V.load_pdb('$pdb_file');
         if (typeof GemmiMtz === 'undefined') {
-          setTimeout(function() { loadMtz('/files/$mtz_file', $map_keys); }, 500);
+          setTimeout(function() { loadMtz('$mtz_file', $map_keys); }, 500);
         } else {
-          loadMtz('/files/$mtz_file', $map_keys);
+          loadMtz('$mtz_file', $map_keys);
         }
       } catch(e) {
         document.getElementById('hud').textContent = 'Error: ' + e.message;
