@@ -1,0 +1,261 @@
+from abismal.command_line.parser import parser as abismal_parser
+import argparse
+from ipywidgets import widgets
+from abismal.gui.components.file_selector import (
+    ReflectionFileSelector,
+    PhenixFileSelector,
+    ColabReflectionFileSelector,
+    ColabPhenixFileSelector,
+    _is_colab,
+)
+
+
+def _label(text):
+    return widgets.HTML(
+        value=f'<div style="text-align:right;line-height:32px;padding-right:6px">{text}</div>',
+        layout=widgets.Layout(width='120px', min_width='120px'),
+    )
+
+
+def _set_label_widths(widget_list):
+    """Set label column width for a group of widgets based on the longest label text."""
+    labelable = [w for w in widget_list if hasattr(w, '_label_text')]
+    if not labelable:
+        return
+    max_chars = max(len(w._label_text) for w in labelable)
+    width = f'{max_chars * 8 + 24}px'
+    for w in labelable:
+        lbl = w.children[0]
+        lbl.layout.width = width
+        lbl.layout.min_width = width
+
+
+class _ToggleRow(widgets.HBox):
+    _label_text = ''  # spacer only — button carries its own description
+
+    def __init__(self, btn):
+        super().__init__([_label(''), btn])
+        self._btn = btn
+
+    @property
+    def value(self):
+        return self._btn.value
+
+
+class Text(widgets.HBox):
+    def __init__(self, **kwargs):
+        description = kwargs.pop("description", "")
+        self._label_text = description
+        self._input = widgets.Text(layout=widgets.Layout(flex='1'), **kwargs)
+        super().__init__([_label(description), self._input])
+
+    @property
+    def value(self):
+        return self._input.value
+
+
+class Dropdown(widgets.HBox):
+    def __init__(self, **kwargs):
+        description = kwargs.pop("description", "")
+        self._label_text = description
+        self._dropdown = widgets.Dropdown(layout=widgets.Layout(flex='1'), **kwargs)
+        super().__init__([_label(description), self._dropdown])
+
+    @property
+    def value(self):
+        return self._dropdown.value
+
+
+class ArgparseGUIBase:
+    custom_widgets = {}
+    custom_actions = {}
+    skipped_actions = []
+
+    def __init__(self, parser=None):
+        self.parser = parser if parser is not None else abismal_parser
+
+    @staticmethod
+    def action_to_name(action):
+        if action.metavar is not None:
+            return action.metavar
+        return action.dest
+
+    def to_args(self):
+        args = []
+        for action, widget in self._all_args.items():
+            v = widget.value
+            if v == "" or v == [] or v is None:
+                continue
+            if isinstance(action, argparse._StoreTrueAction):
+                if not v:
+                    continue
+                args.append(action.option_strings[0])
+            elif isinstance(action, argparse._StoreFalseAction):
+                if v:
+                    continue
+                args.append(action.option_strings[0])
+            else:
+                if action.option_strings:
+                    args.append(action.option_strings[0])
+                if isinstance(v, list):
+                    args.extend(v)
+                else:
+                    args.append(v)
+        return list(map(str, args))
+
+    def to_parser(self):
+        return self.parser.parse_args(self.to_args())
+
+    def action_to_widget(self, action, name=None):
+        if name is None:
+            name = self.action_to_name(action)
+        if name in self.custom_widgets:
+            return self.custom_widgets[name](action, name=name)
+        if isinstance(action, argparse._StoreTrueAction):
+            return _ToggleRow(widgets.ToggleButton(
+                value=False,
+                description=name,
+                disabled=False,
+                button_style="",
+                tooltip=action.help or "",
+            ))
+        if isinstance(action, argparse._StoreFalseAction):
+            return _ToggleRow(widgets.ToggleButton(
+                value=True,
+                description=name,
+                disabled=False,
+                button_style="",
+                tooltip=action.help or "",
+            ))
+        if isinstance(action, argparse._StoreAction):
+            if action.choices is not None:
+                default = action.default
+                if action.type is not None and default is not None:
+                    default = action.type(default)
+                return Dropdown(
+                    options=action.choices,
+                    value=default,
+                    description=name,
+                    disabled=False,
+                )
+            else:
+                placeholder = str(action.default) if action.default is not None else ""
+                return Text(
+                    placeholder=placeholder,
+                    description=name,
+                    tooltip=action.help or "",
+                )
+        return None
+
+    def run_abismal(self, button=None):
+        import os
+        from abismal.gui.runner import AbismalRunner
+        parsed = self.to_parser()
+        out_dir = str(parsed.out_dir)
+        has_phenix = getattr(parsed, "eff_files", None) is not None
+
+        runner = AbismalRunner.attach(out_dir, has_phenix=has_phenix)
+        if runner is not None:
+            runner.log_widget.append_stdout(
+                f'[Reconnected to running process PID {runner._pid}]\n'
+            )
+            runner.resume()
+        else:
+            if os.path.exists(os.path.join(out_dir, 'history.csv')):
+                self.widget.children = (
+                    self.top_section,
+                    self.tab,
+                    self.run_button,
+                    widgets.HTML(
+                        '<span style="color:red;font-weight:bold;">'
+                        f'Output directory "{out_dir}" already contains results. '
+                        'Choose a different directory or remove the existing results.'
+                        '</span>'
+                    ),
+                )
+                return
+            args = self.to_args()
+            runner = AbismalRunner(
+                args, out_dir, has_phenix=has_phenix,
+                total_epochs=parsed.epochs,
+            )
+            runner.start()
+        self.widget.children = (self.top_section, self.tab, self.run_button, runner.to_widget())
+
+    def to_widget(self):
+        self.run_button = widgets.Button(
+            description="Run Abismal",
+            tooltip="Run Abismal merging",
+        )
+        self.run_button.on_click(self.run_abismal)
+        top_widgets = []
+        out_dir_widget = None
+        tab_widgets = {}
+        self._all_args = {}
+
+        for group in self.parser._action_groups:
+            for action in group._group_actions:
+                name = self.action_to_name(action)
+                if name in self.skipped_actions:
+                    continue
+                if name in self.custom_actions:
+                    widget = self.custom_actions[name](action)
+                else:
+                    widget = self.action_to_widget(action)
+                if widget is None:
+                    continue
+                self._all_args[action] = widget
+                if action.dest == 'out_dir':
+                    out_dir_widget = widget
+                elif action.required:
+                    top_widgets.append(widget)
+                else:
+                    group_name = group.title
+                    if group_name not in tab_widgets:
+                        tab_widgets[group_name] = []
+                    tab_widgets[group_name].append(widget)
+
+        if out_dir_widget is not None:
+            top_widgets.append(out_dir_widget)
+
+        _set_label_widths(top_widgets)
+        for group_widgets in tab_widgets.values():
+            _set_label_widths(group_widgets)
+
+        self.children = {k: widgets.VBox(v) for k, v in tab_widgets.items()}
+        self.tab = widgets.Tab(
+            children=list(self.children.values()),
+            titles=list(self.children.keys()),
+        )
+        self.top_section = widgets.VBox(top_widgets)
+        self.widget = widgets.VBox([self.top_section, self.tab, self.run_button])
+        return self.widget
+
+
+class ArgparseGUI(ArgparseGUIBase):
+    skipped_actions = [
+        "help",
+        "list_devices",
+        "run_eagerly",
+        "debug",
+        "embed",
+        "keras_verbosity",
+    ]
+
+    def action_to_widget(self, action, name=None):
+        if name is None:
+            name = self.action_to_name(action)
+        custom = (
+            {
+                "inputs": ColabReflectionFileSelector,
+                "eff_files": ColabPhenixFileSelector,
+            }
+            if _is_colab()
+            else {
+                "inputs": ReflectionFileSelector,
+                "eff_files": PhenixFileSelector,
+            }
+        )
+        if name in custom:
+            return custom[name](action, name=name)
+        return super().action_to_widget(action, name=name)
