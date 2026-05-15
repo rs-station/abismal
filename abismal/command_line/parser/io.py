@@ -2,14 +2,6 @@ title = "IO"
 description = "Arguments controlling file inputs and outputs."
 
 from multiprocessing import cpu_count
-class DetectCPUs():
-    def __call__(self):
-        nproc = cpu_count()
-        nproc = max(1, nproc - 1)
-        return nproc
-
-    def __str__(self):
-        return "Auto"
 
 args_and_kwargs=(
     (
@@ -28,7 +20,7 @@ args_and_kwargs=(
             "--num-cpus",
         ),{
         "help": "Number of CPUs to use for parsing CrystFEL .stream files with default 1.",
-        "default": DetectCPUs(),
+        "default": max(1, cpu_count() - 1),
         "type": int,
         }
     ),
