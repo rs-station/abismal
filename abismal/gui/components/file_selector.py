@@ -88,7 +88,15 @@ class ServerFileSelectorWidget(widgets.VBox):
         )
         self.add_button.on_click(self._on_add_clicked)
 
-        self.selected_files_label = widgets.HTML(value=self._format_selected())
+        self.selected_files_label = widgets.HTML(
+            value=self._format_selected(),
+            layout=widgets.Layout(
+                max_height='250px',
+                overflow_y='auto',
+                border='1px solid lightgray',
+                padding='4px',
+            ),
+        )
 
         self.clear_button = widgets.Button(
             description='Clear Selection',
