@@ -31,7 +31,7 @@ class ServerFileSelectorWidget(widgets.VBox):
                 self.browser_box,
                 self.nav_bar2,
                 self.add_button,
-                self.selected_files_label,
+                self.selected_files_box,
                 self.clear_button,
             ],
             **kwargs,
@@ -88,13 +88,16 @@ class ServerFileSelectorWidget(widgets.VBox):
         )
         self.add_button.on_click(self._on_add_clicked)
 
-        self.selected_files_label = widgets.HTML(
-            value=self._format_selected(),
+        self.selected_files_label = widgets.HTML(value=self._format_selected())
+        self.selected_files_box = widgets.Box(
+            [self.selected_files_label],
             layout=widgets.Layout(
                 max_height='250px',
                 overflow_y='auto',
                 border='1px solid lightgray',
                 padding='4px',
+                display='block',
+                width='100%',
             ),
         )
 
