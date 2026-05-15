@@ -96,6 +96,7 @@ def main(args=None):
     posterior_kwargs = {}
 
     batch_normalize = False
+    standardize_inputs = True
     if parser.prior_distribution in ["wilson", "empirical_wilson"]:
         if parser.parents is not None:
             from abismal.prior.structure_factor.wilson import MultiWilsonPrior
@@ -110,6 +111,7 @@ def main(args=None):
             if parser.prior_distribution == 'empirical_wilson':
                 prior = WilsonPrior.with_empirical_sigma(rac, train, standardize=False)
                 batch_normalize = True
+                standardize_inputs = False
             else:
                 prior = WilsonPrior(rac)
         else:
@@ -117,6 +119,7 @@ def main(args=None):
             if parser.prior_distribution == 'empirical_wilson':
                 prior = WilsonPrior.with_empirical_sigma(rac, train, standardize=False)
                 batch_normalize = True
+                standardize_inputs = False
             else:
                 prior = WilsonPrior(rac)
         loc_init = prior.flat_distribution().mean()
@@ -233,6 +236,7 @@ def main(args=None):
         kl_weight=parser.kl_weight,
         reindexing_ops=reindexing_ops,
         standardization_decay=parser.standardization_decay,
+        standardize=standardize_inputs,
     )
 
     if parser.learning_rate_final is not None:
