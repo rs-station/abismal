@@ -157,9 +157,15 @@ viewer_template = """<!doctype html>
 
 
 class UglyMolViewer():
-    def __init__(self, pdb_file=None, mtz_file=None, viewer_id=None):
+    def __init__(self, pdb_file=None, mtz_file=None, viewer_id=None,
+                 pdb_url=None, mtz_url=None):
+        # pdb_file/mtz_file are paths the kernel will open (rs.read_mtz);
+        # pdb_url/mtz_url are paths the browser will request under /files/.
+        # On JupyterLab where server root_dir != kernel cwd, these differ.
         self.pdb_file = pdb_file
         self.mtz_file = mtz_file
+        self.pdb_url = pdb_url if pdb_url is not None else pdb_file
+        self.mtz_url = mtz_url if mtz_url is not None else mtz_file
         self.viewer_id = viewer_id or str(uuid.uuid4())
 
     @property
@@ -180,8 +186,8 @@ class UglyMolViewer():
     @property
     def template_kwargs(self):
         return {
-            'mtz_file' : self.mtz_file,
-            'pdb_file' : self.pdb_file,
+            'mtz_file' : self.mtz_url,
+            'pdb_file' : self.pdb_url,
             'map_keys' : self.map_keys,
             'viewer_id': self.viewer_id,
         }

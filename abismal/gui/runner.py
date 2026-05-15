@@ -479,7 +479,9 @@ class AbismalRunner:
         try:
             from abismal.gui.components.uglymol import UglyMolViewer
             viewer = UglyMolViewer(
-                pdb_file=pdb_rel, mtz_file=mtz_rel, viewer_id=self._viewer_id
+                pdb_file=pdb_file, mtz_file=mtz_file,
+                pdb_url=pdb_rel, mtz_url=mtz_rel,
+                viewer_id=self._viewer_id,
             )
             map_keys = viewer.map_keys
         except Exception:
