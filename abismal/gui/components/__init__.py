@@ -1,2 +1,2 @@
 from .argparse_gui import ArgparseGUI
-from .uglymol import UglyMolViewer
+from .gemmimol import GemmiMolViewer

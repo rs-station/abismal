@@ -514,8 +514,8 @@ class AbismalRunner:
             pdb_rel, mtz_rel = pdb_file, mtz_file
 
         try:
-            from abismal.gui.components.uglymol import UglyMolViewer
-            viewer = UglyMolViewer(
+            from abismal.gui.components.gemmimol import GemmiMolViewer
+            viewer = GemmiMolViewer(
                 pdb_file=pdb_file, mtz_file=mtz_file,
                 pdb_url=pdb_rel, mtz_url=mtz_rel,
                 viewer_id=self._viewer_id,

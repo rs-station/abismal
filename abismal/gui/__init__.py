@@ -1,1 +1,1 @@
-from .components import ArgparseGUI, UglyMolViewer
+from .components import ArgparseGUI, GemmiMolViewer

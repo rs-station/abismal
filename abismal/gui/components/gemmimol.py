@@ -6,12 +6,12 @@ import reciprocalspaceship as rs
 viewer_template = """<!doctype html>
 <html lang="en">
 <head>
-  <title>UglyMol</title>
+  <title>GemmiMol</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, user-scalable=no">
   <style>
    * { margin: 0; padding: 0; box-sizing: border-box; }
-   html, body { 
+   html, body {
      width: 100%;
      height: 600px;
      overflow: hidden;
@@ -76,8 +76,8 @@ viewer_template = """<!doctype html>
     <div id="inset"></div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/uglymol@0.7.2/uglymol.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/mtz@0.1.0/mtz.min.js"></script> 
+  <script src="https://cdn.jsdelivr.net/npm/gemmimol@0.8.8/gemmimol.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gemmimol@0.8.8/vendor/wasm/gemmi.js"></script>
 
   <script>
     // Fix for macOS Command key detection
@@ -120,29 +120,29 @@ viewer_template = """<!doctype html>
         V.map_bags.splice(0, 1);
       }
       document.getElementById('hud').textContent = 'Loading PDB...';
-      V.load_pdb(msg.pdb_file, {stay: true});
+      V.load_model(msg.pdb_file, {stay: true});
       loadMtz(msg.mtz_file, msg.map_keys);
     });
 
     function loadMtz(mtzPath, mapKeys) {
       document.getElementById('hud').textContent = 'Loading MTZ...';
-      GemmiMtz().then(function(Module) {
-        UM.load_maps_from_mtz(Module, V, mtzPath, mapKeys);
+      Gemmi().then(function(Module) {
+        GM.load_maps_from_mtz(Module, V, mtzPath, mapKeys);
       });
     }
 
-    (function initUglyMol() {
-      if (typeof UM === 'undefined') {
-        setTimeout(initUglyMol, 100);
+    (function initGemmiMol() {
+      if (typeof GM === 'undefined') {
+        setTimeout(initGemmiMol, 100);
         return;
       }
       try {
-        V = new UM.Viewer({viewer: "viewer", hud: "hud", help: "help"});
+        V = new GM.Viewer({viewer: "viewer", hud: "hud", help: "help"});
         V.config.map_radius = 12;
         V.config.water_style = "cross";
         document.getElementById('hud').textContent = 'Loading PDB...';
-        V.load_pdb('$pdb_file');
-        if (typeof GemmiMtz === 'undefined') {
+        V.load_model('$pdb_file');
+        if (typeof Gemmi === 'undefined') {
           setTimeout(function() { loadMtz('$mtz_file', $map_keys); }, 500);
         } else {
           loadMtz('$mtz_file', $map_keys);
@@ -156,7 +156,7 @@ viewer_template = """<!doctype html>
 </html>"""
 
 
-class UglyMolViewer():
+class GemmiMolViewer():
     def __init__(self, pdb_file=None, mtz_file=None, viewer_id=None,
                  pdb_url=None, mtz_url=None):
         # pdb_file/mtz_file are paths the kernel will open (rs.read_mtz);
@@ -198,5 +198,4 @@ class UglyMolViewer():
 
     def display(self):
         return display(HTML(self.html, metadata={'isolated' : True}))
-
 
