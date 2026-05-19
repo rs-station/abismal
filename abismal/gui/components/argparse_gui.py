@@ -69,6 +69,10 @@ class Dropdown(widgets.HBox):
 class ArgparseGUIBase:
     custom_widgets = {}
     custom_actions = {}
+    # Container widget for the argparse-group panels. Tab is nicer UX but
+    # doesn't render on Colab under enable_custom_widget_manager(); subclasses
+    # can override to widgets.Accordion or similar.
+    group_container_cls = widgets.Tab
     skipped_actions = [
         "help",
         "list_devices",
@@ -306,15 +310,15 @@ class ArgparseGUIBase:
             _set_label_widths(group_widgets)
 
         self.children = {k: widgets.VBox(v) for k, v in tab_widgets.items()}
-        # Be robust across ipywidgets 7 (Colab default — no `titles=` kwarg)
-        # and ipywidgets 8 (Colab w/ enable_custom_widget_manager() — needs
-        # `titles=` for the Tab to render its children properly).
+        # Be robust across ipywidgets 7 (no `titles=` kwarg) and 8.
         tab_children = list(self.children.values())
         tab_titles = list(self.children.keys())
         try:
-            self.tab = widgets.Tab(children=tab_children, titles=tab_titles)
+            self.tab = self.group_container_cls(
+                children=tab_children, titles=tab_titles,
+            )
         except TypeError:
-            self.tab = widgets.Tab(children=tab_children)
+            self.tab = self.group_container_cls(children=tab_children)
         for i, title in enumerate(tab_titles):
             self.tab.set_title(i, title)
         self.top_section = widgets.VBox(top_widgets)
@@ -336,6 +340,9 @@ class ColabArgparseGUI(ArgparseGUIBase):
         "inputs": ColabReflectionFileSelector,
         "eff_files": ColabPhenixFileSelector,
     }
+    # Tab fails to render under Colab's custom widget manager; Accordion is
+    # the reliable fallback for grouped panels.
+    group_container_cls = widgets.Accordion
 
 
 ArgparseGUI = ColabArgparseGUI if _is_colab() else JupyterArgparseGUI
