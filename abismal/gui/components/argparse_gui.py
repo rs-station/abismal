@@ -256,9 +256,20 @@ class ArgparseGUIBase:
         self._run_output = widgets.Output()
 
         def _on_run_click(button):
+            # Sentinel: prove click delivery independent of widget rendering.
+            # On Colab, `tail -f /tmp/abismal_click.log` from a terminal will
+            # show whether the kernel is receiving on_click events at all.
+            import datetime, traceback
+            with open('/tmp/abismal_click.log', 'a') as _f:
+                _f.write(f'{datetime.datetime.now().isoformat()} click\n')
             self._run_output.clear_output()
             with self._run_output:
-                self.run_abismal(button)
+                try:
+                    self.run_abismal(button)
+                except Exception:
+                    traceback.print_exc()
+                    with open('/tmp/abismal_click.log', 'a') as _f:
+                        _f.write(traceback.format_exc())
         self.run_button.on_click(_on_run_click)
         top_widgets = []
         out_dir_widget = None
