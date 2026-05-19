@@ -14,6 +14,8 @@ from IPython.display import clear_output, display
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from abismal.gui.components.file_selector import _is_colab
+
 
 def _jupyter_server_root_dir(file_path):
     """Return the JupyterLab server root_dir that directly contains file_path,
@@ -200,6 +202,17 @@ class AbismalRunner:
             self.viewer_label = None
             self._js_widget = None
 
+        # Colab: kernel→frontend sync of widget traits from background threads
+        # is broken. We work around it by having a JS interval call back into
+        # the kernel, and using each invocation (which runs in event-loop
+        # context) to force-resync the widget state to the frontend.
+        self._monitoring_active = True
+        self._colab_poll_widget = widgets.Output(
+            layout=widgets.Layout(height='0px', overflow='hidden'),
+        )
+        if _is_colab():
+            self._setup_colab_polling()
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -292,6 +305,7 @@ class AbismalRunner:
             widgets.HTML("<b>Log Output</b>"),
             self.log_box,
             self._log_js_widget,
+            self._colab_poll_widget,
         ]
         return widgets.VBox(sections)
 
@@ -379,9 +393,71 @@ class AbismalRunner:
         },)
 
     def _begin_monitoring(self):
+        self._monitoring_active = True
         self._tailer_thread = threading.Thread(target=self._tail, daemon=True)
         self._tailer_thread.start()
         self._schedule_poll()
+
+    def _setup_colab_polling(self):
+        """Register a Colab kernel callback and inject JS to drive periodic
+        state sync. Each callback invocation runs in event-loop context, so
+        the widget.send_state calls actually push to the frontend."""
+        try:
+            from google.colab import output as _colab_output
+        except ImportError:
+            return
+
+        poll_id = f'abismal_runner_poll_{id(self)}'
+
+        def _poll_callback():
+            try:
+                widgets_and_traits = [
+                    (self.log_widget, ['value']),
+                    (self.progress_widget, ['value', 'max', 'bar_style']),
+                    (self.progress_label, ['value']),
+                    (self.stop_button, ['disabled']),
+                    (self.history_widget, ['outputs']),
+                ]
+                if self.has_phenix:
+                    widgets_and_traits += [
+                        (self.viewer_label, ['value']),
+                        (self.viewer_widget, ['outputs']),
+                        (self._js_widget, ['outputs']),
+                    ]
+                for w, traits in widgets_and_traits:
+                    try:
+                        w.send_state(traits)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            return self._monitoring_active
+
+        _colab_output.register_callback(poll_id, _poll_callback)
+
+        from string import Template
+        js = Template("""
+        (function() {
+          var iv = setInterval(async function() {
+            try {
+              var r = await google.colab.kernel.invokeFunction(
+                  '$POLL_ID', [], {});
+              if (r && r.data && r.data['application/json'] === false) {
+                try {
+                  await google.colab.kernel.invokeFunction(
+                      '$POLL_ID', [], {});
+                } catch (e) {}
+                clearInterval(iv);
+              }
+            } catch (e) { clearInterval(iv); }
+          }, 1000);
+        })();
+        """).substitute(POLL_ID=poll_id)
+        self._colab_poll_widget.outputs = ({
+            'output_type': 'display_data',
+            'data': {'application/javascript': js},
+            'metadata': {},
+        },)
 
     def _update_progress(self, cur, total):
         def apply():
@@ -448,6 +524,10 @@ class AbismalRunner:
             threading.Thread(
                 target=self._post_training_phenix_watcher, daemon=True
             ).start()
+        else:
+            # No phenix watcher → monitoring is done; tell the Colab poll
+            # loop it can stop after one final sync.
+            self._monitoring_active = False
 
     def _schedule_poll(self):
         if not self.is_running:
