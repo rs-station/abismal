@@ -69,7 +69,14 @@ class Dropdown(widgets.HBox):
 class ArgparseGUIBase:
     custom_widgets = {}
     custom_actions = {}
-    skipped_actions = []
+    skipped_actions = [
+        "help",
+        "list_devices",
+        "run_eagerly",
+        "debug",
+        "embed",
+        "keras_verbosity",
+    ]
 
     def __init__(self, parser=None):
         self.parser = parser if parser is not None else abismal_parser
@@ -285,30 +292,18 @@ class ArgparseGUIBase:
         return self.widget
 
 
-class ArgparseGUI(ArgparseGUIBase):
-    skipped_actions = [
-        "help",
-        "list_devices",
-        "run_eagerly",
-        "debug",
-        "embed",
-        "keras_verbosity",
-    ]
+class JupyterArgparseGUI(ArgparseGUIBase):
+    custom_widgets = {
+        "inputs": ReflectionFileSelector,
+        "eff_files": PhenixFileSelector,
+    }
 
-    def action_to_widget(self, action, name=None):
-        if name is None:
-            name = self.action_to_name(action)
-        custom = (
-            {
-                "inputs": ColabReflectionFileSelector,
-                "eff_files": ColabPhenixFileSelector,
-            }
-            if _is_colab()
-            else {
-                "inputs": ReflectionFileSelector,
-                "eff_files": PhenixFileSelector,
-            }
-        )
-        if name in custom:
-            return custom[name](action, name=name)
-        return super().action_to_widget(action, name=name)
+
+class ColabArgparseGUI(ArgparseGUIBase):
+    custom_widgets = {
+        "inputs": ColabReflectionFileSelector,
+        "eff_files": ColabPhenixFileSelector,
+    }
+
+
+ArgparseGUI = ColabArgparseGUI if _is_colab() else JupyterArgparseGUI
