@@ -306,10 +306,16 @@ class ArgparseGUIBase:
             _set_label_widths(group_widgets)
 
         self.children = {k: widgets.VBox(v) for k, v in tab_widgets.items()}
-        self.tab = widgets.Tab(children=list(self.children.values()))
-        # set_title works in both ipywidgets 7 (Colab default) and 8; the
-        # `titles=` kwarg is ipywidgets 8 only and is silently dropped on 7.
-        for i, title in enumerate(self.children.keys()):
+        # Be robust across ipywidgets 7 (Colab default — no `titles=` kwarg)
+        # and ipywidgets 8 (Colab w/ enable_custom_widget_manager() — needs
+        # `titles=` for the Tab to render its children properly).
+        tab_children = list(self.children.values())
+        tab_titles = list(self.children.keys())
+        try:
+            self.tab = widgets.Tab(children=tab_children, titles=tab_titles)
+        except TypeError:
+            self.tab = widgets.Tab(children=tab_children)
+        for i, title in enumerate(tab_titles):
             self.tab.set_title(i, title)
         self.top_section = widgets.VBox(top_widgets)
         self.widget = widgets.VBox([
