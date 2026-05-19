@@ -69,10 +69,6 @@ class Dropdown(widgets.HBox):
 class ArgparseGUIBase:
     custom_widgets = {}
     custom_actions = {}
-    # Container widget for the argparse-group panels. Tab is nicer UX but
-    # doesn't render on Colab under enable_custom_widget_manager(); subclasses
-    # can override to widgets.Accordion or similar.
-    group_container_cls = widgets.Tab
     skipped_actions = [
         "help",
         "list_devices",
@@ -81,6 +77,21 @@ class ArgparseGUIBase:
         "embed",
         "keras_verbosity",
     ]
+
+    def _make_group_container(self, named_children):
+        """Build the widget that holds the per-group panels. Defaults to a
+        Tab — subclasses can override (e.g., Colab uses a flat VBox because
+        Tab/Accordion don't render under its custom widget manager + legacy
+        ipywidgets bundle)."""
+        children = list(named_children.values())
+        titles = list(named_children.keys())
+        try:
+            container = widgets.Tab(children=children, titles=titles)
+        except TypeError:
+            container = widgets.Tab(children=children)
+        for i, title in enumerate(titles):
+            container.set_title(i, title)
+        return container
 
     def __init__(self, parser=None):
         self.parser = parser if parser is not None else abismal_parser
@@ -310,17 +321,7 @@ class ArgparseGUIBase:
             _set_label_widths(group_widgets)
 
         self.children = {k: widgets.VBox(v) for k, v in tab_widgets.items()}
-        # Be robust across ipywidgets 7 (no `titles=` kwarg) and 8.
-        tab_children = list(self.children.values())
-        tab_titles = list(self.children.keys())
-        try:
-            self.tab = self.group_container_cls(
-                children=tab_children, titles=tab_titles,
-            )
-        except TypeError:
-            self.tab = self.group_container_cls(children=tab_children)
-        for i, title in enumerate(tab_titles):
-            self.tab.set_title(i, title)
+        self.tab = self._make_group_container(self.children)
         self.top_section = widgets.VBox(top_widgets)
         self.widget = widgets.VBox([
             self.top_section, self.tab, self.run_button, self._run_output,
@@ -340,9 +341,19 @@ class ColabArgparseGUI(ArgparseGUIBase):
         "inputs": ColabReflectionFileSelector,
         "eff_files": ColabPhenixFileSelector,
     }
-    # Tab fails to render under Colab's custom widget manager; Accordion is
-    # the reliable fallback for grouped panels.
-    group_container_cls = widgets.Accordion
+
+    def _make_group_container(self, named_children):
+        # ipywidgets 7.7.1 + Colab's custom widget manager don't render Tab
+        # or Accordion. Fall back to a flat VBox with HTML section headers —
+        # uses only stable widget types.
+        sections = []
+        for name, child in named_children.items():
+            sections.append(widgets.HTML(
+                f'<h4 style="margin:12px 0 4px;color:#333;'
+                f'border-bottom:1px solid #ccc">{name}</h4>'
+            ))
+            sections.append(child)
+        return widgets.VBox(sections)
 
 
 ArgparseGUI = ColabArgparseGUI if _is_colab() else JupyterArgparseGUI
