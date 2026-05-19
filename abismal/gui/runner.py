@@ -208,12 +208,18 @@ class AbismalRunner:
         """Launch a fresh abismal subprocess."""
         os.makedirs(self.out_dir, exist_ok=True)
         cmd = ['abismal', *self.args, '--keras-verbosity', '2']
+        # Force unbuffered stdout/stderr in the child so console.log fills in
+        # real time — without this the tail thread sees nothing until the
+        # child's block buffer flushes (often only on exit).
+        env = os.environ.copy()
+        env['PYTHONUNBUFFERED'] = '1'
         fout = open(self.console_log, 'w')
         self._process = subprocess.Popen(
             cmd,
             stdout=fout,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            env=env,
         )
         fout.close()
         self._pid = self._process.pid
@@ -310,9 +316,29 @@ class AbismalRunner:
             + '</pre>'
         )
 
+    def _run_on_main_thread(self, fn):
+        """Schedule a widget mutation on the kernel's main event loop. On
+        Colab, comm messages from background threads don't reliably sync to
+        the frontend, so widget trait changes have to be marshaled onto the
+        io_loop. On Jupyter this is a no-op-equivalent (still runs fn)."""
+        try:
+            from IPython import get_ipython
+            ip = get_ipython()
+            if ip is not None:
+                kernel = getattr(ip, 'kernel', None)
+                if kernel is not None and hasattr(kernel, 'io_loop'):
+                    kernel.io_loop.add_callback(fn)
+                    return
+        except Exception:
+            pass
+        fn()
+
     def _append_log(self, line):
         self._log_text += line
-        self.log_widget.value = self._render_log_html()
+        html_val = self._render_log_html()
+        self._run_on_main_thread(
+            lambda: setattr(self.log_widget, 'value', html_val)
+        )
 
     def _init_log_autoscroll_js(self):
         js = """
@@ -357,6 +383,13 @@ class AbismalRunner:
         self._tailer_thread.start()
         self._schedule_poll()
 
+    def _update_progress(self, cur, total):
+        def apply():
+            self.progress_widget.max = total
+            self.progress_widget.value = cur - 1
+            self.progress_label.value = f'Epoch {cur} / {total}'
+        self._run_on_main_thread(apply)
+
     def _tail(self):
         """Stream console.log into log_widget and drive the progress bar."""
         epoch_re = re.compile(r'Epoch (\d+)/(\d+)')
@@ -367,10 +400,7 @@ class AbismalRunner:
                     self._append_log(line)
                     m = epoch_re.match(line)
                     if m:
-                        cur, total = int(m.group(1)), int(m.group(2))
-                        self.progress_widget.max = total
-                        self.progress_widget.value = cur - 1
-                        self.progress_label.value = f'Epoch {cur} / {total}'
+                        self._update_progress(int(m.group(1)), int(m.group(2)))
                 elif self.is_running:
                     time.sleep(0.5)
                 else:
@@ -379,26 +409,33 @@ class AbismalRunner:
                         self._append_log(line)
                         m = epoch_re.match(line)
                         if m:
-                            cur, total = int(m.group(1)), int(m.group(2))
-                            self.progress_widget.max = total
-                            self.progress_widget.value = cur - 1
-                            self.progress_label.value = f'Epoch {cur} / {total}'
+                            self._update_progress(
+                                int(m.group(1)), int(m.group(2))
+                            )
                     break
 
-        self.stop_button.disabled = True
+        self._run_on_main_thread(
+            lambda: setattr(self.stop_button, 'disabled', True)
+        )
 
         if self._process is not None:
             rc = self._process.wait()
             if rc == 0:
-                self.progress_widget.value = self.progress_widget.max
-                self.progress_widget.bar_style = 'success'
-                self.progress_label.value = 'Finished'
+                def finish_ok():
+                    self.progress_widget.value = self.progress_widget.max
+                    self.progress_widget.bar_style = 'success'
+                    self.progress_label.value = 'Finished'
+                self._run_on_main_thread(finish_ok)
             else:
-                self.progress_widget.bar_style = 'danger'
-                self.progress_label.value = f'Failed (exit {rc})'
+                def finish_fail(rc=rc):
+                    self.progress_widget.bar_style = 'danger'
+                    self.progress_label.value = f'Failed (exit {rc})'
+                self._run_on_main_thread(finish_fail)
         else:
-            self.progress_widget.bar_style = ''
-            self.progress_label.value = 'Process exited (check abismal.log)'
+            def finish_unknown():
+                self.progress_widget.bar_style = ''
+                self.progress_label.value = 'Process exited (check abismal.log)'
+            self._run_on_main_thread(finish_unknown)
 
         try:
             os.remove(self.pid_file)
@@ -471,11 +508,14 @@ class AbismalRunner:
         buf = io.BytesIO()
         fig.savefig(buf, format='png', bbox_inches='tight')
         png_b64 = base64.b64encode(buf.getvalue()).decode('ascii')
-        self.history_widget.outputs = ({
+        new_outputs = ({
             'output_type': 'display_data',
             'data': {'image/png': png_b64},
             'metadata': {},
         },)
+        self._run_on_main_thread(
+            lambda: setattr(self.history_widget, 'outputs', new_outputs)
+        )
 
     def _find_latest_phenix_results(self, asu_id=0):
         pattern = str(Path(self.out_dir) / f"eff_*_asu_{asu_id}_epoch_*")
