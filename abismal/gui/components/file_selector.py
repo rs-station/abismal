@@ -214,45 +214,69 @@ class PhenixFileSelector(ServerFileSelectorWidget):
 
 
 class ColabFileSelectorWidget(widgets.VBox):
-    """File selector for Google Colab using ipywidgets.FileUpload."""
+    """File selector for Google Colab using google.colab.files.upload().
+
+    The ipywidgets.FileUpload widget hangs the Colab frontend on file select
+    (base64-encoded file content sent synchronously over the comm channel).
+    google.colab.files.upload() uses Colab's native upload mechanism instead
+    and is reliable.
+    """
 
     header_string = "Select Files"
-    accepted_extensions = ""
+    accepted_extensions = ""  # unused; kept for compatibility with subclasses
     upload_dir = "/tmp/abismal_uploads"
 
     def __init__(self, *args, **kwargs):
         self._saved_paths = []
         self._header = widgets.HTML(f"<h3>{self.header_string}</h3>")
-        self._upload_widget = widgets.FileUpload(
-            accept=self.accepted_extensions,
-            multiple=True,
+        self._upload_button = widgets.Button(
+            description="Upload Files",
+            button_style="primary",
+            icon="upload",
         )
+        self._upload_button.on_click(self._on_upload_click)
+        self._clear_button = widgets.Button(
+            description="Clear",
+            button_style="warning",
+            icon="times",
+        )
+        self._clear_button.on_click(self._on_clear_click)
+        self._button_row = widgets.HBox([self._upload_button, self._clear_button])
         self._files_label = widgets.HTML("<p><i>No files uploaded</i></p>")
-        self._upload_widget.observe(self._on_upload, names="value")
+        self._upload_output = widgets.Output()
         super().__init__(
-            children=[self._header, self._upload_widget, self._files_label],
+            children=[
+                self._header, self._button_row,
+                self._upload_output, self._files_label,
+            ],
             **kwargs,
         )
 
-    def _on_upload(self, change):
+    def _on_upload_click(self, _):
+        from google.colab import files
         os.makedirs(self.upload_dir, exist_ok=True)
-        self._saved_paths = []
-        val = self._upload_widget.value
-        # ipywidgets 7: dict of {filename: {'content': bytes, ...}}
-        # ipywidgets 8: tuple of {'name': str, 'content': bytes, ...}
-        if isinstance(val, dict):
-            items = [(name, info["content"]) for name, info in val.items()]
-        else:
-            items = [(f["name"], f["content"]) for f in val]
-        for name, content in items:
+        self._upload_output.clear_output()
+        with self._upload_output:
+            uploaded = files.upload()  # dict of {filename: bytes}
+        for name, content in uploaded.items():
             path = os.path.join(self.upload_dir, name)
             with open(path, "wb") as f:
                 f.write(content)
-            self._saved_paths.append(path)
+            if path not in self._saved_paths:
+                self._saved_paths.append(path)
+        self._update_label()
+
+    def _on_clear_click(self, _):
+        self._saved_paths = []
+        self._upload_output.clear_output()
+        self._update_label()
+
+    def _update_label(self):
         if self._saved_paths:
-            html = "<p><b>Uploaded:</b></p><ul>" + "".join(
+            items = "".join(
                 f"<li><code>{p}</code></li>" for p in self._saved_paths
-            ) + "</ul>"
+            )
+            html = f"<p><b>Uploaded:</b></p><ul>{items}</ul>"
         else:
             html = "<p><i>No files uploaded</i></p>"
         self._files_label.value = html
