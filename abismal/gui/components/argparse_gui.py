@@ -168,7 +168,8 @@ class ArgparseGUIBase:
             )
             runner.resume()
             self.widget.children = (
-                self.top_section, self.tab, self.run_button, runner.to_widget(),
+                self.top_section, self.tab, self.run_button,
+                self._run_output, runner.to_widget(),
             )
             return
 
@@ -189,7 +190,8 @@ class ArgparseGUIBase:
         )
         runner.start()
         self.widget.children = (
-            self.top_section, self.tab, self.run_button, runner.to_widget(),
+            self.top_section, self.tab, self.run_button,
+            self._run_output, runner.to_widget(),
         )
 
     def _show_overwrite_confirm(self, out_dir, existing, parsed, has_phenix):
@@ -228,7 +230,9 @@ class ArgparseGUIBase:
         button_row = widgets.HBox([overwrite_btn, cancel_btn])
         confirm_box = widgets.VBox([warning, file_list_box, button_row])
 
-        normal_children = (self.top_section, self.tab, self.run_button)
+        normal_children = (
+            self.top_section, self.tab, self.run_button, self._run_output,
+        )
 
         def _on_overwrite(_):
             cleanup_abismal_outputs(out_dir)
@@ -247,7 +251,15 @@ class ArgparseGUIBase:
             description="Run Abismal",
             tooltip="Run Abismal merging",
         )
-        self.run_button.on_click(self.run_abismal)
+        # Capture exceptions from the click handler — on Colab they otherwise
+        # go nowhere and the click silently does nothing.
+        self._run_output = widgets.Output()
+
+        def _on_run_click(button):
+            self._run_output.clear_output()
+            with self._run_output:
+                self.run_abismal(button)
+        self.run_button.on_click(_on_run_click)
         top_widgets = []
         out_dir_widget = None
         tab_widgets = {}
@@ -283,12 +295,15 @@ class ArgparseGUIBase:
             _set_label_widths(group_widgets)
 
         self.children = {k: widgets.VBox(v) for k, v in tab_widgets.items()}
-        self.tab = widgets.Tab(
-            children=list(self.children.values()),
-            titles=list(self.children.keys()),
-        )
+        self.tab = widgets.Tab(children=list(self.children.values()))
+        # set_title works in both ipywidgets 7 (Colab default) and 8; the
+        # `titles=` kwarg is ipywidgets 8 only and is silently dropped on 7.
+        for i, title in enumerate(self.children.keys()):
+            self.tab.set_title(i, title)
         self.top_section = widgets.VBox(top_widgets)
-        self.widget = widgets.VBox([self.top_section, self.tab, self.run_button])
+        self.widget = widgets.VBox([
+            self.top_section, self.tab, self.run_button, self._run_output,
+        ])
         return self.widget
 
 
