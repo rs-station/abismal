@@ -4,7 +4,6 @@ from ipywidgets import widgets
 from abismal.gui.components.file_selector import (
     ReflectionFileSelector,
     PhenixFileSelector,
-    _is_colab,
 )
 
 
@@ -324,26 +323,8 @@ class ArgparseGUIBase:
         return self.widget
 
 
-class JupyterArgparseGUI(ArgparseGUIBase):
+class ArgparseGUI(ArgparseGUIBase):
     custom_widgets = {
         "inputs": ReflectionFileSelector,
         "eff_files": PhenixFileSelector,
     }
-
-
-class ColabArgparseGUI(JupyterArgparseGUI):
-    def _make_group_container(self, named_children):
-        # ipywidgets 7.7.1 + Colab's custom widget manager don't render Tab
-        # or Accordion. Fall back to a flat VBox with HTML section headers —
-        # uses only stable widget types.
-        sections = []
-        for name, child in named_children.items():
-            sections.append(widgets.HTML(
-                f'<h4 style="margin:12px 0 4px;color:#333;'
-                f'border-bottom:1px solid #ccc">{name}</h4>'
-            ))
-            sections.append(child)
-        return widgets.VBox(sections)
-
-
-ArgparseGUI = ColabArgparseGUI if _is_colab() else JupyterArgparseGUI
