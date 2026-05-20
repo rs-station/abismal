@@ -76,19 +76,32 @@ class ArgparseGUIBase:
     ]
 
     def _make_group_container(self, named_children):
-        """Build the widget that holds the per-group panels. Defaults to a
-        Tab — subclasses can override (e.g., Colab uses a flat VBox because
-        Tab/Accordion don't render under its custom widget manager + legacy
-        ipywidgets bundle)."""
-        children = list(named_children.values())
+        """Build a tabbed container for the per-group panels.
+
+        Implemented as a row of buttons that toggle each panel's visibility
+        rather than widgets.Tab/Accordion, which don't render under Colab's
+        custom widget manager + legacy ipywidgets bundle. Buttons and Box
+        visibility toggling work on both Colab and JupyterLab.
+        """
         titles = list(named_children.keys())
-        try:
-            container = widgets.Tab(children=children, titles=titles)
-        except TypeError:
-            container = widgets.Tab(children=children)
+        panels = list(named_children.values())
+        buttons = []
+
+        def select(idx):
+            for i, panel in enumerate(panels):
+                panel.layout.display = '' if i == idx else 'none'
+            for i, btn in enumerate(buttons):
+                btn.button_style = 'primary' if i == idx else ''
+
         for i, title in enumerate(titles):
-            container.set_title(i, title)
-        return container
+            btn = widgets.Button(description=title)
+            btn.on_click(lambda _b, idx=i: select(idx))
+            buttons.append(btn)
+
+        tab_bar = widgets.HBox(buttons)
+        content = widgets.VBox(panels)
+        select(0)
+        return widgets.VBox([tab_bar, content])
 
     def __init__(self, parser=None):
         self.parser = parser if parser is not None else abismal_parser
