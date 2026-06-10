@@ -161,6 +161,11 @@ class StillsLoader(DataLoader):
         xy = s1 #actually xyz
         batch = table['id'].as_numpy_array()
         idx = ~spacegroup.operations().systematic_absences(np.array(h, dtype='int32'))
+        bg = np.concatenate((
+                np.array(table['background.sum.value'], dtype='float32')[:,None],
+                np.sqrt(np.array(table['background.sum.variance'], dtype='float32'))[:,None],
+            ), axis=-1,
+        )
 
         I  = np.array(table['intensity.sum.value'], dtype='float32')
         SigI  = np.array(np.sqrt(table['intensity.sum.variance']), dtype='float32')
@@ -187,10 +192,14 @@ class StillsLoader(DataLoader):
         batch = batch[idx]
         I = I[idx, None]
         SigI = SigI[idx, None]
+        bg = bg[idx]
+
+        metadata = [xy, bg, hkl]
         if include_eo:
-            metadata = np.concatenate((delpsical, xy, dQ), axis=-1)
-        else:
-            metadata = xy
+            metadata.extend([
+                delpsical, dQ,
+            ])
+        metadata = np.concatenate(metadata, axis=-1)
 
         batch = np.unique(batch, return_inverse=True)[1].astype(batch.dtype)
         hkl = tf.RaggedTensor.from_value_rowids(hkl, batch)

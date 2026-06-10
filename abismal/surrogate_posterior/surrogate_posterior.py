@@ -8,6 +8,21 @@ from tensorflow_probability import bijectors as tfb
 import tf_keras as tfk
 
 class PosteriorBase(tfk.models.Model):
+    anomalous_keys = [
+        'F(+)',
+        'SIGF(+)',
+        'F(-)',
+        'SIGF(-)',
+        # There's a bug with anomalous E-values
+        #'E(+)', 
+        #'SIGE(+)',
+        #'E(-)',
+        #'SIGE(-)',
+        'I(+)',
+        'SIGI(+)',
+        'I(-)',
+        'SIGI(-)',
+    ]
     def __init__(self, rac, epsilon=1e-12, independent=True, **kwargs):
         """
         rac : ReciprocalASUCollection
@@ -101,6 +116,12 @@ class PosteriorBase(tfk.models.Model):
         """
         raise NotImplementedError(msg)
 
+    def get_flat_extras(self):
+        """
+        Optionally return a dictionary of additional columns. 
+        """
+        return {}
+
     def to_datasets(self, seen=True):
         h,k,l = self.rac.Hunique.numpy().T
         q = self.flat_distribution()
@@ -140,6 +161,8 @@ class PosteriorBase(tfk.models.Model):
         if not (has_fsigf or has_isigi):
             raise NotImplementedError
 
+        extras = self.get_flat_extras()
+        data.update(extras)
 
         asu_id = self.rac.asu_id
         for i,rasu in enumerate(self.rac):
@@ -157,27 +180,11 @@ class PosteriorBase(tfk.models.Model):
             out = out.set_index(['H', 'K', 'L'])
             if rasu.anomalous:
                 out = out.unstack_anomalous()
-                keys = []
-                if has_fsigf:
-                    keys += [
-                        'F(+)',
-                        'SIGF(+)',
-                        'F(-)',
-                        'SIGF(-)',
-                        # There's a bug with anomalous E-values
-                        #'E(+)', 
-                        #'SIGE(+)',
-                        #'E(-)',
-                        #'SIGE(-)',
-                    ]
-                if has_isigi:
-                    keys += [
-                        'I(+)',
-                        'SIGI(+)',
-                        'I(-)',
-                        'SIGI(-)',
-                    ]
-                out = out[keys]
+                keys = self.anomalous_keys.copy()
+                for k in extras:
+                    keys.append(f'{k}(+)')
+                    keys.append(f'{k}(-)')
+                out = out[[k for k in keys if k in out]]
             yield out
 
 class StructureFactorPosteriorBase(PosteriorBase):

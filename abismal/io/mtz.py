@@ -72,6 +72,7 @@ class MTZLoader(DataLoader):
 
 
         ds.compute_dHKL(True).label_absences(True)
+        ds['Hobs'], ds['Kobs'], ds['Lobs'] = ds.get_hkls().T
         ds = ds[~ds.ABSENT]
         if self.dmin is not None:
             ds = ds[ds.dHKL >= self.dmin]

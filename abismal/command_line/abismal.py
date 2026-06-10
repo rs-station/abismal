@@ -109,17 +109,13 @@ def main(args=None):
         elif parser.posterior_type == "intensity":
             from abismal.prior.intensity.wilson import WilsonPrior
             if parser.prior_distribution == 'empirical_wilson':
-                prior = WilsonPrior.with_empirical_sigma(rac, train, standardize=False)
-                batch_normalize = True
-                standardize_inputs = False
+                prior = WilsonPrior.with_empirical_sigma(rac, train, standardize=standardize_inputs)
             else:
                 prior = WilsonPrior(rac)
         else:
             from abismal.prior.structure_factor.wilson import WilsonPrior
             if parser.prior_distribution == 'empirical_wilson':
-                prior = WilsonPrior.with_empirical_sigma(rac, train, standardize=False)
-                batch_normalize = True
-                standardize_inputs = False
+                prior = WilsonPrior.with_empirical_sigma(rac, train, standardize=standardize_inputs)
             else:
                 prior = WilsonPrior(rac)
         loc_init = prior.flat_distribution().mean()
@@ -220,6 +216,7 @@ def main(args=None):
         ff_scale_factor_exponent=parser.ff_scale_exp,
         dropout=parser.dropout,
         batch_normalize=batch_normalize,
+        share_weights=True,
     )
 
     if parser.studentt_dof is not None:

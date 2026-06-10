@@ -56,10 +56,8 @@ class MultivariateNormalPosteriorBase(object):
     """
     A base class for creating low-rank multivariate normal posteriors. 
     """
-
     def __init__(self, rac, rank, loc_init=None, independent=False, scale_init=None, epsilon=1e-12, **kwargs):
         super().__init__(rac, epsilon=epsilon, independent=independent, **kwargs)
-
         if loc_init is None:
             loc_init = tf.ones(rac.asu_size)
         if scale_init is None:
@@ -112,4 +110,5 @@ class MultivariateNormalPosteriorBase(object):
     def flat_distribution(self):
         q = self._distribution(self.loc, self.scale, self.scale_update)
         return q
+
 

@@ -101,4 +101,13 @@ args_and_kwargs=(
         }
     ),
 
+    (
+        (
+            "--mtz-metadata",
+        ),{
+            "type": str,
+            "default" : "XDET,YDET,ROT",
+            "help": 'Comma-separated list of metadata keys for mtz files. ',
+        }
+    ),
 )

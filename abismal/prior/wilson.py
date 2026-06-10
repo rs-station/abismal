@@ -27,9 +27,9 @@ class WilsonPriorBase(PriorBase):
         self.built = True #This is always true
 
     @classmethod
-    def with_empirical_sigma(cls, rac, dataset, bins=20, maxiter=100, isigi_cutoff=0.0, standardize=True, interpolate=True, **kwargs):
+    def with_empirical_sigma(cls, rac, dataset, bins=20, maxiter=100, isigi_cutoff=0.0, standardize=True, interpolate=True, use_weights=False, **kwargs):
         from reciprocalspaceship.utils import bin_by_percentile
-        labels,edges = bin_by_percentile(rac.dHKL, ascending=False)
+        labels,edges = bin_by_percentile(rac.dHKL, bins=bins, ascending=False)
         mean = tf.zeros(bins)
         size = tf.zeros(bins)
         from tqdm import tqdm
@@ -48,18 +48,34 @@ class WilsonPriorBase(PriorBase):
             ) = batch
             idx = rac.gather(labels, asu_id, hkl_in).flat_values
             I = tf.squeeze(iobs.flat_values, axis=-1)
+            SIGI = tf.squeeze(sigiobs.flat_values, axis=-1)
 
             if isigi_cutoff is not None:
-                SIGI = tf.squeeze(sigiobs.flat_values, axis=-1)
                 mask = tf.cast(I / SIGI > isigi_cutoff, 'float32')
             else:
-                mask = tf.one_like(I)
+                mask = tf.ones_like(I)
 
-            batch_size = tf.scatter_nd(idx[:,None], mask, (20,))
-            batch_mean = tf.scatter_nd(idx[:,None], I, (20,)) / batch_size
+            # Inverse-variance weight per observation; masked observations get zero weight.
+            if use_weights:
+                w = mask / tf.square(SIGI)
+            else:
+                w = tf.ones_like(SIGI)
+
+            # `size` now accumulates summed weights rather than counts. The batched
+            # Welford combine rule mean += (W_b / W) * (mean_b - mean) holds for
+            # weighted means when W is the running sum of weights.
+            batch_size = tf.scatter_nd(idx[:,None], w, (bins,))
+            # divide_no_nan guards bins with zero summed weight in this batch
+            # (e.g. a resolution shell absent from the batch, or fully masked
+            # by the I/sigI cutoff). Such a bin gets batch_mean=0 and an update
+            # weight of 0, leaving the running mean untouched instead of
+            # poisoning it with NaN (0/0 -> NaN, then 0 * NaN -> NaN).
+            batch_mean = tf.math.divide_no_nan(
+                tf.scatter_nd(idx[:,None], w * I, (bins,)), batch_size
+            )
 
             size = size + batch_size
-            mean = mean + (batch_size / size) * (batch_mean - mean)
+            mean = mean + tf.math.divide_no_nan(batch_size, size) * (batch_mean - mean)
 
         if standardize:
             k = tf.math.reduce_sum(

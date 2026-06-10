@@ -120,7 +120,7 @@ class VariationalMergingModel(tfk.models.Model):
         if mc_samples is None:
             mc_samples = self.mc_samples
 
-        #inputs = self.standardize_inputs(inputs, training=training)
+        inputs = self.standardize_inputs(inputs, training=training)
 
         (
             asu_id,

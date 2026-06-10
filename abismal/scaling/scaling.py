@@ -94,9 +94,15 @@ def normal_prior(loc=0., scale=1., bijector_function=None):
         scale = bijector_function(scale)
     return tfd.Normal(loc, scale)
 
+def cen_normal_prior(loc=0., scale=1., bijector_function=None):
+    if bijector_function is not None:
+        scale = bijector_function(scale)
+    return tfd.Normal(0.0, scale)
+
 def lognormal_prior(loc=0., scale=1., bijector_function=None):
     if bijector_function is not None:
         scale = bijector_function(scale)
+        #loc = bijector_function(loc)
     return tfd.LogNormal(loc, scale)
 
 def halfcauchy_prior(loc=0., scale=1., bijector_function=None):
@@ -146,10 +152,11 @@ class ImageScaler(tfk.models.Model):
         'cauchy' : cauchy_prior,
         'laplace' : laplace_prior,
         'normal' : normal_prior,
+        'cennormal' : cen_normal_prior,
         'halfnormal' : halfnormal_prior,
         'halfcauchy' : halfcauchy_prior,
-        'exponential' : exponential_prior,
-        'lognormal' : lognormal_prior,
+        'exponential' : exponential_prior, 
+        'lognormal' : lognormal_prior, 
         'foldednormal' : foldednormal_prior,
         'gamma' : gamma_prior,
     }
@@ -260,6 +267,7 @@ class ImageScaler(tfk.models.Model):
                 mlp_width, kernel_initializer=kernel_initializer, use_bias=input_bias) #Should use_bias?
 
         self.pool = Average(axis=-2, dropout=dropout)
+        #self.pool = ConvexCombination()
 
         if gated:
             from abismal.layers import GLUFeedForward as FeedForward
@@ -436,7 +444,7 @@ class ImageScaler(tfk.models.Model):
                 p_std = p.stddev()
                 self.add_metric(tf.reduce_mean(p_mean), 'pΣ_loc')
                 self.add_metric(tf.reduce_mean(p_std), 'pΣ_scale')
-                self.add_metric(tf.reduce_mean(p_mean / p_std), 'pΣ_width')
+                #self.add_metric(tf.reduce_mean(p_mean / p_std), 'pΣ_width')
             else:
                 p = self.prior_dict[self.prior_name]()
 

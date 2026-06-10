@@ -122,7 +122,10 @@ class StreamLoader(StreamLoaderBase):
             peak_list_columns = [
                 'H', 'K', 'L', 
                 'I', 'SigI', 
+                'H', 'K', 'L', 
+                'background', 
                 's1x', 's1y', 's1z', 
+                'ewald_offset', 'angular_ewald_offset',
                 'ewald_offset_x', 'ewald_offset_y', 'ewald_offset_z',
             ]
 
