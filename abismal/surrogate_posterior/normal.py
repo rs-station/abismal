@@ -68,8 +68,9 @@ class MultivariateNormalPosteriorBase(object):
             tfb.Exp(),
         )
 
-        self.scale = tfu.TransformedVariable(
-            scale_init,
+        #self.scale = tf.ones_like(self.loc) * epsilon
+        self._scale = tfu.TransformedVariable(
+            tf.reduce_mean(scale_init),
             tfb.Chain([
                 tfb.Shift(epsilon), 
                 tfb.Exp(),
@@ -84,6 +85,10 @@ class MultivariateNormalPosteriorBase(object):
         )
 
         self.built = True
+
+    @property
+    def scale(self):
+        return tf.ones_like(self.loc) * self._scale
 
     def get_config(self):
         conf = super().get_config()
