@@ -598,8 +598,13 @@ class AbismalRunner:
         )
 
     def _find_latest_phenix_results(self, asu_id=0):
-        pattern = str(Path(self.out_dir) / f"eff_*_asu_{asu_id}_epoch_*")
-        dirs = glob.glob(pattern)
+        # Match both phenix (eff_*) and torchref (torchref_*) result dirs.
+        dirs = []
+        for prefix in ("eff", "torchref"):
+            pattern = str(
+                Path(self.out_dir) / f"{prefix}_*_asu_{asu_id}_epoch_*"
+            )
+            dirs.extend(glob.glob(pattern))
         if not dirs:
             return None, None
 

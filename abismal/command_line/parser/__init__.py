@@ -11,6 +11,7 @@ import abismal.command_line.parser.priors as priors
 import abismal.command_line.parser.ray as ray
 import abismal.command_line.parser.surrogate_posterior as surrogate_posterior
 import abismal.command_line.parser.tf as tf
+import abismal.command_line.parser.torchref as torchref
 import abismal.command_line.parser.training as training
 
 groups = [
@@ -23,6 +24,7 @@ groups = [
     ray,
     surrogate_posterior,
     tf,
+    torchref,
     training,
 ]
 

@@ -28,6 +28,7 @@ def main(args=None):
         MtzSaver,
         FriedelMtzSaver,
         PhenixRunner,
+        TorchRefRunner,
         AnomalousPeakFinder,
         WeightSaver,
         StandardizationFreezer,
@@ -312,6 +313,18 @@ def main(args=None):
                     output_prefix=pfx,
                 )
             callbacks.append(phenix_runner)
+
+    if parser.torchref_pdb is not None:
+        for i, pdb_file in enumerate(parser.torchref_pdb.split(",")):
+            torchref_runner = TorchRefRunner(
+                parser.out_dir,
+                pdb_file,
+                epoch_stride=parser.torchref_frequency,
+                asu_id=0,
+                output_prefix=f"torchref_{i}",
+                device='cpu',
+            )
+            callbacks.append(torchref_runner)
 
     need_to_build = False
     need_to_build |= parser.debug

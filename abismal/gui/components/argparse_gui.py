@@ -4,6 +4,7 @@ from ipywidgets import widgets
 from abismal.gui.components.file_selector import (
     ReflectionFileSelector,
     PhenixFileSelector,
+    TorchRefFileSelector,
 )
 
 
@@ -184,7 +185,12 @@ class ArgparseGUIBase:
         from abismal.gui.cleanup import find_abismal_outputs
         parsed = self.to_parser()
         out_dir = str(parsed.out_dir)
-        has_phenix = getattr(parsed, "eff_files", None) is not None
+        # "has_phenix" gates the refinement results viewer; either phenix or
+        # torchref refinement produces per-epoch pdb+mtz results to display.
+        has_phenix = (
+            getattr(parsed, "eff_files", None) is not None
+            or getattr(parsed, "torchref_pdb", None) is not None
+        )
 
         runner = AbismalRunner.attach(out_dir, has_phenix=has_phenix)
         if runner is not None:
@@ -340,4 +346,5 @@ class ArgparseGUI(ArgparseGUIBase):
     custom_widgets = {
         "inputs": ReflectionFileSelector,
         "eff_files": PhenixFileSelector,
+        "torchref_pdb": TorchRefFileSelector,
     }

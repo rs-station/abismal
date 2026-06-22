@@ -213,3 +213,18 @@ class PhenixFileSelector(ServerFileSelectorWidget):
         return ",".join(self.get_selected_files())
 
 
+class TorchRefFileSelector(ServerFileSelectorWidget):
+    header_string = "Starting model (*.pdb) for torchref refinement"
+    file_types = [".pdb"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
+    def file_filter(self, file_name):
+        return any(file_name.endswith(s) for s in self.file_types)
+
+    @property
+    def value(self):
+        return ",".join(self.get_selected_files())
+
+
