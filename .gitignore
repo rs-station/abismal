@@ -3,3 +3,8 @@
 .eggs/
 .vscode/
 *.swp
+
+# Coverage and build/log artifacts
+coverage.xml
+.coverage*
+*.log
