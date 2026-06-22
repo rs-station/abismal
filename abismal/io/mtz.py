@@ -8,6 +8,19 @@ import tensorflow as tf
 from .loader import DataLoader
 
 
+MTZ_METADATA_KEYS = [
+    'BATCH',
+    'BG',
+    'SIGBG',
+    'FRACTIONCALC',
+    'XDET',
+    'YDET',
+    'ROT',
+    'LP',
+    'QE',
+    'PARTIAL'
+]
+
 def get_first_key_of_type(ds, dtype):
     idx = ds.dtypes == dtype
     if idx.sum() == 0:
@@ -31,12 +44,7 @@ class MTZLoader(DataLoader):
         ):
         self.metadata_keys = metadata_keys
         if self.metadata_keys is None:
-            self.metadata_keys = [
-                "XDET",
-                "YDET",
-                #"ROT",
-            ]
-
+            self.metadata_keys = MTZ_METADATA_KEYS
         super().__init__(len(self.metadata_keys))
 
         self.wavelength = wavelength
@@ -52,6 +60,8 @@ class MTZLoader(DataLoader):
 
     def get_dataset(self):
         ds = rs.read_mtz(self.mtz_file)
+        self.metadata_keys = [k for k in self.metadata_keys if k in ds]
+        self.metadata_length = len(self.metadata_keys)
 
         if self.cell is None:
             self.cell = ds.cell
