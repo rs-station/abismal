@@ -30,6 +30,12 @@ def normal_posterior(output, bijector_function):
     q = tfd.Normal(loc, scale)
     return q
 
+def pos_normal_posterior(output, bijector_function):
+    output = bijector_function(output)
+    loc, scale = tf.unstack(output, axis=-1)
+    q = tfd.Normal(loc, scale)
+    return q
+
 def log_normal_posterior(output, bijector_function):
     loc, scale = tf.unstack(output, axis=-1)
     scale = bijector_function(scale)
@@ -99,6 +105,11 @@ def cen_normal_prior(loc=0., scale=1., bijector_function=None):
         scale = bijector_function(scale)
     return tfd.Normal(0.0, scale)
 
+def cen_laplace_prior(loc=0., scale=1., bijector_function=None):
+    if bijector_function is not None:
+        scale = bijector_function(scale)
+    return tfd.Laplace(0.0, scale)
+
 def lognormal_prior(loc=0., scale=1., bijector_function=None):
     if bijector_function is not None:
         scale = bijector_function(scale)
@@ -147,12 +158,14 @@ class ImageScaler(tfk.models.Model):
         'rice' : rice_posterior,
         'lognormal' : log_normal_posterior,
         'delta' : delta_posterior,
+        'posnormal' : pos_normal_posterior,
     }
     prior_dict = {
         'cauchy' : cauchy_prior,
         'laplace' : laplace_prior,
         'normal' : normal_prior,
         'cennormal' : cen_normal_prior,
+        'cenlaplace' : cen_laplace_prior,
         'halfnormal' : halfnormal_prior,
         'halfcauchy' : halfcauchy_prior,
         'exponential' : exponential_prior, 
