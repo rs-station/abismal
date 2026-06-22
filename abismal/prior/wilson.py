@@ -27,7 +27,7 @@ class WilsonPriorBase(PriorBase):
         self.built = True #This is always true
 
     @classmethod
-    def with_empirical_sigma(cls, rac, dataset, bins=20, maxiter=100, isigi_cutoff=0.0, standardize=True, interpolate=True, use_weights=False, **kwargs):
+    def with_empirical_sigma(cls, rac, dataset, bins=20, maxiter=100, isigi_cutoff=0.0, standardize=True, interpolate=True, **kwargs):
         from reciprocalspaceship.utils import bin_by_percentile
         labels,edges = bin_by_percentile(rac.dHKL, bins=bins, ascending=False)
         mean = tf.zeros(bins)
@@ -56,10 +56,7 @@ class WilsonPriorBase(PriorBase):
                 mask = tf.ones_like(I)
 
             # Inverse-variance weight per observation; masked observations get zero weight.
-            if use_weights:
-                w = mask / tf.square(SIGI)
-            else:
-                w = tf.ones_like(SIGI)
+            w = mask / tf.square(SIGI)
 
             # `size` now accumulates summed weights rather than counts. The batched
             # Welford combine rule mean += (W_b / W) * (mean_b - mean) holds for
