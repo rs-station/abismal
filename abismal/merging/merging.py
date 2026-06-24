@@ -275,9 +275,6 @@ class VariationalMergingModel(tfk.models.Model):
         ipred_avg = tf.reduce_mean(ipred, axis=-1)
         return ipred_avg
 
-
-    #For production with super nan avoiding powers
-    @tf.function
     def train_step(self, data):
         # Unpack the data. Its structure depends on your model and
         # on what you pass to `fit()`.
