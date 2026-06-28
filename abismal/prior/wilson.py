@@ -23,17 +23,33 @@ class WilsonPriorBase(PriorBase):
         """
         super().__init__(**kwargs)
         self.rac = rac
-        self.sigma = sigma
+        self._sigma = sigma
         self.built = True #This is always true
 
-    @classmethod
-    def with_empirical_sigma(cls, rac, dataset, bins=20, maxiter=100, isigi_cutoff=0.0, standardize=True, interpolate=True, **kwargs):
+    @property
+    def sigma(self):
+        return self._sigma
+
+    @staticmethod
+    def _empirical_binned_mean(rac, dataset, bins=20, maxiter=100, isigi_cutoff=0.0):
+        """Accumulate the inverse-variance-weighted mean intensity per resolution bin.
+
+        Returns
+        -------
+        mean : tf.Tensor
+            Weighted mean intensity in each of `bins` resolution shells.
+        size : tf.Tensor
+            Summed inverse-variance weight in each shell (an effective count).
+        labels : array
+            Per-reflection bin assignment for `rac.dHKL`.
+        edges : array
+            The `bins + 1` resolution (dHKL) bin edges.
+        """
         from reciprocalspaceship.utils import bin_by_percentile
         labels,edges = bin_by_percentile(rac.dHKL, bins=bins, ascending=False)
         mean = tf.zeros(bins)
         size = tf.zeros(bins)
         from tqdm import tqdm
-        overall_mean = 0.
         for i,(batch, _) in tqdm(enumerate(dataset), total=maxiter):
             if i > maxiter:
                 break
@@ -74,6 +90,14 @@ class WilsonPriorBase(PriorBase):
             size = size + batch_size
             mean = mean + tf.math.divide_no_nan(batch_size, size) * (batch_mean - mean)
 
+        return mean, size, labels, edges
+
+    @classmethod
+    def with_empirical_sigma(cls, rac, dataset, bins=20, maxiter=100, isigi_cutoff=0.0, standardize=True, interpolate=True, **kwargs):
+        mean, size, labels, edges = cls._empirical_binned_mean(
+            rac, dataset, bins=bins, maxiter=maxiter, isigi_cutoff=isigi_cutoff
+        )
+
         if standardize:
             k = tf.math.reduce_sum(
                 mean * size / tf.math.reduce_sum(size)
@@ -112,3 +136,25 @@ class WilsonPriorBase(PriorBase):
         return cls(**config)
 
 
+class AutoWilsonPriorBase(WilsonPriorBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        b_init = 0.
+        k_init = 1.
+        self.b = self.add_weight('WilsonB', shape=(), initializer=tfk.initializers.Constant(b_init))
+        self._k = self.add_weight('WilsonK', shape=(), initializer=tfk.initializers.Constant(k_init))
+
+    @property
+    def k(self):
+        return tf.math.exp(self._k)
+        #return tf.nn.softplus(self._k)
+
+    @property
+    def sigma(self):
+        sigma = tf.math.exp(-self.b * tf.math.reciprocal(tf.math.square(self.rac.dHKL)) + self._k)
+        return sigma
+
+    def call(self, inputs, flat):
+        self.add_metric(self.k, 'WilsonK')
+        self.add_metric(self.b, 'WilsonB')
+        return super().call(inputs, flat)

@@ -144,7 +144,8 @@ class VariationalMergingModel(tfk.models.Model):
         kl_div = None
         q = self.surrogate_posterior.flat_distribution()
         z = q.sample(mc_samples)
-        p = self.prior.flat_distribution()
+
+        p = self.prior(inputs, flat=True)
         kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
 
         for op in self.reindexing_ops:
@@ -228,7 +229,8 @@ class VariationalMergingModel(tfk.models.Model):
         for op in self.reindexing_ops:
             _hkl = tf.ragged.map_flat_values(op, hkl_in)
             q = self.surrogate_posterior.distribution(asu_id.flat_values, _hkl.flat_values)
-            p = self.prior.distribution(asu_id.flat_values, _hkl.flat_values)
+            _inputs = inputs[:1] + (_hkl,) + inputs[2:]
+            p = self.prior(_inputs, flat=False)
             z = q.sample(mc_samples)
             _kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
  
@@ -334,7 +336,18 @@ class VariationalMergingModel(tfk.models.Model):
 
 
         gradients = [tf.where(tf.math.is_finite(g), g, 0.) for g in gradients]
-        self.optimizer.apply_gradients(zip(gradients, trainable_vars))
+        # Apply in trainable_variables order so the optimizer creates its slot
+        # variables in the same order load_model rebuilds them (it builds the
+        # optimizer against model.trainable_variables). The per-group order above
+        # (scale, q, ll, p) otherwise differs from tracking order whenever the
+        # prior is trainable (AutoWilsonPrior), and the saved optimizer slots then
+        # deserialize into the wrong variables -- a shape mismatch on load.
+        grad_by_var = {v.ref(): g for v, g in zip(trainable_vars, gradients)}
+        ordered = [
+            (grad_by_var[v.ref()], v)
+            for v in self.trainable_variables if v.ref() in grad_by_var
+        ]
+        self.optimizer.apply_gradients(ordered)
 
         # Update metrics (includes the metric that tracks the loss)
         self.compiled_metrics.update_state(y, y_pred)

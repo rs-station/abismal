@@ -7,7 +7,7 @@ from tensorflow_probability import bijectors as tfb
 import tf_keras as tfk
 from abismal.symmetry import Op,ReciprocalASUCollection
 from abismal.prior.base import PriorBase
-from abismal.prior.wilson import WilsonPriorBase
+from abismal.prior.wilson import WilsonPriorBase,AutoWilsonPriorBase
 
 
 # Wilson's distributions on structure factor amplitudes are both Nakagami:
@@ -75,6 +75,9 @@ class WilsonPrior(WilsonPriorBase):
 
     def distribution(self, asu_id, hkl):
         return self._distribution(asu_id, hkl)
+
+class AutoWilsonPrior(WilsonPrior, AutoWilsonPriorBase):
+    """Wilson prior with learnable scale and b-factor"""
 
 class MultiWilsonDistribution:
     def __init__(self, is_root, correlation, centric, multiplicity, sigma=1., parent_id=None):
