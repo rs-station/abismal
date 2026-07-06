@@ -29,14 +29,26 @@ class RunningMoments:
     def std(self):
         return np.sqrt(self.var)
 
+@tfk.saving.register_keras_serializable(package="abismal")
 class Standardize(tfk.layers.Layer):
-    def __init__(self, center=True, max_counts=np.inf, epsilon=1e-6):
-        super().__init__()
+    def __init__(self, center=True, max_counts=np.inf, epsilon=1e-6, **kwargs):
+        super().__init__(**kwargs)
         self.epsilon = epsilon
         self.center = center
         self.max_counts = max_counts
 
+    def get_config(self):
+        conf = super().get_config()
+        conf.update({
+            'center' : self.center,
+            'max_counts' : self.max_counts,
+            'epsilon' : self.epsilon,
+        })
+        return conf
+
     def build(self, shape):
+        if self.built:
+            return
         mom_shape = [1] * len(shape)
         mom_shape[-1] = shape[-1]
         reduce_dims = list(range(len(shape)-1))
@@ -55,7 +67,7 @@ class Standardize(tfk.layers.Layer):
             initializer='zeros',
             dtype=tf.float32,
             trainable=False,
-            name='mean',
+            name='m2',
         )
         self.count = self.add_weight(
             shape=(),
@@ -64,6 +76,14 @@ class Standardize(tfk.layers.Layer):
             trainable=False,
             name='count',
         )
+        self.frozen = self.add_weight(
+            shape=(),
+            initializer='zeros',
+            dtype=tf.bool,
+            trainable=False,
+            name='frozen',
+        )
+        super().build(shape)
 
     @property
     def count_float(self):
@@ -95,12 +115,97 @@ class Standardize(tfk.layers.Layer):
             return (data - self.mean) / self.std
         return data / self.std
 
+    def _update_if_unfrozen(self, x):
+        self.update(x)
+        return tf.constant(0)
+
     def call(self, data, training=True):
         if self.max_counts > self.max_counts:
              training = False
         if training:
-            self.update(data)
+            # `self.frozen` is a variable (not a Python bool) so this branch is
+            # read at graph *execution* time. That lets StandardizationFreezer
+            # toggle it mid-training without forcing a retrace of the compiled
+            # train_step -- a plain Python `if self.frozen` here would get
+            # baked into the graph at first trace and never update again.
+            tf.cond(self.frozen, lambda: tf.constant(0), lambda: self._update_if_unfrozen(data))
         return self.standardize(data)
+
+@tfk.saving.register_keras_serializable(package="abismal")
+class StandardizeMetadata(Standardize):
+    def __init__(self, max_counts=np.inf, epsilon=1e-6, **kwargs):
+        kwargs.pop('center', None)
+        super().__init__(center=True, max_counts=max_counts, epsilon=epsilon, **kwargs)
+
+    def get_config(self):
+        config = super().get_config()
+        config.pop('center')
+        return config
+
+    def call(self, inputs, training=None):
+        (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = inputs
+        metadata_out = super().call(metadata, training=training)
+
+        return (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata_out,
+            iobs,
+            sigiobs,
+        )
+
+@tfk.saving.register_keras_serializable(package="abismal")
+class StandardizeIntensities(Standardize):
+    def __init__(self, max_counts=np.inf, epsilon=1e-6, **kwargs):
+        kwargs.pop('center', None)
+        super().__init__(center=False, max_counts=max_counts, epsilon=epsilon, **kwargs)
+
+    def get_config(self):
+        config = super().get_config()
+        config.pop('center')
+        return config
+
+    def call(self, inputs, training=None):
+        (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iobs,
+            sigiobs,
+        ) = inputs
+        w = 1.
+        #w = tf.math.reciprocal(tf.math.square(sigiobs))
+        #w = w / tf.reduce_mean(w)
+
+        iout = super().call(w * iobs, training=training)
+        sigout = self.standardize(w * sigiobs)
+        m = tf.squeeze(self.mean)
+        self.add_metric(m, "Imean")
+        s = tf.squeeze(self.std)
+        self.add_metric(s, "Istd")
+
+        return (
+            asu_id,
+            hkl_in,
+            resolution,
+            wavelength,
+            metadata,
+            iout,
+            sigout,
+        )
+
 
 
 

@@ -14,10 +14,9 @@ class FeedForward(tfk.layers.Layer):
 
     norm_dict = {
         "layer": lambda s, x: (x - tf.math.reduce_mean(x, axis=-1, keepdims=True)) / (tf.math.reduce_std(x, axis=-1, keepdims=True) + s.epsilon),
-        "l2": lambda s, x: x * tf.math.rsqrt(tf.reduce_sum(tf.square(x), axis=-1, keepdims=True) + s.epsilon * s.epsilon),
-        "rms": lambda s, x: x * tf.math.rsqrt(tf.reduce_mean(tf.square(x), axis=-1, keepdims=True) + s.epsilon * s.epsilon),
+        "l2": lambda s, x: s.normalizer_gain * x * tf.math.rsqrt(tf.reduce_sum(tf.square(x), axis=-1, keepdims=True) + s.epsilon * s.epsilon),
+        "rms": lambda s, x: s.normalizer_gain * x * tf.math.rsqrt(tf.reduce_mean(tf.square(x), axis=-1, keepdims=True) + s.epsilon * s.epsilon),
         "activation": lambda s, x: s.activation(x),
-        #"batch": lambda s, x: (x - tf.math.reduce_mean(x, axis=-2, keepdims=True)) / (tf.math.reduce_std(x, axis=-2, keepdims=True) + s.epsilon),
         "batch": lambda s, x: (x - tf.math.reduce_mean(x, axis=-2, keepdims=True)) * tf.math.rsqrt(tf.math.reduce_variance(x, axis=-2, keepdims=True) + s.epsilon * s.epsilon),
         "batch_l2": lambda s, x: x * tf.math.rsqrt(tf.reduce_sum(tf.square(x), axis=-2, keepdims=True) + s.epsilon * s.epsilon),
     }
@@ -32,6 +31,7 @@ class FeedForward(tfk.layers.Layer):
         use_bias=False,
         epsilon=1e-3,
         scale_factor=None,
+        normalizer_gain=0.6,
         **kwargs,
     ):
         """
@@ -59,8 +59,11 @@ class FeedForward(tfk.layers.Layer):
             Whether the dense layers include bias parameters. 
         epsilon : float (optional)
             The value of epsilon that is used in the denominator of some normalizers. 
+        normalizer_gain : float (optional)
+            The gain setting that is used in the numerator of some normalizers. 
         """
         super().__init__()
+        self.normalizer_gain = normalizer_gain
         self.hidden_units = hidden_units
         self.kernel_initializer = kernel_initializer
         self.normalizer = normalizer

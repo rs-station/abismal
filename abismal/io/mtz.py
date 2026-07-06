@@ -9,16 +9,19 @@ from .loader import DataLoader
 
 
 MTZ_METADATA_KEYS = [
-    'BATCH',
+    #'BATCH',
     'BG',
     'SIGBG',
     'FRACTIONCALC',
     'XDET',
     'YDET',
-    'ROT',
+    #'ROT',
     'LP',
     'QE',
     'PARTIAL'
+    #'Hobs',
+    #'Lobs',
+    #'Kobs',
 ]
 
 def get_first_key_of_type(ds, dtype):

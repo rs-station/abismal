@@ -8,13 +8,19 @@ import tf_keras as tfk
 from abismal.layers import *
 from abismal.distributions import FoldedNormal,Rice
 
-def batch_normalize(x, epsilon=1e-3):
+def _normalize(x, axis, epsilon=1e-3):
     out = (
-        x - tf.reduce_mean(x, axis=0, keepdims=True)
+        x - tf.reduce_mean(x, axis=axis, keepdims=True)
     ) / (
-        tf.math.reduce_std(x, axis=0, keepdims=True) + epsilon
+        tf.math.reduce_std(x, axis=axis, keepdims=True) + epsilon
     )
     return out
+
+def batch_normalize(x, epsilon=1e-3):
+    return _normalize(x, 0, epsilon)
+
+def instance_normalize(x, epsilon=1e-3):
+    return _normalize(x, -2, epsilon)
 
 class DeltaDistribution():
     def __init__(self, loc):
@@ -191,10 +197,9 @@ class ImageScaler(tfk.models.Model):
             gated=False,
             output_bias=True,
             optimize_prior_scale=False,
-            ff_scale_factor_exponent=None,
             dropout=None,
             random_seed=1234,
-            batch_normalize=False,
+            batch_normalize=True,
             **kwargs, 
         ):
         """
@@ -253,16 +258,12 @@ class ImageScaler(tfk.models.Model):
         self.gated = gated
         self.output_bias = output_bias
         self.hidden_units = hidden_units
-        self.ff_scale_factor_exponent = ff_scale_factor_exponent
         self.dropout = dropout
         self.optimize_prior_scale = optimize_prior_scale
         self.random_seed = random_seed
         self.batch_normalize = batch_normalize
-        input_bias=False
 
-        ff_scale_factor = None
-        if ff_scale_factor_exponent is not None:
-            ff_scale_factor = mlp_depth ** -ff_scale_factor_exponent
+        input_bias=False
 
         if self.hidden_units is None:
             self.hidden_units = 2 * mlp_width 
@@ -295,7 +296,6 @@ class ImageScaler(tfk.models.Model):
                     use_bias=False,
                     normalizer=normalizer_name,
                     epsilon=ffepsilon,
-                    scale_factor=ff_scale_factor,
                 ) for _ in range(mlp_depth)])
         if share_weights:
             self.scale_network = self.image_network
@@ -308,7 +308,6 @@ class ImageScaler(tfk.models.Model):
                     use_bias=False,
                     normalizer=normalizer_name,
                     epsilon=ffepsilon,
-                    scale_factor=ff_scale_factor,
                     ) for _ in range(mlp_depth)
             ]) 
 
@@ -316,6 +315,7 @@ class ImageScaler(tfk.models.Model):
             self.output_dense = tfk.layers.Dense(1, kernel_initializer=kernel_initializer, use_bias=output_bias)
         else:
             self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer, use_bias=output_bias)
+        self.built = True
 
     def get_config(self):
         config = super().get_config()
@@ -336,7 +336,6 @@ class ImageScaler(tfk.models.Model):
             'gated' : self.gated,
             'output_bias' : self.output_bias, 
             'optimize_prior_scale': self.optimize_prior_scale,
-            'ff_scale_factor_exponent' : self.ff_scale_factor_exponent,
             'dropout': self.dropout,
             'random_seed': self.random_seed,
             'batch_normalize' : self.batch_normalize,
@@ -405,12 +404,6 @@ class ImageScaler(tfk.models.Model):
             sigiobs,
         ) = inputs
 
-        #iobs = batch_normalize(iobs)
-        #sigiobs = batch_normalize(iobs)
-        #metadata = tf.ragged.map_flat_values(batch_normalize, metadata)
-        #iobs = tf.math.sign(iobs) * tf.math.log(tf.math.abs(iobs) + self.epsilon)
-        #sigiobs = tf.math.sign(sigiobs) * tf.math.log(tf.math.abs(sigiobs) + self.epsilon)
-
         image = [metadata, iobs, sigiobs]
         n = 2
         if self.hkl_to_imodel:
@@ -419,7 +412,8 @@ class ImageScaler(tfk.models.Model):
 
         image = tf.concat(image, axis=-1)
         if self.batch_normalize:
-            image = tf.ragged.map_flat_values(batch_normalize, image)
+            image = instance_normalize(image)
+            #image = batch_normalize(image)
         metadata = image[...,:-n]
 
         scale = metadata
@@ -435,7 +429,9 @@ class ImageScaler(tfk.models.Model):
         #    image = self.image_network.layers[0].normalize(image)
 
         scale = tf.ragged.map_flat_values(self.input_scale, scale)
-        q_latent = tf.ragged.map_flat_values(self.scale_network, scale + image)
+        scale_in = scale + image
+        q_latent = tf.ragged.map_flat_values(self.scale_network, scale_in)
+        #q_latent = tf.ragged.map_flat_values(self.scale_network, scale) + image #<-- HERE IS HEWL_31 #This strategy decreased anomalous signal
         q_params = tf.ragged.map_flat_values(self.output_dense, q_latent)
 
         if ragged_tensor.is_ragged(q_params):

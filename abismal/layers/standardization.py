@@ -137,7 +137,10 @@ class Normalize(Standardize):
         ) = inputs
 
         if training and self.trainable:
-            self.update(iobs.flat_values)
+            w = 1.
+            #w = tf.math.reciprocal(tf.square(sigiobs))
+            #w = w / tf.reduce_mean(w)
+            self.update((w * iobs).flat_values)
             #tf.ragged.map_flat_values(self.update, metadata)
 
         iobs = tf.ragged.map_flat_values(self.normalize, iobs)
@@ -196,6 +199,7 @@ class BinnedNormalize(tfk.layers.Layer):
         ) = inputs
         if idx is None:
             idx = self.rac.gather(labels, asu_id, hkl_in)
+        from IPython import embed;embed(colors='linux')
         mean = tf.gather(self.mean, idx) + self.epsilon
         out = (
             asu_id,

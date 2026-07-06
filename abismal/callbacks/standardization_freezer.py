@@ -13,11 +13,10 @@ class StandardizationFreezer(tfk.callbacks.Callback):
         """ Freeze standardization layers if necessary """
         if (epoch + 1) >= self.freeze_after:
             if self.model.standardize_intensity is not None:
-                if self.model.standardize_intensity.trainable:
+                if not self.model.standardize_intensity.frozen:
                     tf.print("Freezing intensity standardization layer...")
-                    self.model.standardize_intensity.trainable = False
+                    self.model.standardize_intensity.frozen.assign(True)
             if self.model.standardize_metadata is not None:
-                if self.model.standardize_metadata.trainable:
+                if not self.model.standardize_metadata.frozen:
                     tf.print("Freezing metadata standardization layer...")
-                    self.model.standardize_metadata.trainable = False
-
+                    self.model.standardize_metadata.frozen.assign(True)

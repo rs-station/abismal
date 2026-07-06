@@ -63,29 +63,6 @@ args_and_kwargs = (
         },
     ),
     (
-        ("--standardization-decay",),
-        {
-            "help": "Abismal uses Welford's algorithm to calculate the standard deviation of intensities. "
-            "The estimates are updated based on an exponentially decaying average. "
-            "This setting controls how quickly the exponential falls off and the model 'forgets' previous observations. "
-            "The default is 0.999 which corresponds to about 1000 steps for the decay half life."
-            "The moements estimated by abismal are frozen after the first training epoch.",
-            "default": 0.999,
-            "type": float,
-        },
-    ),
-    (
-        ("--ff-scale-exp",),
-        {
-            "help": "Scale factor eponent for residual layers that controls regularization. "
-                    "Values between 1 and 0.5 are reasonable with bigger values meaning more regularization. "
-                    "See https://arxiv.org/html/2510.03470v1. Their lambda = pow(n, -ff_scale_exp). "
-                    "A value of zero disables this feature which is appropriate when normalizers are used.",
-            "default": None,
-            "type": float,
-        },
-    ),
-    (
         ("--dropout",),
         {
             "help": "Apply dropout when pooling reflections. ",

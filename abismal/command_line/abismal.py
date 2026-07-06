@@ -96,7 +96,6 @@ def main(args=None):
 
     posterior_kwargs = {}
 
-    batch_normalize = False
     standardize_inputs = True
     if parser.prior_distribution in ["wilson", "empirical_wilson"]:
         if parser.parents is not None:
@@ -218,9 +217,8 @@ def main(args=None):
         normalizer_name=parser.normalizer,
         gated=parser.gated,
         optimize_prior_scale=parser.optimize_scale_prior,
-        ff_scale_factor_exponent=parser.ff_scale_exp,
         dropout=parser.dropout,
-        batch_normalize=batch_normalize,
+        batch_normalize=True,
         share_weights=True,
     )
 
@@ -237,7 +235,6 @@ def main(args=None):
         mc_samples=parser.mc_samples,
         kl_weight=parser.kl_weight,
         reindexing_ops=reindexing_ops,
-        standardization_decay=parser.standardization_decay,
         standardize=standardize_inputs,
     )
 

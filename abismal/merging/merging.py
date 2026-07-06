@@ -8,7 +8,8 @@ from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 from abismal.symmetry import Op
 import tf_keras as tfk
-from abismal.layers import Standardize,Normalize
+#from abismal.layers import Standardize,Normalize
+from abismal.layers.normalization import StandardizeIntensities,StandardizeMetadata
 
 def to_indexed_slices(tensor):
     """
@@ -37,7 +38,6 @@ class VariationalMergingModel(tfk.models.Model):
             kl_weight=1., 
             epsilon=1e-6, 
             reindexing_ops=None, 
-            standardization_decay=0.999,
             standardize=False,
             **kwargs):
         super().__init__(**kwargs)
@@ -53,12 +53,8 @@ class VariationalMergingModel(tfk.models.Model):
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
         self.standardize = standardize
         if standardize:
-            self.standardize_intensity = Normalize(
-                decay=standardization_decay
-            )
-            self.standardize_metadata = Standardize(
-                decay=standardization_decay
-            )
+            self.standardize_intensity = StandardizeIntensities()
+            self.standardize_metadata = StandardizeMetadata()
         else:
             self.standardize_intensity = None
             self.standardize_metadata = None
@@ -73,7 +69,7 @@ class VariationalMergingModel(tfk.models.Model):
             'scale_model' : self.scale_model,
             'surrogate_posterior' : self.surrogate_posterior,
             'prior' : self.prior,
-            'likelihood' : self.likelihood, 
+            'likelihood' : self.likelihood,
             'mc_samples' : self.mc_samples,
             'kl_weight' : 1.,
             'epsilon' : self.epsilon,
@@ -82,13 +78,28 @@ class VariationalMergingModel(tfk.models.Model):
         })
         for k in ['scale_model', 'surrogate_posterior', 'likelihood', 'prior']:
             config[k] = tfk.saving.serialize_keras_object(config[k])
+        # standardize_intensity/standardize_metadata are plain tracked attributes
+        # (not part of __init__'s config), so they must be serialized explicitly
+        # here -- otherwise Keras never calls build_from_config() on them and
+        # they arrive at weight-loading time with zero variables built.
+        if self.standardize_intensity is not None:
+            config['standardize_intensity'] = tfk.saving.serialize_keras_object(self.standardize_intensity)
+        if self.standardize_metadata is not None:
+            config['standardize_metadata'] = tfk.saving.serialize_keras_object(self.standardize_metadata)
         return config
 
     @classmethod
     def from_config(cls, config):
+        standardize_intensity = config.pop('standardize_intensity', None)
+        standardize_metadata = config.pop('standardize_metadata', None)
         for k in ['scale_model', 'surrogate_posterior', 'likelihood', 'prior']:
             config[k] = tfk.saving.deserialize_keras_object(config[k])
-        return cls(**config)
+        instance = cls(**config)
+        if standardize_intensity is not None:
+            instance.standardize_intensity = tfk.saving.deserialize_keras_object(standardize_intensity)
+        if standardize_metadata is not None:
+            instance.standardize_metadata = tfk.saving.deserialize_keras_object(standardize_metadata)
+        return instance
 
     def build(self, shapes):
         if self.built:
@@ -266,11 +277,23 @@ class VariationalMergingModel(tfk.models.Model):
         )
 
         ll = tf.reduce_mean(ll)
-        kl_div = tf.reduce_mean(kl_div) 
+
+        kl_bins = 5
+        #kl_quants = tfp.stats.quantiles(kl_div.flat_values, kl_bins)
+        #for i in range(kl_bins):
+        #    self.add_metric(kl_quants[i], f'KL_{i+1}')
+
 
         self.add_metric(-ll, name='NLL')
         self.add_loss(-ll)
 
+        #self.add_metric(tf.reduce_mean(kl_div), name='KL')                       # true mean, unfloored
+        #self.add_metric(tfp.stats.percentile(kl_div, 50.), name='KL_med')        # for anchoring λ
+        #free_bits = 5.0                                                          # nats/reflection
+        #self.add_loss(self.kl_weight * tf.reduce_mean(tf.maximum(kl_div, free_bits)))
+        #self.add_metric(tf.reduce_mean(tf.cast(kl_div <= free_bits, 'float32')), 'NumSaturated')
+
+        kl_div = tf.reduce_mean(kl_div) 
         self.add_metric(kl_div, name='KL')
         self.add_loss(self.kl_weight * kl_div)
 
