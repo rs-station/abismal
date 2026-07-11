@@ -141,30 +141,6 @@ class AutoWilsonPriorBase(WilsonPriorBase):
         super().__init__(*args, **kwargs)
         b_init = 0.
         self.b = self.add_weight('WilsonB', shape=(), initializer=tfk.initializers.Constant(b_init))
-        #self._k = self.add_weight('WilsonK', shape=(), initializer='zeros')
-
-    #@property
-    #def k(self):
-    #    #return tf.math.exp(self._k)
-    #    #return tf.nn.softplus(self._k)
-
-    @property
-    def sigma(self):
-        sigma = tf.math.exp(-self.b * tf.math.reciprocal(tf.math.square(self.rac.dHKL)))
-        sigma = sigma / tf.math.reduce_mean(sigma)
-        return sigma
-
-    def call(self, inputs, flat):
-        #self.add_metric(self.k, 'WilsonK')
-        self.add_metric(self.b, 'WilsonB')
-        return super().call(inputs, flat)
-
-
-class AutoWilsonPriorBase(WilsonPriorBase):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        b_init = 0.
-        self.b = self.add_weight('WilsonB', shape=(), initializer=tfk.initializers.Constant(b_init))
         self._k = self.add_weight('WilsonK', shape=(), initializer='zeros')
 
     @property
@@ -182,3 +158,4 @@ class AutoWilsonPriorBase(WilsonPriorBase):
         self.add_metric(self.k, 'WilsonK')
         self.add_metric(self.b, 'WilsonB')
         return super().call(inputs, flat)
+

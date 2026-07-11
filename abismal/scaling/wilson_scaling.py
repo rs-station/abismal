@@ -1,159 +1,7 @@
-import tensorflow as tf
-import numpy as np
-from tensorflow_probability import distributions as tfd
-from tensorflow_probability import util as tfu
-from tensorflow_probability import bijectors as tfb
-from tensorflow.python.ops.ragged import ragged_tensor
-import tf_keras as tfk
-from abismal.layers import *
-from abismal.distributions import FoldedNormal,Rice
 
-def _normalize(x, axis, epsilon=1e-3):
-    out = (
-        x - tf.reduce_mean(x, axis=axis, keepdims=True)
-    ) / (
-        tf.math.reduce_std(x, axis=axis, keepdims=True) + epsilon
-    )
-    return out
-
-def batch_normalize(x, epsilon=1e-3):
-    return _normalize(x, 0, epsilon)
-
-def instance_normalize(x, epsilon=1e-3):
-    return _normalize(x, -2, epsilon)
-
-def layer_normalize(x, epsilon=1e-3):
-    return _normalize(x, -1, epsilon)
-
-class DeltaDistribution():
-    def __init__(self, loc):
-        self.loc = loc
-
-    def sample(self, *args, **kwargs):
-        """Return a tensor that broadcasts as a sample"""
-        return self.loc[None,...]
-
-def normal_posterior(output, bijector_function):
-    loc, scale = tf.unstack(output, axis=-1)
-    scale = bijector_function(scale)
-    q = tfd.Normal(loc, scale)
-    return q
-
-def pos_normal_posterior(output, bijector_function):
-    output = bijector_function(output)
-    loc, scale = tf.unstack(output, axis=-1)
-    q = tfd.Normal(loc, scale)
-    return q
-
-def log_normal_posterior(output, bijector_function):
-    loc, scale = tf.unstack(output, axis=-1)
-    scale = bijector_function(scale)
-    q = tfd.LogNormal(loc, scale)
-    return q
-
-def folded_normal_posloc_posterior(output, bijector_function):
-    output = bijector_function(output)
-    loc, scale = tf.unstack(output, axis=-1)
-    #scale = bijector_function(scale)
-    q = FoldedNormal(loc, scale)
-    return q
-
-def folded_normal_posterior(output, bijector_function):
-    loc, scale = tf.unstack(output, axis=-1)
-    scale = bijector_function(scale)
-    q = FoldedNormal(loc, scale)
-    return q
-
-def rice_posterior(output, bijector_function):
-    output = bijector_function(output)
-    loc, scale = tf.unstack(output, axis=-1)
-    q = Rice(loc, scale)
-    return q
-
-def gamma_posterior(output, bijector_function):
-    output = bijector_function(output)
-    loc, scale = tf.unstack(output, axis=-1)
-    #scale = scale + 1. #prevent change in concavity
-    q = tfd.Gamma(loc, scale)
-    return q
-
-def delta_posterior(output, bijector_function):
-    loc = tf.squeeze(output, axis=-1)
-    q = DeltaDistribution(loc)
-    return q
-
-def elog(x):
-    """ exponential-logarithmic constraint """
-    neg = tf.minimum(x, 0.)
-    pos = tf.maximum(x, 0.)
-    return tf.math.exp(neg) + tf.math.log1p(pos)
-
-def rescale_distribution(p, mean=1.):
-    return tfd.TransformedDistribution(
-        p,
-        tfb.Scale(1. / p.mean())
-    )
-
-def cauchy_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.Cauchy(loc, scale)
-
-def laplace_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.Laplace(loc, scale)
-
-def normal_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.Normal(loc, scale)
-
-def cen_normal_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.Normal(0.0, scale)
-
-def cen_laplace_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.Laplace(0.0, scale)
-
-def lognormal_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-        #loc = bijector_function(loc)
-    return tfd.LogNormal(loc, scale)
-
-def halfcauchy_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.HalfCauchy(scale)
-
-def halfnormal_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.HalfNormal(scale)
-
-def exponential_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.Exponential(scale)
-
-def foldednormal_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-        loc = bijector_function(loc)
-    return FoldedNormal(loc, scale)
-
-def gamma_prior(rate=1., conc=1., bijector_function=None):
-    if bijector_function is not None:
-        rate = bijector_function(rate)
-        conc = bijector_function(conc)
-    return tfd.Gamma(rate, conc)
 
 @tfk.saving.register_keras_serializable(package="abismal")
-class ImageScaler(tfk.models.Model):
+class WilsonImageScaler(tfk.models.Model):
     bijector_dict = {
         'softplus' : tf.nn.softplus,
         'elup1' : lambda x : tf.nn.elu(x) + 1.,
@@ -190,8 +38,6 @@ class ImageScaler(tfk.models.Model):
             activation="relu",
             kl_weight=1.,
             epsilon=1e-12,
-            ff_epsilon=None,
-            normalizer_gain=0.1,
             num_image_samples=None,
             share_weights=True,
             prior_name='exponential',
@@ -202,6 +48,7 @@ class ImageScaler(tfk.models.Model):
             gated=False,
             output_bias=True,
             optimize_prior_scale=False,
+            ff_scale_factor_exponent=None,
             dropout=None,
             random_seed=1234,
             batch_normalize=True,
@@ -223,12 +70,7 @@ class ImageScaler(tfk.models.Model):
         kl_weight : float (optional)
             The importance of the prior distribution on scales. This parameter is ignored if the posterior is a delta distribution. 
         epsilon : float (optional)
-            A small constant for numerical stability defaults to 1e-12.
-        ff_epsilon : float (optional)
-            Epsilon used in the feed forward layers' pre-normalization (see `normalizer_name`).
-            Defaults to None, in which case it falls back to `epsilon`.
-        normalizer_gain : float (optional)
-            Gain applied in the numerator of the 'l2'/'rms' feed forward normalizers. The default is 0.1.
+            A small constant for numerical stability defaults to 1e-12. 
         num_image_samples : int (optional)
             The number of reflections to sample in order to create the image representation vectors. 
             No subsampling will be done if this is set to None which is the default. 
@@ -258,8 +100,6 @@ class ImageScaler(tfk.models.Model):
         self.mlp_width = mlp_width
         self.mlp_depth = mlp_depth
         self.epsilon = epsilon
-        self.ff_epsilon = ff_epsilon
-        self.normalizer_gain = normalizer_gain
         self.activation = activation
         self.share_weights = share_weights
         self.prior_name = prior_name.lower()
@@ -270,19 +110,46 @@ class ImageScaler(tfk.models.Model):
         self.gated = gated
         self.output_bias = output_bias
         self.hidden_units = hidden_units
+        self.ff_scale_factor_exponent = ff_scale_factor_exponent
         self.dropout = dropout
         self.optimize_prior_scale = optimize_prior_scale
         self.random_seed = random_seed
         self.batch_normalize = batch_normalize
 
+        self._wilson_b_loc = self.add_weight('b', shape=(), initializer='zeros')
+        self._wilson_b_scale = tfu.TransformedVariable(
+            1.,
+            tfb.Chain([
+                tfb.Shift(self.epsilon), 
+                tfb.Exp(),
+            ]),
+        )
+        self.wilson_b = tfd.Normal(self._wilson_b_loc, self._wilson_b_scale)
+
+        self._wilson_k_loc = self.add_weight('b', shape=(), initializer='zeros')
+        self._wilson_k_scale = tfu.TransformedVariable(
+            1.,
+            tfb.Chain([
+                tfb.Shift(self.epsilon), 
+                tfb.Exp(),
+            ]),
+        )
+        self.wilson_k = tfd.Normal(self._wilson_k_loc, self._wilson_k_scale)
+        self.wilson_b_prior = tfd.Normal(0., 100.)
+        self.wilson_k_prior = tfd.Normal(0., 100.)
+
         input_bias=False
 
-        if self.hidden_units is None:
-            self.hidden_units = 2 * mlp_width
-        ffepsilon = epsilon if ff_epsilon is None else ff_epsilon
+        ff_scale_factor = None
+        if ff_scale_factor_exponent is not None:
+            ff_scale_factor = mlp_depth ** -ff_scale_factor_exponent
 
-        #kernel_initializer = 'glorot_normal'
-        kernel_initializer = tfk.initializers.VarianceScaling(scale=mlp_depth**-1.0, mode='fan_avg', seed=random_seed) #FixUp init for early layers
+        if self.hidden_units is None:
+            self.hidden_units = 2 * mlp_width 
+        ffepsilon = epsilon
+
+        kernel_initializer = 'glorot_normal'
+        #kernel_initializer = tfk.initializers.VarianceScaling(scale=1./mlp_depth, mode='fan_avg', seed=random_seed)
         if optimize_prior_scale:
             self.output_prior = tfk.layers.Dense(2, kernel_initializer=kernel_initializer, use_bias=output_bias)
             self.input_prior = tfk.layers.Dense(self.mlp_width, kernel_initializer=kernel_initializer, use_bias=input_bias)
@@ -308,7 +175,7 @@ class ImageScaler(tfk.models.Model):
                     use_bias=False,
                     normalizer=normalizer_name,
                     epsilon=ffepsilon,
-                    normalizer_gain=normalizer_gain,
+                    scale_factor=ff_scale_factor,
                 ) for _ in range(mlp_depth)])
         if share_weights:
             self.scale_network = self.image_network
@@ -321,7 +188,7 @@ class ImageScaler(tfk.models.Model):
                     use_bias=False,
                     normalizer=normalizer_name,
                     epsilon=ffepsilon,
-                    normalizer_gain=normalizer_gain,
+                    scale_factor=ff_scale_factor,
                     ) for _ in range(mlp_depth)
             ]) 
 
@@ -329,7 +196,7 @@ class ImageScaler(tfk.models.Model):
             self.output_dense = tfk.layers.Dense(1, kernel_initializer=kernel_initializer, use_bias=output_bias)
         else:
             self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer, use_bias=output_bias)
-        #self.built = True
+        self.built = True
 
     def get_config(self):
         config = super().get_config()
@@ -338,8 +205,6 @@ class ImageScaler(tfk.models.Model):
             'mlp_depth' : self.mlp_depth, 
             'hidden_units': self.hidden_units,
             'epsilon' : self.epsilon,
-            'ff_epsilon' : self.ff_epsilon,
-            'normalizer_gain' : self.normalizer_gain,
             'activation' : self.activation,
             'kl_weight' : self.kl_weight,
             'num_image_samples' : self.num_image_samples,
@@ -352,6 +217,7 @@ class ImageScaler(tfk.models.Model):
             'gated' : self.gated,
             'output_bias' : self.output_bias, 
             'optimize_prior_scale': self.optimize_prior_scale,
+            'ff_scale_factor_exponent' : self.ff_scale_factor_exponent,
             'dropout': self.dropout,
             'random_seed': self.random_seed,
             'batch_normalize' : self.batch_normalize,
@@ -429,7 +295,6 @@ class ImageScaler(tfk.models.Model):
         image = tf.concat(image, axis=-1)
         if self.batch_normalize:
             image = instance_normalize(image)
-            #image = batch_normalize(image)
         metadata = image[...,:-n]
 
         scale = metadata
@@ -441,16 +306,13 @@ class ImageScaler(tfk.models.Model):
         unpooled_image = self.input_image(image)
         image = tf.ragged.map_flat_values(self.image_network, unpooled_image)
         image = self.pool(image)
-        #image = self.image_network.layers[0].normalize(image)
-        #image = layer_normalize(image)
+        #if self.normalizer_name != 'activation':
+        #    image = self.image_network.layers[0].normalize(image)
 
-        scale_in = tf.ragged.map_flat_values(self.input_scale, scale) + image
-        #scale_in = layer_normalize(scale_in)
-        #scale_in = instance_normalize(scale_in)
+        scale = tf.ragged.map_flat_values(self.input_scale, scale)
+        scale_in = scale + image
         q_latent = tf.ragged.map_flat_values(self.scale_network, scale_in)
-        #q_latent = layer_normalize(q_latent)
         #q_latent = tf.ragged.map_flat_values(self.scale_network, scale) + image #<-- HERE IS HEWL_31 #This strategy decreased anomalous signal
-        #q_latent = instance_normalize(q_latent)
         q_params = tf.ragged.map_flat_values(self.output_dense, q_latent)
 
         if ragged_tensor.is_ragged(q_params):
@@ -489,6 +351,23 @@ class ImageScaler(tfk.models.Model):
             kl_div = tf.reduce_mean(kl_div)
             self.add_loss(self.kl_weight * kl_div)
             self.add_metric(kl_div, name='KL_Σ')
+
+
+        log_k = self.wilson_k.sample(mc_samples)
+        b = self.wilson_b.sample(mc_samples)
+        #from IPython import embed;embed(colors='linux')
+        wilson_weight = 1e-3
+        kl_k = self.wilson_k.kl_divergence(self.wilson_k_prior)
+        kl_b = self.wilson_b.kl_divergence(self.wilson_b_prior)
+        self.add_loss(wilson_weight * kl_k)
+        self.add_loss(wilson_weight * kl_b)
+        self.add_metric(kl_k, name="KL_K")
+        self.add_metric(kl_b, name="KL_B")
+        self.add_metric(self.wilson_b.mean(), name="B")
+        self.add_metric(tfd.LogNormal(self.wilson_k.loc, self.wilson_k.scale).mean(), name='K')
+
+        wilson_factor = tf.math.exp(-b * tf.math.square(tf.math.reciprocal(resolution.flat_values)) + log_k)
+        z = z * tf.transpose(wilson_factor)
 
         if ragged_tensor.is_ragged(q_params):
             z = tf.RaggedTensor.from_row_splits(

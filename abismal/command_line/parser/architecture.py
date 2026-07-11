@@ -48,6 +48,13 @@ args_and_kwargs = (
         },
     ),
     (
+        ("--batch-normalize",),
+        {
+            "help": "Use normalize the scale model inputs.",
+            "action": "store_true",
+        },
+    ),
+    (
         ("--gated",),
         {
             "help": "Use a Gated (GLU) architecture for the feed forward layers.",
@@ -55,10 +62,27 @@ args_and_kwargs = (
         },
     ),
     (
+        ("--normalizer-gain",),
+        {
+            "help": "Gain applied in the numerator of the 'l2'/'rms' feed forward normalizers. The default is 0.1",
+            "default": 0.1,
+            "type": float,
+        },
+    ),
+    (
         ("--epsilon",),
         {
             "help": "A small constant for numerical stability.",
             "default": 1e-12,
+            "type": float,
+        },
+    ),
+    (
+        ("--ff-epsilon",),
+        {
+            "help": "Epsilon used in the feed forward layers' pre-normalization (see --normalizer). "
+            "Defaults to None, in which case it falls back to --epsilon.",
+            "default": None,
             "type": float,
         },
     ),

@@ -210,6 +210,8 @@ def main(args=None):
         activation=parser.activation,
         kl_weight=parser.scale_kl_weight,
         epsilon=parser.epsilon,
+        ff_epsilon=parser.ff_epsilon,
+        normalizer_gain=parser.normalizer_gain,
         num_image_samples=parser.sample_reflections_per_image,
         prior_name=parser.scale_prior_distribution,
         posterior_name=parser.scale_posterior_distribution,
@@ -218,7 +220,7 @@ def main(args=None):
         gated=parser.gated,
         optimize_prior_scale=parser.optimize_scale_prior,
         dropout=parser.dropout,
-        batch_normalize=True,
+        batch_normalize=parser.batch_normalize,
         share_weights=True,
     )
 

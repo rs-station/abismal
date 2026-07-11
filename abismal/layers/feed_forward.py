@@ -5,6 +5,7 @@ from tensorflow_probability import distributions as tfd
 from tensorflow_probability import layers as tfl
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
+import tensorflow_probability as tfp
 
 
 class FeedForward(tfk.layers.Layer):
@@ -19,6 +20,7 @@ class FeedForward(tfk.layers.Layer):
         "activation": lambda s, x: s.activation(x),
         "batch": lambda s, x: (x - tf.math.reduce_mean(x, axis=-2, keepdims=True)) * tf.math.rsqrt(tf.math.reduce_variance(x, axis=-2, keepdims=True) + s.epsilon * s.epsilon),
         "batch_l2": lambda s, x: x * tf.math.rsqrt(tf.reduce_sum(tf.square(x), axis=-2, keepdims=True) + s.epsilon * s.epsilon),
+        "identity": lambda s, x: s.normalizer_gain * x,
     }
 
     def __init__(
@@ -31,7 +33,7 @@ class FeedForward(tfk.layers.Layer):
         use_bias=False,
         epsilon=1e-3,
         scale_factor=None,
-        normalizer_gain=0.6,
+        normalizer_gain=0.1,
         **kwargs,
     ):
         """
@@ -91,7 +93,8 @@ class FeedForward(tfk.layers.Layer):
         )
         self.ff2 = tfk.layers.Dense(
             self.units,
-            kernel_initializer=self.kernel_initializer,
+            #kernel_initializer=self.kernel_initializer,
+            kernel_initializer='zeros',
             use_bias=self.use_bias,
             **kwargs,
         )
@@ -102,10 +105,34 @@ class FeedForward(tfk.layers.Layer):
     def normalize(self, X):
         return self.norm_dict[self.normalizer](self, X)
 
+    def _track_input_norm(self, X):
+        # Exact threshold for 'l2'; off by sqrt(d_model) for 'rms' (which thresholds
+        # ||X||/sqrt(d_model) against epsilon instead).
+        norm = tf.norm(X, axis=-1)
+        # Fraction below epsilon: robust to a single outlier row, and answers the
+        # actual question (how often does epsilon bind) rather than just the
+        # worst case this batch.
+        frac_below_eps = tf.reduce_mean(tf.cast(norm < self.epsilon, norm.dtype))
+        self.add_metric(frac_below_eps, name=self.name + "_frac_below_eps")
+        self.add_metric(tf.reduce_min(norm), name=self.name + "_x_norm_min")
+
+    def _track_pre_activation(self, X):
+        quants = tfp.stats.percentile(X, [0., 50., 100.])
+        std = tf.math.reduce_std(X)
+        mean= tf.math.reduce_mean(X)
+        #self.add_metric(quants[0], self.name + '_pre_activation_min')
+        #self.add_metric(quants[1], self.name + '_pre_activation_median')
+        #self.add_metric(quants[2], self.name + '_pre_activation_max')
+        self.add_metric(std, self.name + '_pre_activation_std')
+        self.add_metric(mean, self.name + '_pre_activation_mean')
+
     def call(self, X, **kwargs):
+        #self._track_input_norm(X)
         out = X
+        #self._track_pre_activation(out)
         out = self.normalize(out)
         out = self.ff1(out)
+        #self._track_pre_activation(out)
         out = self.activation(out)
         out = self.ff2(out)
 
@@ -143,7 +170,8 @@ class GLUFeedForward(FeedForward):
         )
         self.ff3 = tfk.layers.Dense(
             self.units,
-            kernel_initializer=self.kernel_initializer,
+            #kernel_initializer=self.kernel_initializer,
+            kernel_initializer='zeros',
             use_bias=self.use_bias,
             **kwargs,
         )
