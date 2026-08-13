@@ -205,7 +205,8 @@ class ImageScaler(tfk.models.Model):
             dropout=None,
             random_seed=1234,
             batch_normalize=True,
-            **kwargs, 
+            metadata_noise_factor=0.1,
+            **kwargs,
         ):
         """
         This function has a lot of overrides, but comes with sensible defaults built in. 
@@ -250,7 +251,11 @@ class ImageScaler(tfk.models.Model):
         output_bias : bool (optional)
             Use bias in the output layer. 
         dropout : float (optional)
-            Use dropout when pooling reflections. 
+            Use dropout when pooling reflections.
+        metadata_noise_factor : float (optional)
+            The standard deviation of the Gaussian noise added to the metadata. This regularizes
+            the model against overfitting on small data sets. The noise is only applied when
+            `training` is True. The default is 0.1.
         """
         super().__init__(**kwargs)
         self.kl_weight = kl_weight
@@ -274,6 +279,7 @@ class ImageScaler(tfk.models.Model):
         self.optimize_prior_scale = optimize_prior_scale
         self.random_seed = random_seed
         self.batch_normalize = batch_normalize
+        self.metadata_noise_factor = metadata_noise_factor
 
         input_bias=False
 
@@ -281,7 +287,6 @@ class ImageScaler(tfk.models.Model):
             self.hidden_units = 2 * mlp_width
         ffepsilon = epsilon if ff_epsilon is None else ff_epsilon
 
-        #kernel_initializer = 'glorot_normal'
         kernel_initializer = tfk.initializers.VarianceScaling(scale=mlp_depth**-1.0, mode='fan_avg', seed=random_seed) #FixUp init for early layers
         if optimize_prior_scale:
             self.output_prior = tfk.layers.Dense(2, kernel_initializer=kernel_initializer, use_bias=output_bias)
@@ -291,9 +296,6 @@ class ImageScaler(tfk.models.Model):
                 mlp_width, kernel_initializer=kernel_initializer, use_bias=input_bias)
         self.input_scale = tfk.layers.Dense(
                 mlp_width, kernel_initializer=kernel_initializer, use_bias=input_bias) #Should use_bias?
-
-        self.pool = Average(axis=-2, dropout=dropout)
-        #self.pool = ConvexCombination()
 
         if gated:
             from abismal.layers import GLUFeedForward as FeedForward
@@ -329,7 +331,6 @@ class ImageScaler(tfk.models.Model):
             self.output_dense = tfk.layers.Dense(1, kernel_initializer=kernel_initializer, use_bias=output_bias)
         else:
             self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer, use_bias=output_bias)
-        #self.built = True
 
     def get_config(self):
         config = super().get_config()
@@ -355,6 +356,7 @@ class ImageScaler(tfk.models.Model):
             'dropout': self.dropout,
             'random_seed': self.random_seed,
             'batch_normalize' : self.batch_normalize,
+            'metadata_noise_factor' : self.metadata_noise_factor,
         })
         return config
 
@@ -391,7 +393,8 @@ class ImageScaler(tfk.models.Model):
             sigiobs,
         ) = shapes
 
-        dimage = metadata[-1] + 2
+        n = 2
+        dimage = metadata[-1] + n
         if self.hkl_to_imodel:
             dimage = dimage + 3
         self.input_image.build(
@@ -405,9 +408,20 @@ class ImageScaler(tfk.models.Model):
         self.image_network.build(metadata[:-1] + [self.mlp_width])
         if not self.share_weights:
             self.scale_network.build(metadata[:-1] + [self.mlp_width])
-        self.pool.build(metadata[:-1] + [self.mlp_width])
+        #self.pool.build(metadata[:-1] + [self.mlp_width])
         self.output_dense.build(metadata[:-1] + [self.mlp_width])
         self.built = True
+
+    def pool(self, image):
+        if self.num_image_samples is None:
+            #return tf.math.reduce_mean(image, axis=-2, keepdims=True)
+            num = tf.math.reduce_sum(image, axis=-2, keepdims=True) - image
+            den = tf.cast(image.row_lengths(), 'float32') - 1.
+            den = tf.maximum(den, 1.)
+            out = num / den[:,None,None]
+        else:
+            out = tf.math.reduce_mean(image, axis=-2, keepdims=True)
+        return out
 
     def call(self, inputs, mc_samples=32, training=None, **kwargs):
         (
@@ -420,16 +434,25 @@ class ImageScaler(tfk.models.Model):
             sigiobs,
         ) = inputs
 
-        image = [metadata, iobs, sigiobs]
         n = 2
+        if training and self.metadata_noise_factor > 0.:
+            noise = self.metadata_noise_factor * metadata.with_flat_values(
+                tf.random.normal(
+                    tfk.backend.shape(metadata.flat_values)
+                )
+            )
+            metadata_noised = metadata + noise
+        else:
+            metadata_noised = metadata
+
+        image = [metadata_noised, iobs, sigiobs]
         if self.hkl_to_imodel:
             image.append(0.02 * tf.cast(hkl, metadata.dtype))
-            n = n + 3
 
         image = tf.concat(image, axis=-1)
         if self.batch_normalize:
-            image = instance_normalize(image)
-            #image = batch_normalize(image)
+            image = tf.ragged.map_flat_values(batch_normalize, image)
+
         metadata = image[...,:-n]
 
         scale = metadata
@@ -441,16 +464,9 @@ class ImageScaler(tfk.models.Model):
         unpooled_image = self.input_image(image)
         image = tf.ragged.map_flat_values(self.image_network, unpooled_image)
         image = self.pool(image)
-        #image = self.image_network.layers[0].normalize(image)
-        #image = layer_normalize(image)
 
         scale_in = tf.ragged.map_flat_values(self.input_scale, scale) + image
-        #scale_in = layer_normalize(scale_in)
-        #scale_in = instance_normalize(scale_in)
         q_latent = tf.ragged.map_flat_values(self.scale_network, scale_in)
-        #q_latent = layer_normalize(q_latent)
-        #q_latent = tf.ragged.map_flat_values(self.scale_network, scale) + image #<-- HERE IS HEWL_31 #This strategy decreased anomalous signal
-        #q_latent = instance_normalize(q_latent)
         q_params = tf.ragged.map_flat_values(self.output_dense, q_latent)
 
         if ragged_tensor.is_ragged(q_params):
@@ -466,13 +482,11 @@ class ImageScaler(tfk.models.Model):
                 p_latent = tf.ragged.map_flat_values(self.scale_network, p_latent)
                 p_params = tf.ragged.map_flat_values(self.output_prior, p_latent) * tf.ones_like(iobs)
                 m,s = tf.unstack(p_params.flat_values, axis=-1)
-                #s = self.bijector_function(s)
                 p = self.prior_dict[self.prior_name](m, s, self.bijector_function)
                 p_mean = p.mean()
                 p_std = p.stddev()
                 self.add_metric(tf.reduce_mean(p_mean), 'pΣ_loc')
                 self.add_metric(tf.reduce_mean(p_std), 'pΣ_scale')
-                #self.add_metric(tf.reduce_mean(p_mean / p_std), 'pΣ_width')
             else:
                 p = self.prior_dict[self.prior_name]()
 
@@ -483,8 +497,6 @@ class ImageScaler(tfk.models.Model):
                 z = z + self.epsilon 
                 p_z = p.log_prob(z)
                 kl_div = q_z - p_z
-                #self.add_metric(tf.math.reduce_mean(q_z), name='Σ_q_z')
-                #self.add_metric(tf.math.reduce_mean(p_z), name='Σ_p_z')
 
             kl_div = tf.reduce_mean(kl_div)
             self.add_loss(self.kl_weight * kl_div)

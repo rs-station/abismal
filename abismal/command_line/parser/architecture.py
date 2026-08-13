@@ -70,6 +70,15 @@ args_and_kwargs = (
         },
     ),
     (
+        ("--metadata-noise-factor",),
+        {
+            "help": "Standard deviation of the Gaussian noise added to the metadata during training. "
+            "This regularizes the model against overfitting on small data sets. The default is 0.1.",
+            "default": 0.1,
+            "type": float,
+        },
+    ),
+    (
         ("--epsilon",),
         {
             "help": "A small constant for numerical stability.",

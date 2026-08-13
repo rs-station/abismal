@@ -119,7 +119,9 @@ def main(args=None):
             else:
                 prior = WilsonPrior(rac)
         loc_init = prior.flat_distribution().mean()
-        scale_init = parser.init_scale * loc_init
+        #scale_init = parser.init_scale * loc_init
+        scale_init = prior.flat_distribution().stddev()
+        scale_init = parser.init_scale * scale_init
     elif parser.prior_distribution == 'auto_wilson':
         from abismal.prior.structure_factor.wilson import AutoWilsonPrior
         prior = AutoWilsonPrior(rac)
@@ -221,6 +223,7 @@ def main(args=None):
         optimize_prior_scale=parser.optimize_scale_prior,
         dropout=parser.dropout,
         batch_normalize=parser.batch_normalize,
+        metadata_noise_factor=parser.metadata_noise_factor,
         share_weights=True,
     )
 
@@ -362,7 +365,7 @@ def main(args=None):
         model.surrogate_posterior.trainable = False
 
     logger.info("Compiling model")
-    model.compile(opt, run_eagerly=parser.run_eagerly)
+    model.compile(opt, run_eagerly=parser.run_eagerly, jit_compile=parser.jit_compile)
     if parser.embed:
         logger.info("Embed selected, entering interactive, IPython shell.")
         from IPython import embed

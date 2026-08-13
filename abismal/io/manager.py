@@ -228,7 +228,7 @@ class DataManager:
         if self.ambiguate:
             from abismal.io.ambiguation import Ambiguator
             amb = Ambiguator.from_symmetry(self.cell, self.spacegroup)
-            data = data.map(amb)
+            data = data.enumerate().map(amb)
         return data
 
     @property

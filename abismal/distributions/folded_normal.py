@@ -204,3 +204,14 @@ class FoldedNormal(tfd.Distribution):
             norm.moment(t, loc=loc, scale=scale),
         )
         return result
+
+class ExplicitFoldedNormal(FoldedNormal):
+    def _sample_n(self, n, seed=None):
+        seed = samplers.sanitize_seed(seed)
+        loc = tf.convert_to_tensor(self.loc)
+        scale = tf.convert_to_tensor(self.scale)
+        shape = ps.concat([[n], self._batch_shape_tensor(loc=loc, scale=scale)], axis=0)
+        z = tf.random.stateless_normal(shape, seed, mean=loc, stddev=scale)
+        z = tf.abs(z)
+        return z
+

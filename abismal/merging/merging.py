@@ -145,7 +145,8 @@ class VariationalMergingModel(tfk.models.Model):
 
         scale = self.scale_model(
             inputs,
-            mc_samples=mc_samples, 
+            mc_samples=mc_samples,
+            training=training,
             **kwargs
         )
 
@@ -228,7 +229,8 @@ class VariationalMergingModel(tfk.models.Model):
 
         scale = self.scale_model(
             inputs,
-            mc_samples=mc_samples, 
+            mc_samples=mc_samples,
+            training=training,
             **kwargs
         )
 

@@ -43,6 +43,17 @@ args_and_kwargs = (
         }
     ),
 
+    (
+        (
+            "--jit-compile",
+        ),{
+            "help": "Compile the training step with XLA. Requires ptxas and libdevice from the "
+                    "nvidia-cuda-nvcc-cu12 package. NOTE: this currently fails on the ragged "
+                    "model -- RaggedRange has no XLA kernel.",
+            "action" : "store_true",
+        }
+    ),
+
 
     (
         (
