@@ -47,9 +47,11 @@ args_and_kwargs = (
         (
             "--jit-compile",
         ),{
-            "help": "Compile the training step with XLA. Requires ptxas and libdevice from the "
-                    "nvidia-cuda-nvcc-cu12 package. NOTE: this currently fails on the ragged "
-                    "model -- RaggedRange has no XLA kernel.",
+            "help": "Compile the training step with XLA. Requires ptxas and libdevice, which "
+                    "ship in the nvidia-cuda-nvcc-cu12 package. NOT RECOMMENDED: ragged_batch "
+                    "gives a different reflection count every batch, and XLA recompiles per "
+                    "shape (~8s), so this is currently far slower than not using it. Holding "
+                    "the shape fixed would only buy ~1.35x.",
             "action" : "store_true",
         }
     ),
