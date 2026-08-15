@@ -16,12 +16,21 @@ class TorchRefRunner(tfk.callbacks.Callback):
     (and therefore never initializes a second TensorFlow/CUDA context); it is a
     pure PyTorch process. Refinement runs on CPU by default to avoid contending
     with the training process for GPU memory.
+
+    When the merged data are anomalous the worker also builds an anomalous
+    difference map and runs peak finding on it, writing ``peaks.csv`` alongside
+    the refined model. That happens automatically -- anomalous data is detected
+    from the MTZ columns, so there is no separate flag to enable it. This is the
+    torchref counterpart to :class:`AnomalousPeakFinder`.
     """
 
     def __init__(self, output_directory: str, pdb_file: str,
                  epoch_stride: int = 1, asu_id: int = 0,
                  output_prefix: str = 'torchref', device: str = 'cpu',
-                 macro_cycles: int = 5, *args, **kwargs):
+                 macro_cycles: int = 5, z_score_cutoff: float = 5.,
+                 r_free_mtz: str = None, r_free_value: int = None,
+                 wavelength: float = None, adp_mode: str = 'auto',
+                 adp_aniso_sigma: str = 'auto', *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.output_prefix = output_prefix
         self.asu_id = asu_id
@@ -29,6 +38,12 @@ class TorchRefRunner(tfk.callbacks.Callback):
         self.epoch_stride = epoch_stride
         self.device = device
         self.macro_cycles = macro_cycles
+        self.z_score_cutoff = z_score_cutoff
+        self.r_free_mtz = abspath(r_free_mtz) if r_free_mtz is not None else None
+        self.r_free_value = r_free_value
+        self.wavelength = wavelength
+        self.adp_mode = adp_mode
+        self.adp_aniso_sigma = adp_aniso_sigma
         self.output_directory = abspath(output_directory)
         self.processes = []
 
@@ -66,7 +81,16 @@ class TorchRefRunner(tfk.callbacks.Callback):
             "--out-dir", result_dir,
             "--device", self.device,
             "--macro-cycles", str(self.macro_cycles),
+            "--z-score-cutoff", str(self.z_score_cutoff),
         ]
+        if self.r_free_mtz is not None:
+            command += ["--r-free-mtz", self.r_free_mtz]
+            if self.r_free_value is not None:
+                command += ["--r-free-value", str(self.r_free_value)]
+        if self.wavelength is not None:
+            command += ["--wavelength", str(self.wavelength)]
+        command += ["--adp-mode", str(self.adp_mode),
+                    "--adp-aniso-sigma", str(self.adp_aniso_sigma)]
 
         stderr = join(result_dir, "stderr.txt")
         stdout = join(result_dir, "stdout.txt")

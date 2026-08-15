@@ -329,6 +329,12 @@ def main(args=None):
                 asu_id=0,
                 output_prefix=f"torchref_{i}",
                 device='cpu',
+                z_score_cutoff=parser.torchref_z_score,
+                r_free_mtz=parser.r_free_mtz,
+                r_free_value=parser.r_free_value,
+                wavelength=parser.torchref_wavelength,
+                adp_mode=parser.torchref_adp_mode,
+                adp_aniso_sigma=parser.torchref_adp_aniso_sigma,
             )
             callbacks.append(torchref_runner)
 
