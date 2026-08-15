@@ -1,9 +1,27 @@
+import sys
 import tensorflow as tf
 import tf_keras as tfk
 from os.path import exists,dirname,abspath
 from os import mkdir,listdir,environ
 from subprocess import Popen,DEVNULL
 from abismal.callbacks import PhenixRunner
+
+
+# phenix renamed the anomalous difference phase column from PHANOM to PANOM
+# within the last couple of years, so which label the refined mtz carries
+# depends on the local phenix version. Newer names come first; the first one
+# present in the file wins.
+ANOM_PHASE_KEYS = ('PANOM', 'PHANOM')
+
+# Resolving the label has to happen after phenix.refine has written its mtz,
+# which is inside the detached shell invocation rather than here -- hence a
+# snippet rather than a function call.
+_DETECT_PHASE_KEY = (
+    "import glob, gemmi; "
+    "labels = [c.label for c in "
+    "gemmi.read_mtz_file(sorted(glob.glob('*[0-9].mtz'))[0]).columns]; "
+    "print(next((k for k in {keys} if k in labels), {default}))"
+)
 
 
 class AnomalousPeakFinder(PhenixRunner):
@@ -26,7 +44,16 @@ class AnomalousPeakFinder(PhenixRunner):
         ]
 
         command = ' '.join(command)
-        command += f";rs.find_peaks *[0-9].mtz *[0-9].pdb -f ANOM -p PANOM -z {self.z_score_cutoff} -o peaks.csv"
+
+        detect = _DETECT_PHASE_KEY.format(
+            keys=repr(ANOM_PHASE_KEYS),
+            default=repr(ANOM_PHASE_KEYS[0]),
+        )
+        command += f';PHASEKEY=$({sys.executable} -c "{detect}")'
+        command += (
+            f";rs.find_peaks *[0-9].mtz *[0-9].pdb -f ANOM -p $PHASEKEY "
+            f"-z {self.z_score_cutoff} -o peaks.csv"
+        )
 
         phenix_env = environ.copy()
         phenix_env['MTZFILE'] = mtz_file
