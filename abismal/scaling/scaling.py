@@ -415,10 +415,17 @@ class ImageScaler(tfk.models.Model):
     def pool(self, image):
         if self.num_image_samples is None:
             #return tf.math.reduce_mean(image, axis=-2, keepdims=True)
-            num = tf.math.reduce_sum(image, axis=-2, keepdims=True) - image
+            # Leave-one-out mean over each image. This is done on flat_values and
+            # gathered back per reflection rather than by broadcasting a dense
+            # per-image tensor against the ragged one: ragged/dense broadcasting
+            # emits `RaggedRange`, which has no XLA kernel (breaks --jit-compile).
+            row_ids = image.value_rowids()
+            num = tf.gather(
+                tf.math.reduce_sum(image, axis=-2), row_ids
+            ) - image.flat_values
             den = tf.cast(image.row_lengths(), 'float32') - 1.
             den = tf.maximum(den, 1.)
-            out = num / den[:,None,None]
+            out = image.with_flat_values(num / tf.gather(den, row_ids)[:, None])
         else:
             out = tf.math.reduce_mean(image, axis=-2, keepdims=True)
         return out

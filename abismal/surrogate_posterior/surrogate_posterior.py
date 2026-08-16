@@ -53,13 +53,19 @@ class PosteriorBase(tfk.models.Model):
         return cls(**config)
 
     def register_seen(self, asu_id, hkl):
-        unique,_ = tf.unique(tf.reshape(self.rac._miller_ids(asu_id, hkl), [-1]))
-        unique = unique[unique!=-1]
-        seen_batch = tf.scatter_nd(
-            unique[:,None], 
-            tf.ones_like(unique, dtype='bool'), 
-            shape=[self.rac.asu_size]
-        )
+        # `tf.unique` and boolean masking both produce data-dependent output
+        # shapes, which XLA cannot bound -- under jit_compile they lower to a
+        # runtime buffer-size assert that fails. A segment reduction gets the
+        # same answer with a statically shaped [asu_size] output: duplicates
+        # collapse via the sum, and invalid (-1) ids are parked at index 0 with
+        # a zero contribution so they can never mark it seen.
+        ids = tf.reshape(self.rac._miller_ids(asu_id, hkl), [-1])
+        valid = ids != -1
+        seen_batch = tf.math.unsorted_segment_sum(
+            tf.cast(valid, 'int32'),
+            tf.where(valid, ids, tf.zeros_like(ids)),
+            num_segments=self.rac.asu_size,
+        ) > 0
         self.seen.assign(self.seen | seen_batch)
 
     def distribution(self, asu_id, hkl):
