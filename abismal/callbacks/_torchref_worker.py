@@ -85,7 +85,23 @@ ADP_SEARCH_RFREE_SE = 0.001
 Z_SCORE_CUTOFF = 5.0
 
 # FFT oversampling used when transforming map coefficients to a real-space grid.
-SAMPLE_RATE = 3.0
+#
+# `peakz` is a max over grid nodes, so it underestimates the continuous maximum
+# by more the coarser the grid. Measured on cxidb_81_small epoch 100 (grid
+# spacing in A, peak z-score at the Zn site):
+#
+#     sample_rate   3      4      5      6      7      8
+#     spacing    0.65   0.49   0.39   0.33   0.29   0.24
+#     ZN317     23.50  23.08  24.26  24.29  24.14  24.73
+#
+# It does not converge -- the estimator is biased low and the bias only shrinks,
+# jittering +-0.3 with where nodes fall (note 4 reads *below* 3). 5 buys ~0.5
+# sigma over 3 and escapes the coarse-grid dips, for 0.39 s against 0.10 s per
+# epoch, so it is where we stop. Because it is not converged, the value must
+# stay FIXED and identical on both sides of any comparison; see
+# find_anomalous_peaks for the matching dmin requirement. Removing the bias
+# rather than shrinking it needs subpixel refinement in rsbooster.
+SAMPLE_RATE = 5.0
 
 # Markers delimiting the machine-readable summary at the end of stdout. Keep
 # these in sync with the parser in abismal-benchmarks/scripts/plot_progress.py.
@@ -373,12 +389,25 @@ def prepare_data(mtz_path, pdb_path, out_dir, r_free_mtz=None,
 
 
 def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
-                         z_score_cutoff=Z_SCORE_CUTOFF):
+                         z_score_cutoff=Z_SCORE_CUTOFF, dmin=None):
     """Search torchref's anomalous difference map for peaks near the model.
 
     ANOM/PANOM come straight out of ``write_out_mtz`` on anomalous data, so the
     map is built from the anomalously refined model rather than reconstructed
     here.
+
+    `dmin` fixes the FFT grid. gemmi has no dmin argument -- it sizes the grid
+    from the largest Miller index *present as a row*, NaN values included -- so
+    the cut has to happen before `transform_f_phi_to_map`. Reflections with a
+    NaN coefficient contribute nothing to the map, so dropping them changes only
+    the grid, never the density.
+
+    This matters because `peakz` is a max over grid nodes, which underestimates
+    the continuous maximum by more the coarser the grid. phenix pads
+    `refine_001.mtz` out to 1.0 A with all-NaN ANOM, so gemmi hands it a 0.38 A
+    grid where the same coefficients at abismal's true 1.8 A limit get 0.65 A --
+    worth ~1 sigma on every peak, purely from sampling. Peak heights are only
+    comparable on a common grid, so pin both sides to the same dmin.
     """
     import gemmi
     import reciprocalspaceship as rs
@@ -394,9 +423,25 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
         )
         return None
 
+    if dmin is not None:
+        n_before = len(ds)
+        ds = ds.compute_dHKL()
+        ds = ds.loc[ds["dHKL"] >= float(dmin)]
+        print(
+            f"peak finding at dmin={float(dmin):.2f} A: kept {len(ds)}/{n_before} "
+            "reflections (fixes the FFT grid)",
+            flush=True,
+        )
+
     structure = gemmi.read_pdb(str(pdb_file))
     mtz = ds[["ANOM", "PANOM"]].to_gemmi()
     grid = mtz.transform_f_phi_to_map("ANOM", "PANOM", sample_rate=SAMPLE_RATE)
+    print(
+        f"anomalous map grid {tuple(grid.shape)} "
+        f"({structure.cell.a / grid.shape[0]:.2f} A spacing, "
+        f"sample_rate={SAMPLE_RATE})",
+        flush=True,
+    )
 
     report = peak_report(structure, grid, sigma_cutoff=z_score_cutoff)
     report.to_csv(str(out_csv), index=False)
@@ -409,7 +454,8 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
 
 def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
         z_score_cutoff=Z_SCORE_CUTOFF, r_free_mtz=None, r_free_value=None,
-        wavelength=None, adp_mode="auto", adp_aniso_sigma="auto"):
+        wavelength=None, adp_mode="auto", adp_aniso_sigma="auto",
+        peak_dmin=None):
     import torch
     from torchref import LBFGSRefinement
 
@@ -518,7 +564,7 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
     if anomalous:
         out_csv = out_dir / "peaks.csv"
         if find_anomalous_peaks(
-            refined_mtz, refined_pdb, out_csv, z_score_cutoff
+            refined_mtz, refined_pdb, out_csv, z_score_cutoff, dmin=peak_dmin
         ) is not None:
             peaks_csv = out_csv
 
@@ -594,6 +640,18 @@ def main(argv=None):
              "ignore it.",
     )
     p.add_argument(
+        "--peak-dmin",
+        type=float,
+        default=None,
+        help="High-resolution limit (Angstroms) for the anomalous difference "
+             "map. Reflections beyond it are dropped before the FFT, which is "
+             "the only way to pin the grid -- gemmi sizes it from the largest "
+             "Miller index present, counting NaN-valued rows. Peak z-scores are "
+             "a max over grid nodes and so are only comparable between programs "
+             "on a common grid; set this to the same value on both sides. "
+             "Omitted uses whatever the refined MTZ contains.",
+    )
+    p.add_argument(
         "--wavelength",
         type=float,
         default=None,
@@ -614,6 +672,7 @@ def main(argv=None):
         wavelength=args.wavelength,
         adp_mode=args.adp_mode,
         adp_aniso_sigma=args.adp_aniso_sigma,
+        peak_dmin=args.peak_dmin,
     )
 
 
