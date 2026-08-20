@@ -185,6 +185,23 @@ def peak_detect_cutoff(z_score_cutoff):
 # stay FIXED and identical on both sides of any comparison; see
 # find_anomalous_peaks for the matching dmin requirement. Removing the bias
 # rather than shrinking it needs subpixel refinement in rsbooster.
+#
+# SAMPLE_RATE also couples to peak *detection*, not just peak height. gemmi
+# drops blobs under 3 voxels (see PEAK_DETECT_MARGIN), so the smallest
+# detectable peak is 3 * spacing^3 -- a physical volume that shrinks as the grid
+# is refined. HOH1002 above 5 sigma spans ~0.13-0.19 A^3 whatever the sampling,
+# so at a 5 sigma cutoff it is invisible up to sample_rate 5 and found from 6:
+#
+#     sample_rate    2      3      4      5      6      8
+#     spacing (A) 0.979  0.653  0.490  0.392  0.326  0.245
+#     blob voxels    --     --     --     --      5     17
+#
+# Note sample_rate is d_min/spacing, so critical (Nyquist) sampling is 2.0 and
+# 5.0 is 2.3x Nyquist after grid rounding, not 5x. Two independent fixes cover
+# this peak -- the detection margin and the sampling -- and the margin alone is
+# enough at 5.0, where the blob spans 9 voxels at the 3 sigma detect cutoff.
+# Raising SAMPLE_RATE is the lever to reach for if Z_SCORE_CUTOFF is ever pushed
+# below 5 sigma; LOWERING it would put weak peaks back under the voxel floor.
 SAMPLE_RATE = 5.0
 
 # Markers delimiting the machine-readable summary at the end of stdout. Keep
