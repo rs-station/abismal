@@ -3,6 +3,7 @@ import tf_keras as tfk
 from os.path import exists, abspath, dirname, join
 from os import mkdir, environ
 from subprocess import Popen
+from warnings import warn
 
 
 class TorchRefRunner(tfk.callbacks.Callback):
@@ -53,13 +54,52 @@ class TorchRefRunner(tfk.callbacks.Callback):
         if not exists(self.output_directory):
             mkdir(output_directory)
 
+    def _reap(self, block=False):
+        """Collect finished workers, reporting any that failed.
+
+        Called every epoch. Without it `self.processes` grows without bound and
+        each finished worker stays a zombie for the length of training -- one
+        per epoch at the default `--torchref-frequency 1`.
+
+        A worker failure is otherwise invisible: it writes to `stderr.txt`
+        inside its own result directory and training carries on reporting
+        success. Surface the returncode instead, once, with the path to look in.
+        """
+        still_running = []
+        for process, result_dir in self.processes:
+            if block:
+                process.wait()
+            elif process.poll() is None:
+                still_running.append((process, result_dir))
+                continue
+            if process.returncode:
+                warn(
+                    f"torchref worker for {result_dir} exited with "
+                    f"{process.returncode}; see {join(result_dir, 'stderr.txt')}",
+                    RuntimeWarning,
+                )
+        self.processes = still_running
+
     def on_train_end(self, logs=None):
-        for p in self.processes:
-            p.wait()
+        self._reap(block=True)
 
     def on_epoch_end(self, epoch, logs=None):
-        if self.pdb_file is not None and (epoch + 1) % self.epoch_stride == 0:
-            self.run_torchref(epoch)
+        self._reap()
+        if self.pdb_file is None or (epoch + 1) % self.epoch_stride:
+            return
+        if self.processes:
+            # Refinement is CPU-bound and can outlast an epoch. Letting runs
+            # pile up would put N of them on the box at once, each fighting the
+            # others and the trainer for cores, so skip instead. The next
+            # multiple of epoch_stride will pick up better-converged data
+            # anyway.
+            warn(
+                f"skipping torchref at epoch {epoch + 1}: "
+                f"{len(self.processes)} earlier run(s) still going",
+                RuntimeWarning,
+            )
+            return
+        self.run_torchref(epoch)
 
     def run_torchref(self, epoch):
         mtz_file = f"{self.output_directory}/asu_{self.asu_id}_epoch_{epoch+1}.mtz"
@@ -102,4 +142,4 @@ class TorchRefRunner(tfk.callbacks.Callback):
         stdout = join(result_dir, "stdout.txt")
         with open(stderr, 'w') as e, open(stdout, 'w') as o:
             p = Popen(command, cwd=result_dir, stderr=e, stdout=o)
-            self.processes.append(p)
+            self.processes.append((p, result_dir))

@@ -162,21 +162,41 @@ def map_grid_size(cell, voxel_size=VOXEL_SIZE_ANGSTROMS):
     """Minimum grid dimensions giving at most `voxel_size` spacing on each axis.
 
     Passed to gemmi as `min_size`; gemmi rounds each up to an FFT-friendly
-    number, so the realised spacing is at most what was asked for.
+    number, so the realised spacing is at most what was asked for. Uses the
+    axis step length ``cell.a / nu``, which for a non-orthogonal cell is an
+    OVER-estimate of the true perpendicular spacing -- so the resulting grid is
+    never coarser than requested, only finer. Measure the realised spacing with
+    :func:`grid_spacing`, not by repeating this division.
     """
     return [int(math.ceil(length / voxel_size))
             for length in (cell.a, cell.b, cell.c)]
 
 
-def peak_min_distance(cell, shape, separation=PEAK_MIN_DISTANCE_ANGSTROMS):
+def grid_spacing(grid):
+    """True perpendicular spacing (A) of a gemmi grid, one value per axis.
+
+    ``cell.a / nu`` is the length of the grid *step vector*, which equals the
+    inter-plane distance only for an orthogonal cell. On the P6122 benchmark it
+    over-reports by 13% (0.2937 A against gemmi's 0.2544 A), and the error is a
+    function of the cell angles -- so anything derived from it means a different
+    physical size per dataset, which is exactly what sizing the map by voxel
+    size exists to prevent.
+
+    Note gemmi recomputes ``spacing`` only inside ``set_unit_cell``; assigning
+    ``grid.unit_cell`` directly leaves it reporting the previous cell's value.
+    Grids from ``transform_f_phi_to_map`` are always set correctly.
+    """
+    return tuple(grid.spacing)
+
+
+def peak_min_distance(grid, separation=PEAK_MIN_DISTANCE_ANGSTROMS):
     """`separation` in Angstroms expressed as whole voxels, at least 1.
 
     peak_local_max measures min_distance isotropically in index space, so use
     the COARSEST axis: that is where a given voxel count spans the most
     Angstroms, and overshooting there is what would merge two real atoms.
     """
-    coarsest = max(cell.a / shape[0], cell.b / shape[1], cell.c / shape[2])
-    return max(1, int(separation / coarsest))
+    return max(1, int(separation / max(grid_spacing(grid))))
 
 # Markers delimiting the machine-readable summary at the end of stdout. Keep
 # these in sync with the parser in abismal-benchmarks/scripts/plot_progress.py.
@@ -212,20 +232,26 @@ def resolve_adp_mode(adp_mode, pdb_path):
     """
     if adp_mode != "auto":
         return adp_mode
-    n_anisou = 0
-    with open(pdb_path) as f:
-        for line in f:
-            if line.startswith("ANISOU"):
-                n_anisou += 1
+    import gemmi
+
+    # Read through gemmi rather than grepping for ANISOU lines: prepare_data
+    # already loads the model with gemmi, and a .cif starting model has no
+    # ANISOU records at all, so text matching silently reports isotropic for
+    # every mmCIF input.
+    structure = gemmi.read_structure(str(pdb_path))
+    n_anisou = sum(
+        1 for model in structure for chain in model for residue in chain
+        for atom in residue if atom.aniso.nonzero()
+    )
     mode = "anisotropic" if n_anisou else "isotropic"
     print(
-        f"adp-mode auto -> {mode} ({n_anisou} ANISOU records in the model)",
+        f"adp-mode auto -> {mode} ({n_anisou} atoms with anisotropic U)",
         flush=True,
     )
     return mode
 
 
-def search_aniso_sigma(build_refinement, out_dir, ladder=ADP_ANISO_SIGMA_LADDER):
+def search_aniso_sigma(build_refinement, ladder=ADP_ANISO_SIGMA_LADDER):
     """Fit SIMU's deviatoric sigma by cross-validation on Rfree.
 
     Refines at each candidate sigma and keeps the one with the lowest Rfree --
@@ -259,7 +285,7 @@ def search_aniso_sigma(build_refinement, out_dir, ladder=ADP_ANISO_SIGMA_LADDER)
         # The trial is only meaningful if it actually ran at sigma=w. Without
         # this the ladder can silently collapse to N identical runs at the
         # default and still report a confident fitted value.
-        spec = {"simu": {"simu_sigma_aniso": float(w)}}
+        spec = adp_restraint_spec("anisotropic", w)
         for _ in range(ADP_SEARCH_CYCLES):
             apply_adp_restraints(ref, spec, f"sigma={w:g} trial")
             ref.refine_scaler()
@@ -345,13 +371,23 @@ def apply_adp_restraints(ref, spec, where):
     for component, attrs in spec.items():
         target = ref.adp_target[component]
         for attr, value in attrs.items():
+            # Check BEFORE setting. setattr on a plain object happily creates a
+            # new instance attribute, so a read-back after the fact returns what
+            # we just wrote no matter what the real knob is called -- the check
+            # would pass while the restraint stayed at its default.
+            if not hasattr(target, attr):
+                raise RuntimeError(
+                    f"adp/{component} has no attribute {attr!r} at {where}; "
+                    "torchref renamed or removed it, and setting it here would "
+                    "silently do nothing."
+                )
             setattr(target, attr, value)
             got = getattr(target, attr)
             if abs(float(got) - float(value)) > 1e-5:
                 raise RuntimeError(
                     f"adp/{component}.{attr} did not stick at {where}: "
-                    f"set {value:g}, read back {float(got):g}. A target rebuild "
-                    "happened after this call, or the attribute was renamed."
+                    f"set {value:g}, read back {float(got):g}. The setter "
+                    "clamped or rejected the value."
                 )
 
 
@@ -368,9 +404,13 @@ def restraint_audit(ref, spec):
             bits.append(f"{component}.{attr}={float(getattr(ref.adp_target[component], attr)):g}")
     try:
         weights = ref.weighting(ref.complete_loss_state())
+    except (AttributeError, TypeError) as err:
+        # Narrow, and loud. This helper exists to make silent restraint loss
+        # visible, so it must not go silent itself when torchref renames the
+        # weighting API.
+        bits.append(f"w[adp]=<unavailable: {type(err).__name__}>")
+    else:
         bits.append(f"w[adp]={float(weights.get('adp', float('nan'))):g}")
-    except Exception:
-        pass
     return "  ".join(bits)
 
 
@@ -693,7 +733,7 @@ def peaks_by_local_max(structure, grid, z_score_cutoff,
 
     arr = np.array(grid, copy=False)
     if min_distance is None:
-        min_distance = peak_min_distance(structure.cell, arr.shape)
+        min_distance = peak_min_distance(grid)
     mu, sd = float(arr.mean()), float(arr.std())
     threshold = mu + z_score_cutoff * sd
 
@@ -708,7 +748,7 @@ def peaks_by_local_max(structure, grid, z_score_cutoff,
     voxel_volume = cell.volume / arr.size
     n = np.array(arr.shape, dtype=float)
 
-    rows = []
+    rows, n_unmatched = [], 0
     for i in idx:
         peak_value = float(arr[tuple(i)])
         off, vals = _peak_region(arr, i, min_distance, threshold)
@@ -719,15 +759,26 @@ def peaks_by_local_max(structure, grid, z_score_cutoff,
         centroid_idx = i + (off * vals[:, None]).sum(axis=0) / vals.sum()
         centroid = cell.orthogonalize(gemmi.Fractional(*(centroid_idx / n)))
 
+        # `dedup_symmetry` keeps whichever symmetry copy was strongest, so the
+        # centroid can sit anywhere in the cell while the matched atom sits in
+        # the model's own copy. Move the centroid onto the atom's image before
+        # reporting, or `cen*` and `coord*` land in different frames and their
+        # separation bears no relation to `dist` -- 60-120 A apart in practice.
         best = None
         for mark in ns.find_atoms(centroid):
             cra = mark.to_cra(model)
-            dist = cell.find_nearest_pbc_image(centroid, cra.atom.pos, mark.image_idx).dist()
+            image = cell.find_nearest_pbc_image(centroid, cra.atom.pos, mark.image_idx)
+            dist = image.dist()
             if best is None or dist < best[0]:
-                best = (dist, cra)
+                # Move the ATOM onto the image nearest the peak. The peak is
+                # the measurement; the atom is what it is being attributed to,
+                # and this keeps |cen - coord| == dist exactly.
+                best = (dist, cra, cell.find_nearest_pbc_position(
+                    centroid, cra.atom.pos, mark.image_idx))
         if best is None or best[0] > distance_cutoff:
+            n_unmatched += 1
             continue
-        dist, cra = best
+        dist, cra, atom_pos = best
         rows.append({
             "chain": cra.chain.name,
             "seqid": cra.residue.seqid.num,
@@ -739,8 +790,14 @@ def peaks_by_local_max(structure, grid, z_score_cutoff,
             "score": score,
             "scorez": score / sd,
             "cenx": centroid.x, "ceny": centroid.y, "cenz": centroid.z,
-            "coordx": cra.atom.pos.x, "coordy": cra.atom.pos.y, "coordz": cra.atom.pos.z,
+            "coordx": atom_pos.x, "coordy": atom_pos.y, "coordz": atom_pos.z,
         })
+    if n_unmatched:
+        print(
+            f"  {n_unmatched} peak(s) had no atom within {distance_cutoff:g} A "
+            "and were dropped",
+            flush=True,
+        )
     return pd.DataFrame(rows, columns=PEAK_COLUMNS)
 
 
@@ -771,8 +828,7 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
     grid = mtz.transform_f_phi_to_map(
         "ANOM", "PANOM", min_size=map_grid_size(structure.cell)
     )
-    cell = structure.cell
-    spacing = (cell.a / grid.shape[0], cell.b / grid.shape[1], cell.c / grid.shape[2])
+    spacing = grid_spacing(grid)
     print(
         f"anomalous map grid {tuple(grid.shape)} "
         f"(spacing {spacing[0]:.3f}/{spacing[1]:.3f}/{spacing[2]:.3f} A, "
@@ -780,13 +836,14 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
         flush=True,
     )
 
-    min_distance = peak_min_distance(cell, grid.shape)
+    min_distance = peak_min_distance(grid)
     report = peaks_by_local_max(
         structure, grid, z_score_cutoff, min_distance=min_distance
     )
     print(
         f"peak_local_max (min_distance {min_distance} voxels "
-        f"= {PEAK_MIN_DISTANCE_ANGSTROMS:g} A): {len(report)} peaks at or above "
+        f"= {min_distance * max(spacing):.2f} A, requested "
+        f"{PEAK_MIN_DISTANCE_ANGSTROMS:g} A): {len(report)} peaks at or above "
         f"{z_score_cutoff:g} sigma",
         flush=True,
     )
@@ -856,7 +913,7 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
         sigma = None
         print("isotropic ADPs: no anisotropy restraint to fit", flush=True)
     elif adp_aniso_sigma == "auto":
-        sigma = search_aniso_sigma(build, out_dir)
+        sigma = search_aniso_sigma(build)
     else:
         sigma = float(adp_aniso_sigma)
         print(f"adp aniso sigma: {sigma:g} (fixed)", flush=True)
@@ -897,10 +954,11 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
         run_rigid_body(ref, spec, rigid_body_iter)
 
     for cycle in range(macro_cycles):
-        # Re-assert the restraint configuration before every cycle. Nothing on
-        # today's path rebuilds the ADP targets, so this is currently a no-op --
-        # it is here so that adding a step which does (rigid body is the one we
-        # want next) cannot silently drop a fitted sigma back to the default.
+        # Re-assert the restraint configuration before every cycle. The
+        # rigid-body step above rebuilds the ADP targets once per resolution
+        # cutoff and resets component sigmas to their defaults, so this is load
+        # bearing, not defensive. Kept in the loop rather than only after rigid
+        # body so that any future step which rebuilds is covered too.
         # See apply_adp_restraints.
         apply_adp_restraints(ref, spec, f"cycle {cycle + 1}")
         if getattr(ref.scaler, "solvent", None) is not None:

@@ -32,7 +32,7 @@ def worker():
 
 def _grid(shape=(24, 24, 24), cell=(24.0, 24.0, 24.0, 90, 90, 90), spacegroup="P 1"):
     g = gemmi.FloatGrid(*shape)
-    g.unit_cell = gemmi.UnitCell(*cell)
+    g.set_unit_cell(gemmi.UnitCell(*cell))
     g.spacegroup = gemmi.SpaceGroup(spacegroup)
     return g
 
@@ -60,24 +60,61 @@ def test_map_grid_size_scales_with_cell_not_resolution(worker):
     assert [2 * n for n in small] == large
 
 
-def test_peak_min_distance_uses_the_coarsest_axis(worker):
-    """A voxel count must not overshoot the requested separation anywhere.
+@pytest.mark.parametrize("cell,spacegroup", [
+    ((60.0, 70.0, 80.0, 90, 90, 90), "P 21 21 21"),      # orthorhombic
+    ((93.99, 93.99, 130.87, 90, 90, 120), "P 61 2 2"),   # hexagonal
+    ((40.0, 45.0, 50.0, 75, 80, 85), "P 1"),             # oblique triclinic
+])
+def test_requested_voxel_size_holds_in_real_space(worker, cell, spacegroup):
+    """The realised spacing must honour the request on every axis, for any cell.
 
-    peak_local_max measures min_distance isotropically in index space, so on an
-    anisotropic grid the coarsest axis is the binding one -- overshooting there
-    is what would merge two real atoms.
+    The regression: `cell.a / nu` is the grid STEP length, which equals the
+    perpendicular inter-plane distance only when the cell is orthogonal. Deriving
+    physical sizes from it over-reported by 13% on the P6122 benchmark, so a
+    voxel meant a different physical size per dataset -- precisely what sizing
+    the map by voxel size exists to prevent.
     """
-    cell = gemmi.UnitCell(10.0, 10.0, 40.0, 90, 90, 90)
-    shape = (100, 100, 100)          # 0.1, 0.1, 0.4 A spacing
-    n = worker.peak_min_distance(cell, shape, separation=1.0)
-    assert n * 0.4 <= 1.0            # coarsest axis stays within the request
+    unit_cell = gemmi.UnitCell(*cell)
+    grid = gemmi.FloatGrid(*worker.map_grid_size(unit_cell, voxel_size=0.3))
+    # set_unit_cell(), not `grid.unit_cell = ...`: gemmi recomputes `spacing`
+    # only in the setter, so assignment leaves it at the default cell's value.
+    grid.set_unit_cell(unit_cell)
+    grid.spacegroup = gemmi.SpaceGroup(spacegroup)
+
+    for spacing in worker.grid_spacing(grid):
+        assert spacing <= 0.3 + 1e-9
+
+
+@pytest.mark.parametrize("cell,spacegroup", [
+    ((60.0, 70.0, 80.0, 90, 90, 90), "P 21 21 21"),
+    ((93.99, 93.99, 130.87, 90, 90, 120), "P 61 2 2"),
+    ((40.0, 45.0, 50.0, 75, 80, 85), "P 1"),
+])
+def test_peak_separation_never_overshoots(worker, cell, spacegroup):
+    """min_distance voxels must span at most the requested separation.
+
+    peak_local_max measures min_distance isotropically in index space, so the
+    coarsest axis binds -- overshooting there is what would merge two real
+    atoms, e.g. the two sulfurs of a disulfide 2.0 A apart.
+    """
+    unit_cell = gemmi.UnitCell(*cell)
+    grid = gemmi.FloatGrid(*worker.map_grid_size(unit_cell, voxel_size=0.3))
+    # set_unit_cell(), not `grid.unit_cell = ...`: gemmi recomputes `spacing`
+    # only in the setter, so assignment leaves it at the default cell's value.
+    grid.set_unit_cell(unit_cell)
+    grid.spacegroup = gemmi.SpaceGroup(spacegroup)
+
+    n = worker.peak_min_distance(grid, separation=1.0)
     assert n >= 1
+    assert n * max(worker.grid_spacing(grid)) <= 1.0 + 1e-9
 
 
 def test_peak_min_distance_never_zero(worker):
     """A grid coarser than the requested separation still separates by 1 voxel."""
-    cell = gemmi.UnitCell(100.0, 100.0, 100.0, 90, 90, 90)
-    assert worker.peak_min_distance(cell, (10, 10, 10), separation=1.0) == 1
+    grid = gemmi.FloatGrid(10, 10, 10)
+    grid.set_unit_cell(gemmi.UnitCell(100.0, 100.0, 100.0, 90, 90, 90))
+    grid.spacegroup = gemmi.SpaceGroup("P 1")
+    assert worker.peak_min_distance(grid, separation=1.0) == 1
 
 
 # --------------------------------------------------------------------------

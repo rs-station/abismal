@@ -124,7 +124,13 @@ class MultiWilsonDistribution:
 
         #Double wilson case for child nodes
         loc = self.correlation * z_pa
-        scale = tf.sqrt(self.multiplicity * (1. - tf.square(self.correlation)))
+        # sqrt(epsilon_h * Sigma_h * (1 - r^2)), per the class docstring. Sigma
+        # was missing here while the root branch above passes it, so child nodes
+        # got a prior width off by sqrt(Sigma). Invisible at the default
+        # sigma=1.0 and wrong for empirical_wilson / AutoWilsonPrior.
+        scale = tf.sqrt(
+            self.multiplicity * self.sigma * (1. - tf.square(self.correlation))
+        )
         ll_dw = tf.where(
             self.centric,
             FoldedNormal(loc, scale).log_prob(z_h),
@@ -219,15 +225,21 @@ class MultiWilsonPrior(PriorBase):
             root = self.rac.gather(self.rac.is_root, asu_id, hkl)
             centric = self.rac.gather(self.rac.centric, asu_id, hkl)
             epsilon = self.rac.gather(self.rac.epsilon, asu_id, hkl)
-            correlation = tf.squeeze(tf.gather(self.correlation, asu_id), axis=-1)
-            parent_id = None
-            asu_id = self.rac.asu_id
-            hkl = self.rac.Hunique
+            # `self.correlation` is the per-Miller-index expansion, so indexing
+            # it by asu_id would return the correlation of Miller ids 0..n_asu,
+            # silently yielding ~0 for most reflections. The per-ASU vector is
+            # `self._correlation`.
+            correlation = tf.gather(self._correlation, asu_id)
+            # log_prob gathers z at these indices, so they must be flat Miller
+            # ids into the full ASU collection -- the same space
+            # `rac.parent_miller_id` is already in.
+            parent_id = self.rac.gather(self.rac.parent_miller_id, asu_id, hkl)
             if len(tf.shape(sigma)) > 0:
-                sigma = tf.squeeze(
-                    self.rac.gather(self.sigma, asu_id, hkl),
-                    axis=-1,
-                )
+                # Gather with the CALLER's asu_id/hkl. These used to be
+                # overwritten with the full-ASU vectors just above, which both
+                # mismatched the batch length and passed a rank-2 hkl where a
+                # rank-1 index was expected.
+                sigma = self.rac.gather(self.sigma, asu_id, hkl)
         p = MultiWilsonDistribution(root, correlation, centric, epsilon, sigma, parent_id=parent_id)
         return p
 
