@@ -81,6 +81,23 @@ ADP_SEARCH_CYCLES = 2
 # Rounded up to 0.001.
 ADP_SEARCH_RFREE_SE = 0.001
 
+# LBFGS max_iter per resolution cutoff during rigid-body refinement.
+#
+# torchref's CLI default is 30, which its own docstring says under-converges
+# ("9RTS needs >= 100; raise it for production"). Rigid body is 6 parameters per
+# chain against tens of thousands of reflections, so it cannot overfit and the
+# extra iterations are cheap insurance rather than a risk.
+#
+# Worth on cxidb_81_small ep100 (isotropic, Rwork/Rfree):
+#     without rigid body : 0.2050 / 0.2205
+#     with rigid body    : 0.2009 / 0.2163
+# Both R-values improve, which is the signature of a better model rather than
+# overfitting. It matters when the starting model is not already in register
+# with the data -- 2tli is a deposited model and the abismal cell differs from
+# the model cell by ~0.8%. On hewl, whose reference model was already refined
+# against its own data, it is worth <0.001: neutral, not harmful.
+RIGID_BODY_ITER = 100
+
 # Z-score cutoff for anomalous peak finding, matching AnomalousPeakFinder.
 Z_SCORE_CUTOFF = 5.0
 
@@ -297,6 +314,55 @@ def restraint_audit(ref, spec):
     except Exception:
         pass
     return "  ".join(bits)
+
+
+def run_rigid_body(ref, spec, iterations=RIGID_BODY_ITER):
+    """Per-chain rigid-body refinement, then put the scaler and restraints back.
+
+    Three things have to follow the rigid-body step, and all three are easy to
+    miss because omitting any of them fails quietly rather than loudly:
+
+    1. `get_scales()`. The scaler was fitted against the old coordinates, and
+       the bulk-solvent mask was built from them. Rebuilding is also what makes
+       the stale `Scaler._f_sol_raw` cache irrelevant -- torchref's macrocycle
+       loop calls `solvent.update_solvent()` without clearing that cache, so the
+       rebuilt mask would otherwise never reach F_calc. Inert while coordinates
+       are frozen; live the moment rigid body moves them.
+    2. Re-assert the ADP restraints. `refine_rigid_body` rebuilds the ADP
+       targets once per resolution cutoff, resetting component sigmas to their
+       defaults. See apply_adp_restraints.
+    3. Report the shift. A rigid-body step that moved nothing means the model
+       was already in register, which is worth knowing; a large shift is worth
+       knowing for the opposite reason.
+
+    Runs before the macrocycle loop, matching the benchmark's phenix protocol
+    (`strategy = *rigid_body *individual_adp`) -- and phenix likewise runs it
+    once, up front, not per macrocycle.
+    """
+    import torch
+
+    with torch.no_grad():
+        before = ref.model.xyz().detach().clone()
+
+    rw0, rf0 = ref.get_rfactor()
+    ref.refine_rigid_body(iterations_per_step=iterations)
+
+    # Scaler and solvent mask were fitted against the pre-shift coordinates.
+    ref.get_scales()
+    # And the ADP targets were just rebuilt out from under us.
+    apply_adp_restraints(ref, spec, "rigid body")
+
+    with torch.no_grad():
+        shift = (ref.model.xyz().detach() - before).norm(dim=-1)
+        rmsd = float(shift.pow(2).mean().sqrt())
+        dmax = float(shift.max())
+    rw, rf = ref.get_rfactor()
+    print(
+        f"Rigid body ({iterations} iter/cutoff): "
+        f"Rwork {rw0:.4f}->{rw:.4f}  Rfree {rf0:.4f}->{rf:.4f}  "
+        f"shift rmsd={rmsd:.3f} A max={dmax:.3f} A",
+        flush=True,
+    )
 
 
 def reset_b_factors(ref, torch):
@@ -536,7 +602,7 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
 def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
         z_score_cutoff=Z_SCORE_CUTOFF, r_free_mtz=None, r_free_value=None,
         wavelength=None, adp_mode="auto", adp_aniso_sigma="auto",
-        peak_dmin=None):
+        peak_dmin=None, rigid_body=True, rigid_body_iter=RIGID_BODY_ITER):
     import torch
     from torchref import LBFGSRefinement
 
@@ -622,6 +688,15 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
     # refine_scaler() inside the loop.
     ref.get_scales()
     spec = adp_restraint_spec(adp_mode, sigma)
+
+    # Rigid body first, on the flat-B model, so the macrocycles refine ADPs
+    # against a model that is already in register. Deliberately not run inside
+    # search_aniso_sigma's trials: the search ranks *restraint* sigmas, that
+    # ranking is unaffected by a sub-Angstrom global shift, and paying for it
+    # per rung would multiply the search cost by the ladder length.
+    if rigid_body:
+        run_rigid_body(ref, spec, rigid_body_iter)
+
     for cycle in range(macro_cycles):
         # Re-assert the restraint configuration before every cycle. Nothing on
         # today's path rebuilds the ADP targets, so this is currently a no-op --
@@ -729,6 +804,25 @@ def main(argv=None):
              "ignore it.",
     )
     p.add_argument(
+        "--no-rigid-body",
+        dest="rigid_body",
+        action="store_false",
+        help="Skip the per-chain rigid-body step that runs before the ADP "
+             "macrocycles. On by default: it is 6 parameters per chain against "
+             "tens of thousands of reflections, so it cannot overfit, and it "
+             "improves both Rwork and Rfree whenever the starting model is not "
+             "already in register with the data (worth ~0.004 on both for "
+             "cxidb_81_small, ~0.000 on hewl).",
+    )
+    p.add_argument(
+        "--rigid-body-iter",
+        type=int,
+        default=RIGID_BODY_ITER,
+        help=f"LBFGS max_iter per resolution cutoff during rigid-body "
+             f"refinement (default {RIGID_BODY_ITER}). torchref's own default "
+             "of 30 under-converges by its docstring.",
+    )
+    p.add_argument(
         "--peak-dmin",
         type=float,
         default=None,
@@ -762,6 +856,8 @@ def main(argv=None):
         adp_mode=args.adp_mode,
         adp_aniso_sigma=args.adp_aniso_sigma,
         peak_dmin=args.peak_dmin,
+        rigid_body=args.rigid_body,
+        rigid_body_iter=args.rigid_body_iter,
     )
 
 
