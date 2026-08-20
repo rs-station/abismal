@@ -30,6 +30,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import numpy as np
+
 # Invoked by file path, Python prepends this script's directory
 # (abismal/callbacks/) to sys.path, where the sibling ``torchref.py`` callback
 # module would shadow the installed ``torchref`` package. Drop that entry so
@@ -107,6 +109,29 @@ RIGID_BODY_ITER = 30
 # need. A bigger correction is the regime torchref's docstring warns about, and
 # nothing else in the output would reveal an under-converged step, so say so.
 RIGID_BODY_LARGE_SHIFT = 0.5
+
+# Columns rsbooster's peak_report emits, preserved so peaks.csv stays a
+# drop-in for anything downstream (abismal-benchmarks/scripts/plot_progress.py
+# reads residue/seqid/peakz).
+PEAK_COLUMNS = [
+    "chain", "seqid", "residue", "name", "dist", "peak", "peakz", "score",
+    "scorez", "cenx", "ceny", "cenz", "coordx", "coordy", "coordz",
+]
+
+# Peak-finding backend. 'local_max' is skimage's peak_local_max over a
+# periodically padded map; 'floodfill' is the legacy gemmi connected-component
+# search via rsbooster, kept only so a benchmark can compare the two.
+#
+# local_max is the default because it is strictly better on the two axes that
+# matter here. It is threshold-independent -- identical peaks and z-scores from
+# 0 to 5 sigma on both test datasets -- where flood fill silently loses genuine
+# sites whose blob falls under gemmi's hard 3-voxel floor (a 5.55 sigma Zn site
+# on cxidb_81_small vanished at a 5.0 sigma cutoff). And it resolves peaks flood
+# fill merges: on hewl it reports both sulfurs of all four disulfides (10 peaks)
+# where flood fill reported one per disulfide (6).
+#
+# Costs ~0.5 s against ~0.1 s per epoch, negligible beside a ~64 s refinement.
+PEAK_METHOD = "local_max"
 
 # Z-score cutoff for anomalous peak finding, matching AnomalousPeakFinder.
 Z_SCORE_CUTOFF = 5.0
@@ -626,8 +651,160 @@ def prepare_data(mtz_path, pdb_path, out_dir, r_free_mtz=None,
     return str(input_mtz), anomalous
 
 
+# Minimum separation between reported peaks, in grid voxels.
+#
+# peak_local_max keeps only the largest maximum within this radius, so it sets
+# the resolving power. 3 voxels is ~1.2 A at SAMPLE_RATE 5 -- fine enough to
+# split hewl's disulfide sulfur pairs (2.02-2.05 A apart), which the flood fill
+# merged into one blob apiece. Must stay below the closest pair worth
+# resolving: at >= 6 voxels HOH1002 is absorbed into ZN317 3.31 A away.
+PEAK_MIN_DISTANCE = 3
+
+
+def periodic_peak_indices(arr, min_distance, threshold):
+    """Local maxima of a periodic map, as indices into ``arr``.
+
+    Pad with wrapped copies so every voxel inside the real cell sees its true
+    periodic neighbourhood, run peak_local_max, then CROP back to the real
+    extent. Cropping rather than folding the padding detections back with a
+    modulo is what makes this exact: a padding detection is by construction a
+    duplicate of one inside the cell, so discarding it loses nothing and cannot
+    double-count. Verified exactly roll-invariant over 9 shifts; folding was not.
+
+    `exclude_border=False` is required -- the default silently drops maxima
+    within `min_distance` of the array edge, which for a periodic map is not a
+    border at all.
+    """
+    from skimage.feature import peak_local_max
+
+    pad = int(min_distance)
+    padded = np.pad(arr, pad, mode="wrap")
+    pk = peak_local_max(
+        padded, min_distance=min_distance, threshold_abs=threshold,
+        exclude_border=False,
+    )
+    n = np.array(arr.shape)
+    inside = np.all((pk >= pad) & (pk < pad + n), axis=1)
+    return pk[inside] - pad
+
+
+def dedup_symmetry(idx, shape, spacegroup):
+    """Keep one representative per symmetry-equivalent group of peaks.
+
+    peak_local_max sees a P1 map and reports all N copies of every peak; gemmi's
+    flood fill dedupes internally with an ASU mask. Canonicalise rather than
+    mask: map each peak through every operator and key on the lexicographically
+    smallest grid index. Masking would drop a peak whose maximum happens to sit
+    on the far side of an ASU boundary; canonicalising cannot.
+
+    `idx` must be sorted by descending height, so each group keeps its strongest
+    member.
+    """
+    if len(idx) == 0:
+        return idx
+    ops = list(spacegroup.operations())
+    n = np.array(shape, dtype=float)
+    ni = np.array(shape)
+    seen, keep = set(), []
+    for i, frac in enumerate(idx / n):
+        key = min(
+            tuple(np.mod(np.round(np.mod(op.apply_to_xyz(list(frac)), 1.0) * n).astype(int), ni))
+            for op in ops
+        )
+        if key not in seen:
+            seen.add(key)
+            keep.append(i)
+    return idx[keep]
+
+
+def _peak_region(arr, index, radius, threshold):
+    """Offsets and values of the above-threshold voxels around one peak.
+
+    Offsets are relative to the peak, so unit-cell wrapping needs no special
+    case. Used for the integrated score and the intensity-weighted centroid,
+    keeping both comparable to what the flood fill reported.
+    """
+    n = np.array(arr.shape)
+    rng = [np.arange(-radius, radius + 1)] * 3
+    off = np.stack(np.meshgrid(*rng, indexing="ij"), axis=-1).reshape(-1, 3)
+    off = off[(off ** 2).sum(axis=1) <= radius ** 2]
+    vals = arr[tuple(np.mod(index + off, n).T)]
+    keep = vals >= threshold
+    return off[keep], vals[keep]
+
+
+def peaks_by_local_max(structure, grid, z_score_cutoff,
+                       min_distance=PEAK_MIN_DISTANCE, distance_cutoff=4.0):
+    """Anomalous peaks via skimage's peak_local_max, in peak_report's schema.
+
+    Replaces gemmi flood fill (rsbooster's ``peak_report``). A local maximum is
+    one voxel larger than its neighbours, so it has no volume to lose as the
+    threshold rises -- which removes the failure mode flood fill has, where a
+    blob evaporates under gemmi's hard 3-voxel floor and a genuine site vanishes
+    from the table. Results are identical from 0 to 5 sigma, so the detection
+    threshold is simply the reporting cutoff; no margin heuristic is needed.
+
+    It also resolves peaks the flood fill merges: on hewl this reports both
+    sulfurs of all four disulfides (10 peaks) where flood fill reported one per
+    disulfide (6).
+    """
+    import gemmi
+    import pandas as pd
+
+    arr = np.array(grid, copy=False)
+    mu, sd = float(arr.mean()), float(arr.std())
+    threshold = mu + z_score_cutoff * sd
+
+    idx = periodic_peak_indices(arr, min_distance, threshold)
+    if len(idx) == 0:
+        return pd.DataFrame(columns=PEAK_COLUMNS)
+    idx = idx[np.argsort(-arr[tuple(idx.T)])]
+    idx = dedup_symmetry(idx, arr.shape, grid.spacegroup)
+
+    model, cell = structure[0], structure.cell
+    ns = gemmi.NeighborSearch(model, cell, distance_cutoff).populate()
+    voxel_volume = cell.volume / arr.size
+    n = np.array(arr.shape, dtype=float)
+
+    rows = []
+    for i in idx:
+        peak_value = float(arr[tuple(i)])
+        off, vals = _peak_region(arr, i, min_distance, threshold)
+        score = float(vals.sum()) * voxel_volume
+        # Intensity-weighted centroid, in offsets from the peak so that wrapping
+        # is automatic. This is the flood fill's position convention; the peak
+        # voxel alone sits systematically further from the atom.
+        centroid_idx = i + (off * vals[:, None]).sum(axis=0) / vals.sum()
+        centroid = cell.orthogonalize(gemmi.Fractional(*(centroid_idx / n)))
+
+        best = None
+        for mark in ns.find_atoms(centroid):
+            cra = mark.to_cra(model)
+            dist = cell.find_nearest_pbc_image(centroid, cra.atom.pos, mark.image_idx).dist()
+            if best is None or dist < best[0]:
+                best = (dist, cra)
+        if best is None or best[0] > distance_cutoff:
+            continue
+        dist, cra = best
+        rows.append({
+            "chain": cra.chain.name,
+            "seqid": cra.residue.seqid.num,
+            "residue": cra.residue.name,
+            "name": "" if cra.residue.is_water() or len(cra.residue) == 1 else cra.atom.name,
+            "dist": dist,
+            "peak": peak_value,
+            "peakz": (peak_value - mu) / sd,
+            "score": score,
+            "scorez": score / sd,
+            "cenx": centroid.x, "ceny": centroid.y, "cenz": centroid.z,
+            "coordx": cra.atom.pos.x, "coordy": cra.atom.pos.y, "coordz": cra.atom.pos.z,
+        })
+    return pd.DataFrame(rows, columns=PEAK_COLUMNS)
+
+
 def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
-                         z_score_cutoff=Z_SCORE_CUTOFF, dmin=None):
+                         z_score_cutoff=Z_SCORE_CUTOFF, dmin=None,
+                         method=PEAK_METHOD):
     """Search torchref's anomalous difference map for peaks near the model.
 
     ANOM/PANOM come straight out of ``write_out_mtz`` on anomalous data, so the
@@ -649,7 +826,6 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
     """
     import gemmi
     import reciprocalspaceship as rs
-    from rsbooster.realspace.find_peaks import peak_report
 
     ds = rs.read_mtz(str(refined_mtz))
     missing = [c for c in ("ANOM", "PANOM") if c not in ds.columns]
@@ -681,16 +857,35 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
         flush=True,
     )
 
-    # Detect low, then filter -- see PEAK_DETECT_MARGIN.
-    detect = peak_detect_cutoff(z_score_cutoff)
-    report = peak_report(structure, grid, sigma_cutoff=detect)
-    n_detected = len(report)
-    report = report[report["peakz"] >= z_score_cutoff].reset_index(drop=True)
-    print(
-        f"peak search at {detect:g} sigma found {n_detected} blobs; "
-        f"{len(report)} at or above {z_score_cutoff:g} sigma",
-        flush=True,
-    )
+    if method == "local_max":
+        # A local maximum has no volume to lose as the threshold rises, so the
+        # detection threshold IS the reporting cutoff -- no margin needed.
+        report = peaks_by_local_max(structure, grid, z_score_cutoff)
+        print(
+            f"peak_local_max (min_distance={PEAK_MIN_DISTANCE} voxels): "
+            f"{len(report)} peaks at or above {z_score_cutoff:g} sigma",
+            flush=True,
+        )
+    elif method == "floodfill":
+        # Legacy gemmi flood fill, kept for benchmark comparison only. Needs the
+        # detect-low-then-filter dance because gemmi discards blobs under 3
+        # voxels and a blob shrinks toward nothing as the cutoff approaches the
+        # peak height. See PEAK_DETECT_MARGIN.
+        from rsbooster.realspace.find_peaks import peak_report
+
+        detect = peak_detect_cutoff(z_score_cutoff)
+        report = peak_report(structure, grid, sigma_cutoff=detect)
+        n_detected = len(report)
+        report = report[report["peakz"] >= z_score_cutoff].reset_index(drop=True)
+        print(
+            f"flood fill at {detect:g} sigma found {n_detected} blobs; "
+            f"{len(report)} at or above {z_score_cutoff:g} sigma",
+            flush=True,
+        )
+    else:
+        raise ValueError(
+            f"unknown peak method {method!r}; expected 'local_max' or 'floodfill'"
+        )
     report.to_csv(str(out_csv), index=False)
     print(
         f"found {len(report)} anomalous peaks above {z_score_cutoff} sigma -> {out_csv}",
@@ -702,7 +897,8 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
 def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
         z_score_cutoff=Z_SCORE_CUTOFF, r_free_mtz=None, r_free_value=None,
         wavelength=None, adp_mode="auto", adp_aniso_sigma="auto",
-        peak_dmin=None, rigid_body=True, rigid_body_iter=RIGID_BODY_ITER):
+        peak_dmin=None, rigid_body=True, rigid_body_iter=RIGID_BODY_ITER,
+        peak_method=PEAK_METHOD):
     import torch
     from torchref import LBFGSRefinement
 
@@ -828,7 +1024,8 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
     if anomalous:
         out_csv = out_dir / "peaks.csv"
         if find_anomalous_peaks(
-            refined_mtz, refined_pdb, out_csv, z_score_cutoff, dmin=peak_dmin
+            refined_mtz, refined_pdb, out_csv, z_score_cutoff,
+            dmin=peak_dmin, method=peak_method
         ) is not None:
             peaks_csv = out_csv
 
@@ -904,6 +1101,18 @@ def main(argv=None):
              "ignore it.",
     )
     p.add_argument(
+        "--peak-method",
+        default=PEAK_METHOD,
+        choices=["local_max", "floodfill"],
+        help="Anomalous peak-finding backend. 'local_max' (default) is "
+             "skimage's peak_local_max over a periodically padded map: "
+             "threshold-independent, and it resolves peaks that the "
+             "connected-component search merges (both sulfurs of a disulfide, "
+             "for instance). 'floodfill' is the legacy gemmi/rsbooster path, "
+             "kept for comparison; it can silently drop a genuine site whose "
+             "blob falls under gemmi's hard 3-voxel floor.",
+    )
+    p.add_argument(
         "--no-rigid-body",
         dest="rigid_body",
         action="store_false",
@@ -958,6 +1167,7 @@ def main(argv=None):
         peak_dmin=args.peak_dmin,
         rigid_body=args.rigid_body,
         rigid_body_iter=args.rigid_body_iter,
+        peak_method=args.peak_method,
     )
 
 

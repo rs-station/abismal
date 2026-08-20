@@ -19,6 +19,7 @@ dependencies = [
     "matplotlib",
     "seaborn",
     "rs-booster",
+    "scikit-image",
     "ray",
 ]
 
