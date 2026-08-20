@@ -51,5 +51,13 @@ testpaths = [
     "tests",
 ]
 
+[tool.setuptools.packages.find]
+# Explicit, not auto-discovered. This is a flat layout, so setuptools's default
+# discovery treats every top-level directory as a candidate package and refuses
+# to build as soon as there is more than one -- a stray `notes/`, `jobs/` or
+# scratch directory in a working copy is enough to break `python -m build`.
+# Naming the package makes the build depend only on tracked source.
+include = ["abismal*"]
+
 [tool.setuptools.dynamic]
 version = {file = "abismal/VERSION"}
