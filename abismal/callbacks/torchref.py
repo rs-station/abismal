@@ -30,7 +30,8 @@ class TorchRefRunner(tfk.callbacks.Callback):
                  macro_cycles: int = 5, z_score_cutoff: float = 5.,
                  r_free_mtz: str = None, r_free_value: int = None,
                  wavelength: float = None, adp_mode: str = 'auto',
-                 adp_aniso_sigma: str = 'auto', *args, **kwargs):
+                 adp_aniso_sigma: str = 'auto', rigid_body: bool = True,
+                 rigid_body_iter: int = 30, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.output_prefix = output_prefix
         self.asu_id = asu_id
@@ -44,6 +45,8 @@ class TorchRefRunner(tfk.callbacks.Callback):
         self.wavelength = wavelength
         self.adp_mode = adp_mode
         self.adp_aniso_sigma = adp_aniso_sigma
+        self.rigid_body = rigid_body
+        self.rigid_body_iter = rigid_body_iter
         self.output_directory = abspath(output_directory)
         self.processes = []
 
@@ -90,7 +93,10 @@ class TorchRefRunner(tfk.callbacks.Callback):
         if self.wavelength is not None:
             command += ["--wavelength", str(self.wavelength)]
         command += ["--adp-mode", str(self.adp_mode),
-                    "--adp-aniso-sigma", str(self.adp_aniso_sigma)]
+                    "--adp-aniso-sigma", str(self.adp_aniso_sigma),
+                    "--rigid-body-iter", str(self.rigid_body_iter)]
+        if not self.rigid_body:
+            command += ["--no-rigid-body"]
 
         stderr = join(result_dir, "stderr.txt")
         stdout = join(result_dir, "stdout.txt")

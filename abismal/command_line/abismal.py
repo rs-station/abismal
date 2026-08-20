@@ -335,6 +335,8 @@ def main(args=None):
                 wavelength=parser.torchref_wavelength,
                 adp_mode=parser.torchref_adp_mode,
                 adp_aniso_sigma=parser.torchref_adp_aniso_sigma,
+                rigid_body=not parser.torchref_no_rigid_body,
+                rigid_body_iter=parser.torchref_rigid_body_iter,
             )
             callbacks.append(torchref_runner)
 

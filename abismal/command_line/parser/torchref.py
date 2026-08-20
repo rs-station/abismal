@@ -97,6 +97,32 @@ args_and_kwargs = (
 
     (
         (
+            "--torchref-no-rigid-body",
+        ), {
+            "help": "Skip the per-chain rigid-body step torchref runs before "
+                    "the ADP macrocycles. It is on by default: six parameters "
+                    "per chain against tens of thousands of reflections cannot "
+                    "overfit, and it improves both Rwork and Rfree whenever the "
+                    "starting model is not already in register with the data.",
+            "action": "store_true",
+        }
+    ),
+
+    (
+        (
+            "--torchref-rigid-body-iter",
+        ), {
+            "type": int,
+            "default": 30,
+            "help": "LBFGS iterations per resolution cutoff during torchref's "
+                    "rigid-body step (default=30, which is converged for "
+                    "corrections of a few tenths of an Angstrom). Raise it if "
+                    "the run reports a large rigid-body shift.",
+        }
+    ),
+
+    (
+        (
             "--torchref-z-score",
         ), {
             "type": float,
