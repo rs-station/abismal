@@ -99,6 +99,19 @@ class MultiWilsonDistribution:
         )
         return loc
 
+    def stddev(self):
+        """Marginal standard deviation of the single-Wilson (root) distribution.
+
+        Initialization only, like :meth:`mean` -- it deliberately ignores the
+        double-Wilson coupling, so for a child node this is the prior width
+        before conditioning on the parent, not the conditional width.
+        """
+        return tf.where(
+            self.centric,
+            centric_wilson(self.multiplicity, self.sigma).stddev(),
+            acentric_wilson(self.multiplicity, self.sigma).stddev(),
+        )
+
     def log_prob(self, z, z_pa=None):
         if z_pa is None:
             z_h = z
@@ -111,7 +124,7 @@ class MultiWilsonDistribution:
 
         #Double wilson case for child nodes
         loc = self.correlation * z_pa
-        scale = tf.sqrt(self.multiplicity * (1. - tf.square(self.correlation))),
+        scale = tf.sqrt(self.multiplicity * (1. - tf.square(self.correlation)))
         ll_dw = tf.where(
             self.centric,
             FoldedNormal(loc, scale).log_prob(z_h),
@@ -127,7 +140,7 @@ class MultiWilsonDistribution:
         return ll
 
 @tfk.saving.register_keras_serializable(package="abismal")
-class MultiWilsonPrior(tfk.layers.Layer):
+class MultiWilsonPrior(PriorBase):
     """
     This class uses reparameterized samples to approximate the log probability 
     of a multivariate Wilson prior. For this object, the user needs to specify
