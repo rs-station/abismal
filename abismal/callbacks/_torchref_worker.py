@@ -118,7 +118,23 @@ Z_SCORE_CUTOFF = 5.0
 # usable window is narrower than it looks.
 #
 # Upper bound -- raising the cutoff destroys a blob whose own maximum would have
-# cleared it. On cxidb_81_small the low-occupancy Zn modelled as HOH A1002
+# cleared it. The mechanism is a hard-coded floor in gemmi:
+# `find_blobs_by_flood_fill` silently discards any blob of <= 2 voxels no matter
+# what `min_volume` says (verified synthetically: an isolated 2-voxel peak at
+# 100x the cutoff returns zero blobs; 3 voxels returns one). Raising the cutoff
+# shrinks a blob toward a point, so a peak only slightly above the cutoff
+# evaporates rather than merely failing to clear it:
+#
+#     cutoff (sigma)    4.0     4.5     4.8    4.9    5.0
+#     HOH1002 blob    1.041   0.407   0.272   gone   gone     (A^3)
+#     voxels             23       9       6      4      4
+#
+# Symmetry makes the last step abrupt: at 5.0 sigma the component-size histogram
+# is `1:18 2:8 4:8 20:24 21:12 142:12` -- sizes cluster in multiples of 12, the
+# P6122 multiplicity, but unevenly, because the grid is not exactly commensurate
+# with all 12 operators. HOH1002's copies land at 4, 2 and 1 voxels, most below
+# the floor. So the requirement is not "cutoff below the peak" but "cutoff far
+# enough below that the blob still spans >= 3 voxels". On cxidb_81_small the low-occupancy Zn modelled as HOH A1002
 # (3.31 A from ZN317, coordinated by TYR157/OH 2.03 A, HIS231/NE2 2.79 A,
 # GLU166/OE2 2.83 A, B=50.3) is reported at 5.55 sigma with cutoff 4.5 and is
 # absent entirely at 5.0. A genuine site silently missing from a ">= 5 sigma"
