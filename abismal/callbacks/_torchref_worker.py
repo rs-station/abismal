@@ -114,19 +114,33 @@ Z_SCORE_CUTOFF = 5.0
 # Threshold the blob search runs at, before peaks are filtered on Z_SCORE_CUTOFF.
 #
 # `find_blobs_by_flood_fill` thresholds the *grid* at `mean + cutoff*sigma` and
-# then finds connected blobs, so raising the cutoff can destroy a blob whose own
-# maximum would have cleared it. Measured on cxidb_81_small ep100, the
-# low-occupancy Zn modelled as HOH A1002 (3.31 A from ZN317, coordinated by
-# TYR157/OH, HIS231/NE2, GLU166/OE2):
+# then finds connected blobs, so the cutoff is bounded on BOTH sides and the
+# usable window is narrower than it looks.
 #
-#     sigma_cutoff=4.5 -> reported at 5.55 sigma
-#     sigma_cutoff=5.0 -> absent entirely
+# Upper bound -- raising the cutoff destroys a blob whose own maximum would have
+# cleared it. On cxidb_81_small the low-occupancy Zn modelled as HOH A1002
+# (3.31 A from ZN317, coordinated by TYR157/OH 2.03 A, HIS231/NE2 2.79 A,
+# GLU166/OE2 2.83 A, B=50.3) is reported at 5.55 sigma with cutoff 4.5 and is
+# absent entirely at 5.0. A genuine site silently missing from a ">= 5 sigma"
+# table, and it lands on exactly the weak, partially occupied sites worth
+# finding. Budget ~1 sigma below the weakest peak to be reported.
 #
-# A genuine site at 5.55 sigma silently missing from a ">= 5 sigma" table is
-# exactly the failure that matters here, and it lands on the weak, partially
-# occupied sites -- the ones worth finding. So detect permissively and filter on
-# the reported heights afterwards, which is what "peaks above N sigma" should
-# have meant all along. 3.0 leaves ~1.5x the margin that HOH1002 needed.
+# Lower bound -- below ~1.5 the above-threshold region PERCOLATES and blobs
+# merge, so a weak site next to a strong one is swallowed by it. Largest blob
+# volume vs cutoff (cxidb_81_small / hewl, A^3):
+#
+#     cutoff    0.0      0.5      1.0     1.5    2.0   3.0   5.0
+#     cxidb  500262   305960    91977    18.7   13.7   9.0   6.4
+#     hewl        -    68143    21413    19.2   13.7  11.4   8.6
+#
+# At cutoff 0 the whole above-mean half of the map is ONE blob of 500,262 A^3,
+# whose centroid is nowhere near an atom, so `peak_report` returns zero rows.
+# Measured site-by-site, HOH1002 reads 2.56 sigma at cutoff 1.0 (absorbed into
+# ZN317's blob) and is simply absent at 0.5.
+#
+# Both datasets are flat and correct across 1.5-4.5, giving identical z-scores
+# at every rung. 3.0 sits mid-plateau: 2x above the percolation floor and 2
+# sigma below the weakest peak reported.
 PEAK_DETECT_CUTOFF = 3.0
 
 # FFT oversampling used when transforming map coefficients to a real-space grid.
