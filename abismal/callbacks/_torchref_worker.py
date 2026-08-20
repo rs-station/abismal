@@ -139,9 +139,18 @@ Z_SCORE_CUTOFF = 5.0
 # ZN317's blob) and is simply absent at 0.5.
 #
 # Both datasets are flat and correct across 1.5-4.5, giving identical z-scores
-# at every rung. 3.0 sits mid-plateau: 2x above the percolation floor and 2
-# sigma below the weakest peak reported.
-PEAK_DETECT_CUTOFF = 3.0
+# at every rung, so the detect cutoff is derived rather than fixed: sit
+# PEAK_DETECT_MARGIN below whatever is being reported, floored at
+# PEAK_DETECT_FLOOR to stay clear of percolation. At the default 5 sigma that
+# gives 3.0, mid-plateau. A fixed 3.0 would have left only 0.5 sigma of margin
+# if Z_SCORE_CUTOFF were ever lowered to 3.5 -- less than HOH1002 needed.
+PEAK_DETECT_MARGIN = 2.0
+PEAK_DETECT_FLOOR = 1.5
+
+
+def peak_detect_cutoff(z_score_cutoff):
+    """Blob-search threshold for a given reporting cutoff. See the constants."""
+    return max(PEAK_DETECT_FLOOR, z_score_cutoff - PEAK_DETECT_MARGIN)
 
 # FFT oversampling used when transforming map coefficients to a real-space grid.
 #
@@ -639,15 +648,14 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
         flush=True,
     )
 
-    # Detect low, then filter -- see PEAK_DETECT_CUTOFF.
-    report = peak_report(
-        structure, grid, sigma_cutoff=min(PEAK_DETECT_CUTOFF, z_score_cutoff)
-    )
+    # Detect low, then filter -- see PEAK_DETECT_MARGIN.
+    detect = peak_detect_cutoff(z_score_cutoff)
+    report = peak_report(structure, grid, sigma_cutoff=detect)
     n_detected = len(report)
     report = report[report["peakz"] >= z_score_cutoff].reset_index(drop=True)
     print(
-        f"peak search at {min(PEAK_DETECT_CUTOFF, z_score_cutoff):g} sigma found "
-        f"{n_detected} blobs; {len(report)} at or above {z_score_cutoff:g} sigma",
+        f"peak search at {detect:g} sigma found {n_detected} blobs; "
+        f"{len(report)} at or above {z_score_cutoff:g} sigma",
         flush=True,
     )
     report.to_csv(str(out_csv), index=False)
