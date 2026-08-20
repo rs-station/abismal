@@ -83,23 +83,51 @@ ADP_SEARCH_RFREE_SE = 0.001
 
 # LBFGS max_iter per resolution cutoff during rigid-body refinement.
 #
-# torchref's CLI default is 30, which its own docstring says under-converges
-# ("9RTS needs >= 100; raise it for production"). Rigid body is 6 parameters per
-# chain against tens of thousands of reflections, so it cannot overfit and the
-# extra iterations are cheap insurance rather than a risk.
+# torchref's CLI default is 30, and its docstring warns that under-converges
+# ("9RTS needs >= 100; raise it for production"). Measured on cxidb_81_small
+# ep100 rather than assumed -- it is converged by 30 here:
 #
-# Worth on cxidb_81_small ep100 (isotropic, Rwork/Rfree):
-#     without rigid body : 0.2050 / 0.2205
-#     with rigid body    : 0.2009 / 0.2163
-# Both R-values improve, which is the signature of a better model rather than
-# overfitting. It matters when the starting model is not already in register
-# with the data -- 2tli is a deposited model and the abismal cell differs from
-# the model cell by ~0.8%. On hewl, whose reference model was already refined
-# against its own data, it is worth <0.001: neutral, not harmful.
-RIGID_BODY_ITER = 100
+#     iter/cutoff    10      30      50     100     200
+#     Rwork       0.2010  0.2009  0.2009  0.2009  0.2009
+#     Rfree       0.2167  0.2163  0.2164  0.2164  0.2164
+#     shift rmsd   0.058   0.060   0.063   0.063   0.062
+#
+# 30 through 200 agree to 0.0001 in Rfree, i.e. noise, while 100 costs 51.5 s
+# against 27.2 s for 30 (rigid-body step alone, CPU, measured sequentially).
+# Doubling the cost buys nothing measurable, so 30 it is.
+#
+# The docstring's warning is about models needing a *large* correction; these
+# start 0.06 A out. A molecular-replacement solution could genuinely need more
+# iterations, which is what RIGID_BODY_LARGE_SHIFT below exists to flag.
+RIGID_BODY_ITER = 30
+
+# Shift (A, rmsd) above which a rigid-body step counts as a large correction.
+#
+# Convergence was verified only for the ~0.06 A corrections the benchmark models
+# need. A bigger correction is the regime torchref's docstring warns about, and
+# nothing else in the output would reveal an under-converged step, so say so.
+RIGID_BODY_LARGE_SHIFT = 0.5
 
 # Z-score cutoff for anomalous peak finding, matching AnomalousPeakFinder.
 Z_SCORE_CUTOFF = 5.0
+
+# Threshold the blob search runs at, before peaks are filtered on Z_SCORE_CUTOFF.
+#
+# `find_blobs_by_flood_fill` thresholds the *grid* at `mean + cutoff*sigma` and
+# then finds connected blobs, so raising the cutoff can destroy a blob whose own
+# maximum would have cleared it. Measured on cxidb_81_small ep100, the
+# low-occupancy Zn modelled as HOH A1002 (3.31 A from ZN317, coordinated by
+# TYR157/OH, HIS231/NE2, GLU166/OE2):
+#
+#     sigma_cutoff=4.5 -> reported at 5.55 sigma
+#     sigma_cutoff=5.0 -> absent entirely
+#
+# A genuine site at 5.55 sigma silently missing from a ">= 5 sigma" table is
+# exactly the failure that matters here, and it lands on the weak, partially
+# occupied sites -- the ones worth finding. So detect permissively and filter on
+# the reported heights afterwards, which is what "peaks above N sigma" should
+# have meant all along. 3.0 leaves ~1.5x the margin that HOH1002 needed.
+PEAK_DETECT_CUTOFF = 3.0
 
 # FFT oversampling used when transforming map coefficients to a real-space grid.
 #
@@ -363,6 +391,13 @@ def run_rigid_body(ref, spec, iterations=RIGID_BODY_ITER):
         f"shift rmsd={rmsd:.3f} A max={dmax:.3f} A",
         flush=True,
     )
+    if rmsd > RIGID_BODY_LARGE_SHIFT and iterations < 100:
+        print(
+            f"    NOTE: {rmsd:.3f} A is a large correction, beyond the regime "
+            f"where {RIGID_BODY_ITER} iterations were shown to converge. "
+            "Consider --rigid-body-iter 100.",
+            flush=True,
+        )
 
 
 def reset_b_factors(ref, torch):
@@ -590,7 +625,17 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
         flush=True,
     )
 
-    report = peak_report(structure, grid, sigma_cutoff=z_score_cutoff)
+    # Detect low, then filter -- see PEAK_DETECT_CUTOFF.
+    report = peak_report(
+        structure, grid, sigma_cutoff=min(PEAK_DETECT_CUTOFF, z_score_cutoff)
+    )
+    n_detected = len(report)
+    report = report[report["peakz"] >= z_score_cutoff].reset_index(drop=True)
+    print(
+        f"peak search at {min(PEAK_DETECT_CUTOFF, z_score_cutoff):g} sigma found "
+        f"{n_detected} blobs; {len(report)} at or above {z_score_cutoff:g} sigma",
+        flush=True,
+    )
     report.to_csv(str(out_csv), index=False)
     print(
         f"found {len(report)} anomalous peaks above {z_score_cutoff} sigma -> {out_csv}",
