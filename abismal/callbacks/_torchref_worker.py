@@ -118,80 +118,8 @@ PEAK_COLUMNS = [
     "scorez", "cenx", "ceny", "cenz", "coordx", "coordy", "coordz",
 ]
 
-# Peak-finding backend. 'local_max' is skimage's peak_local_max over a
-# periodically padded map; 'floodfill' is the legacy gemmi connected-component
-# search via rsbooster, kept only so a benchmark can compare the two.
-#
-# local_max is the default because it is strictly better on the two axes that
-# matter here. It is threshold-independent -- identical peaks and z-scores from
-# 0 to 5 sigma on both test datasets -- where flood fill silently loses genuine
-# sites whose blob falls under gemmi's hard 3-voxel floor (a 5.55 sigma Zn site
-# on cxidb_81_small vanished at a 5.0 sigma cutoff). And it resolves peaks flood
-# fill merges: on hewl it reports both sulfurs of all four disulfides (10 peaks)
-# where flood fill reported one per disulfide (6).
-#
-# Costs ~0.5 s against ~0.1 s per epoch, negligible beside a ~64 s refinement.
-PEAK_METHOD = "local_max"
-
 # Z-score cutoff for anomalous peak finding, matching AnomalousPeakFinder.
 Z_SCORE_CUTOFF = 5.0
-
-# Threshold the blob search runs at, before peaks are filtered on Z_SCORE_CUTOFF.
-#
-# `find_blobs_by_flood_fill` thresholds the *grid* at `mean + cutoff*sigma` and
-# then finds connected blobs, so the cutoff is bounded on BOTH sides and the
-# usable window is narrower than it looks.
-#
-# Upper bound -- raising the cutoff destroys a blob whose own maximum would have
-# cleared it. The mechanism is a hard-coded floor in gemmi:
-# `find_blobs_by_flood_fill` silently discards any blob of <= 2 voxels no matter
-# what `min_volume` says (verified synthetically: an isolated 2-voxel peak at
-# 100x the cutoff returns zero blobs; 3 voxels returns one). Raising the cutoff
-# shrinks a blob toward a point, so a peak only slightly above the cutoff
-# evaporates rather than merely failing to clear it:
-#
-#     cutoff (sigma)    4.0     4.5     4.8    4.9    5.0
-#     HOH1002 blob    1.041   0.407   0.272   gone   gone     (A^3)
-#     voxels             23       9       6      4      4
-#
-# Symmetry makes the last step abrupt: at 5.0 sigma the component-size histogram
-# is `1:18 2:8 4:8 20:24 21:12 142:12` -- sizes cluster in multiples of 12, the
-# P6122 multiplicity, but unevenly, because the grid is not exactly commensurate
-# with all 12 operators. HOH1002's copies land at 4, 2 and 1 voxels, most below
-# the floor. So the requirement is not "cutoff below the peak" but "cutoff far
-# enough below that the blob still spans >= 3 voxels". On cxidb_81_small the low-occupancy Zn modelled as HOH A1002
-# (3.31 A from ZN317, coordinated by TYR157/OH 2.03 A, HIS231/NE2 2.79 A,
-# GLU166/OE2 2.83 A, B=50.3) is reported at 5.55 sigma with cutoff 4.5 and is
-# absent entirely at 5.0. A genuine site silently missing from a ">= 5 sigma"
-# table, and it lands on exactly the weak, partially occupied sites worth
-# finding. Budget ~1 sigma below the weakest peak to be reported.
-#
-# Lower bound -- below ~1.5 the above-threshold region PERCOLATES and blobs
-# merge, so a weak site next to a strong one is swallowed by it. Largest blob
-# volume vs cutoff (cxidb_81_small / hewl, A^3):
-#
-#     cutoff    0.0      0.5      1.0     1.5    2.0   3.0   5.0
-#     cxidb  500262   305960    91977    18.7   13.7   9.0   6.4
-#     hewl        -    68143    21413    19.2   13.7  11.4   8.6
-#
-# At cutoff 0 the whole above-mean half of the map is ONE blob of 500,262 A^3,
-# whose centroid is nowhere near an atom, so `peak_report` returns zero rows.
-# Measured site-by-site, HOH1002 reads 2.56 sigma at cutoff 1.0 (absorbed into
-# ZN317's blob) and is simply absent at 0.5.
-#
-# Both datasets are flat and correct across 1.5-4.5, giving identical z-scores
-# at every rung, so the detect cutoff is derived rather than fixed: sit
-# PEAK_DETECT_MARGIN below whatever is being reported, floored at
-# PEAK_DETECT_FLOOR to stay clear of percolation. At the default 5 sigma that
-# gives 3.0, mid-plateau. A fixed 3.0 would have left only 0.5 sigma of margin
-# if Z_SCORE_CUTOFF were ever lowered to 3.5 -- less than HOH1002 needed.
-PEAK_DETECT_MARGIN = 2.0
-PEAK_DETECT_FLOOR = 1.5
-
-
-def peak_detect_cutoff(z_score_cutoff):
-    """Blob-search threshold for a given reporting cutoff. See the constants."""
-    return max(PEAK_DETECT_FLOOR, z_score_cutoff - PEAK_DETECT_MARGIN)
 
 # FFT oversampling used when transforming map coefficients to a real-space grid.
 #
@@ -211,22 +139,22 @@ def peak_detect_cutoff(z_score_cutoff):
 # find_anomalous_peaks for the matching dmin requirement. Removing the bias
 # rather than shrinking it needs subpixel refinement in rsbooster.
 #
-# SAMPLE_RATE also couples to peak *detection*, not just peak height. gemmi
-# drops blobs under 3 voxels (see PEAK_DETECT_MARGIN), so the smallest
-# detectable peak is 3 * spacing^3 -- a physical volume that shrinks as the grid
-# is refined. HOH1002 above 5 sigma spans ~0.13-0.19 A^3 whatever the sampling,
-# so at a 5 sigma cutoff it is invisible up to sample_rate 5 and found from 6:
+# SAMPLE_RATE also sets the *resolving* power, because PEAK_MIN_DISTANCE is in
+# voxels: 3 voxels is 3 * spacing Angstroms, and two peaks closer than that
+# collapse to one. hewl has four disulfides 2.02-2.05 A apart plus two
+# methionines, so 10 sites is the correct answer:
 #
-#     sample_rate    2      3      4      5      6      8
-#     spacing (A) 0.979  0.653  0.490  0.392  0.326  0.245
-#     blob voxels    --     --     --     --      5     17
+#     sample_rate      3      4      5      6
+#     spacing (A)  0.551  0.413  0.331  0.275
+#     3 voxels (A)  1.65   1.24   0.99   0.83
+#     peaks found      7      9     10     10
+#
+# 5.0 is the first rung that resolves every disulfide; 3.0 would silently merge
+# three of them. Lowering SAMPLE_RATE therefore costs real sites, and raising it
+# past 5 buys nothing on either axis.
 #
 # Note sample_rate is d_min/spacing, so critical (Nyquist) sampling is 2.0 and
-# 5.0 is 2.3x Nyquist after grid rounding, not 5x. Two independent fixes cover
-# this peak -- the detection margin and the sampling -- and the margin alone is
-# enough at 5.0, where the blob spans 9 voxels at the 3 sigma detect cutoff.
-# Raising SAMPLE_RATE is the lever to reach for if Z_SCORE_CUTOFF is ever pushed
-# below 5 sigma; LOWERING it would put weak peaks back under the voxel floor.
+# 5.0 is 2.3x Nyquist after grid rounding, not 5x.
 SAMPLE_RATE = 5.0
 
 # Markers delimiting the machine-readable summary at the end of stdout. Keep
@@ -803,8 +731,7 @@ def peaks_by_local_max(structure, grid, z_score_cutoff,
 
 
 def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
-                         z_score_cutoff=Z_SCORE_CUTOFF, dmin=None,
-                         method=PEAK_METHOD):
+                         z_score_cutoff=Z_SCORE_CUTOFF, dmin=None):
     """Search torchref's anomalous difference map for peaks near the model.
 
     ANOM/PANOM come straight out of ``write_out_mtz`` on anomalous data, so the
@@ -857,35 +784,12 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
         flush=True,
     )
 
-    if method == "local_max":
-        # A local maximum has no volume to lose as the threshold rises, so the
-        # detection threshold IS the reporting cutoff -- no margin needed.
-        report = peaks_by_local_max(structure, grid, z_score_cutoff)
-        print(
-            f"peak_local_max (min_distance={PEAK_MIN_DISTANCE} voxels): "
-            f"{len(report)} peaks at or above {z_score_cutoff:g} sigma",
-            flush=True,
-        )
-    elif method == "floodfill":
-        # Legacy gemmi flood fill, kept for benchmark comparison only. Needs the
-        # detect-low-then-filter dance because gemmi discards blobs under 3
-        # voxels and a blob shrinks toward nothing as the cutoff approaches the
-        # peak height. See PEAK_DETECT_MARGIN.
-        from rsbooster.realspace.find_peaks import peak_report
-
-        detect = peak_detect_cutoff(z_score_cutoff)
-        report = peak_report(structure, grid, sigma_cutoff=detect)
-        n_detected = len(report)
-        report = report[report["peakz"] >= z_score_cutoff].reset_index(drop=True)
-        print(
-            f"flood fill at {detect:g} sigma found {n_detected} blobs; "
-            f"{len(report)} at or above {z_score_cutoff:g} sigma",
-            flush=True,
-        )
-    else:
-        raise ValueError(
-            f"unknown peak method {method!r}; expected 'local_max' or 'floodfill'"
-        )
+    report = peaks_by_local_max(structure, grid, z_score_cutoff)
+    print(
+        f"peak_local_max (min_distance={PEAK_MIN_DISTANCE} voxels): "
+        f"{len(report)} peaks at or above {z_score_cutoff:g} sigma",
+        flush=True,
+    )
     report.to_csv(str(out_csv), index=False)
     print(
         f"found {len(report)} anomalous peaks above {z_score_cutoff} sigma -> {out_csv}",
@@ -897,8 +801,7 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
 def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
         z_score_cutoff=Z_SCORE_CUTOFF, r_free_mtz=None, r_free_value=None,
         wavelength=None, adp_mode="auto", adp_aniso_sigma="auto",
-        peak_dmin=None, rigid_body=True, rigid_body_iter=RIGID_BODY_ITER,
-        peak_method=PEAK_METHOD):
+        peak_dmin=None, rigid_body=True, rigid_body_iter=RIGID_BODY_ITER):
     import torch
     from torchref import LBFGSRefinement
 
@@ -1024,8 +927,7 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
     if anomalous:
         out_csv = out_dir / "peaks.csv"
         if find_anomalous_peaks(
-            refined_mtz, refined_pdb, out_csv, z_score_cutoff,
-            dmin=peak_dmin, method=peak_method
+            refined_mtz, refined_pdb, out_csv, z_score_cutoff, dmin=peak_dmin
         ) is not None:
             peaks_csv = out_csv
 
@@ -1101,18 +1003,6 @@ def main(argv=None):
              "ignore it.",
     )
     p.add_argument(
-        "--peak-method",
-        default=PEAK_METHOD,
-        choices=["local_max", "floodfill"],
-        help="Anomalous peak-finding backend. 'local_max' (default) is "
-             "skimage's peak_local_max over a periodically padded map: "
-             "threshold-independent, and it resolves peaks that the "
-             "connected-component search merges (both sulfurs of a disulfide, "
-             "for instance). 'floodfill' is the legacy gemmi/rsbooster path, "
-             "kept for comparison; it can silently drop a genuine site whose "
-             "blob falls under gemmi's hard 3-voxel floor.",
-    )
-    p.add_argument(
         "--no-rigid-body",
         dest="rigid_body",
         action="store_false",
@@ -1167,7 +1057,6 @@ def main(argv=None):
         peak_dmin=args.peak_dmin,
         rigid_body=args.rigid_body,
         rigid_body_iter=args.rigid_body_iter,
-        peak_method=args.peak_method,
     )
 
 
