@@ -27,6 +27,7 @@ costly: on hewl, averaging gave Rwork/Rfree 0.1671/0.1627 against 0.1589/0.1583
 for the two mates refined as independent observations.
 """
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -121,41 +122,61 @@ PEAK_COLUMNS = [
 # Z-score cutoff for anomalous peak finding, matching AnomalousPeakFinder.
 Z_SCORE_CUTOFF = 5.0
 
-# FFT oversampling used when transforming map coefficients to a real-space grid.
+# Target voxel size (A) for the real-space map, and the minimum separation
+# between reported peaks. Both are physical, so neither drifts with the data.
 #
-# `peakz` is a max over grid nodes, so it underestimates the continuous maximum
-# by more the coarser the grid. Measured on cxidb_81_small epoch 100 (grid
-# spacing in A, peak z-score at the Zn site):
+# This used to be a gemmi `sample_rate`, which is d_min/spacing and therefore
+# ties the grid to the resolution: at sample_rate 5 the spacing came out 0.392 A
+# on cxidb_81_small but 0.331 A on hewl. Anything measured in voxels then meant
+# a different physical size per dataset -- exactly what a benchmark must not do.
+# Asking for a voxel size instead pins the spacing (0.294 A on both, gemmi
+# rounding grid dimensions up to FFT-friendly sizes, so never coarser).
 #
-#     sample_rate   3      4      5      6      7      8
-#     spacing    0.65   0.49   0.39   0.33   0.29   0.24
-#     ZN317     23.50  23.08  24.26  24.29  24.14  24.73
+# Why 0.3 A. `peakz` is a max over grid nodes and so is biased low, by more the
+# coarser the grid. Measured on cxidb_81_small at the Zn site the bias flattens
+# out around 0.3-0.4 A:
 #
-# It does not converge -- the estimator is biased low and the bias only shrinks,
-# jittering +-0.3 with where nodes fall (note 4 reads *below* 3). 5 buys ~0.5
-# sigma over 3 and escapes the coarse-grid dips, for 0.39 s against 0.10 s per
-# epoch, so it is where we stop. Because it is not converged, the value must
-# stay FIXED and identical on both sides of any comparison; see
-# find_anomalous_peaks for the matching dmin requirement. Removing the bias
-# rather than shrinking it needs subpixel refinement in rsbooster.
+#     spacing (A)  0.65   0.49   0.39   0.33   0.29   0.24
+#     ZN317 peakz 23.50  23.08  24.26  24.29  24.14  24.73
 #
-# SAMPLE_RATE also sets the *resolving* power, because PEAK_MIN_DISTANCE is in
-# voxels: 3 voxels is 3 * spacing Angstroms, and two peaks closer than that
-# collapse to one. hewl has four disulfides 2.02-2.05 A apart plus two
-# methionines, so 10 sites is the correct answer:
+# It never fully converges -- the estimator is biased low and only jitters as
+# nodes fall differently -- so the value must stay FIXED and identical on both
+# sides of any comparison. Removing the bias rather than shrinking it needs
+# subpixel refinement around the maximum.
 #
-#     sample_rate      3      4      5      6
-#     spacing (A)  0.551  0.413  0.331  0.275
-#     3 voxels (A)  1.65   1.24   0.99   0.83
-#     peaks found      7      9     10     10
+# Why 1.0 A separation. peak_local_max keeps only the largest maximum within
+# this radius, so it sets the resolving power. hewl has four disulfides
+# 2.02-2.05 A apart plus two methionines, so 10 sites is the right answer, and
+# the separation has to be comfortably under the S-S distance:
 #
-# 5.0 is the first rung that resolves every disulfide; 3.0 would silently merge
-# three of them. Lowering SAMPLE_RATE therefore costs real sites, and raising it
-# past 5 buys nothing on either axis.
+#     separation (A)  1.65   1.24   0.99   0.83
+#     peaks found        7      9     10     10
 #
-# Note sample_rate is d_min/spacing, so critical (Nyquist) sampling is 2.0 and
-# 5.0 is 2.3x Nyquist after grid rounding, not 5x.
-SAMPLE_RATE = 5.0
+# 1.0 A resolves all four; 1.65 A silently merges three of them. Raising this
+# costs real sites, lowering it starts splitting single atoms.
+VOXEL_SIZE_ANGSTROMS = 0.3
+PEAK_MIN_DISTANCE_ANGSTROMS = 1.0
+
+
+def map_grid_size(cell, voxel_size=VOXEL_SIZE_ANGSTROMS):
+    """Minimum grid dimensions giving at most `voxel_size` spacing on each axis.
+
+    Passed to gemmi as `min_size`; gemmi rounds each up to an FFT-friendly
+    number, so the realised spacing is at most what was asked for.
+    """
+    return [int(math.ceil(length / voxel_size))
+            for length in (cell.a, cell.b, cell.c)]
+
+
+def peak_min_distance(cell, shape, separation=PEAK_MIN_DISTANCE_ANGSTROMS):
+    """`separation` in Angstroms expressed as whole voxels, at least 1.
+
+    peak_local_max measures min_distance isotropically in index space, so use
+    the COARSEST axis: that is where a given voxel count spans the most
+    Angstroms, and overshooting there is what would merge two real atoms.
+    """
+    coarsest = max(cell.a / shape[0], cell.b / shape[1], cell.c / shape[2])
+    return max(1, int(separation / coarsest))
 
 # Markers delimiting the machine-readable summary at the end of stdout. Keep
 # these in sync with the parser in abismal-benchmarks/scripts/plot_progress.py.
@@ -579,15 +600,6 @@ def prepare_data(mtz_path, pdb_path, out_dir, r_free_mtz=None,
     return str(input_mtz), anomalous
 
 
-# Minimum separation between reported peaks, in grid voxels.
-#
-# peak_local_max keeps only the largest maximum within this radius, so it sets
-# the resolving power. 3 voxels is ~1.2 A at SAMPLE_RATE 5 -- fine enough to
-# split hewl's disulfide sulfur pairs (2.02-2.05 A apart), which the flood fill
-# merged into one blob apiece. Must stay below the closest pair worth
-# resolving: at >= 6 voxels HOH1002 is absorbed into ZN317 3.31 A away.
-PEAK_MIN_DISTANCE = 3
-
 
 def periodic_peak_indices(arr, min_distance, threshold):
     """Local maxima of a periodic map, as indices into ``arr``.
@@ -662,7 +674,7 @@ def _peak_region(arr, index, radius, threshold):
 
 
 def peaks_by_local_max(structure, grid, z_score_cutoff,
-                       min_distance=PEAK_MIN_DISTANCE, distance_cutoff=4.0):
+                       min_distance=None, distance_cutoff=4.0):
     """Anomalous peaks via skimage's peak_local_max, in peak_report's schema.
 
     Replaces gemmi flood fill (rsbooster's ``peak_report``). A local maximum is
@@ -680,6 +692,8 @@ def peaks_by_local_max(structure, grid, z_score_cutoff,
     import pandas as pd
 
     arr = np.array(grid, copy=False)
+    if min_distance is None:
+        min_distance = peak_min_distance(structure.cell, arr.shape)
     mu, sd = float(arr.mean()), float(arr.std())
     threshold = mu + z_score_cutoff * sd
 
@@ -776,18 +790,26 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
 
     structure = gemmi.read_pdb(str(pdb_file))
     mtz = ds[["ANOM", "PANOM"]].to_gemmi()
-    grid = mtz.transform_f_phi_to_map("ANOM", "PANOM", sample_rate=SAMPLE_RATE)
+    grid = mtz.transform_f_phi_to_map(
+        "ANOM", "PANOM", min_size=map_grid_size(structure.cell)
+    )
+    cell = structure.cell
+    spacing = (cell.a / grid.shape[0], cell.b / grid.shape[1], cell.c / grid.shape[2])
     print(
         f"anomalous map grid {tuple(grid.shape)} "
-        f"({structure.cell.a / grid.shape[0]:.2f} A spacing, "
-        f"sample_rate={SAMPLE_RATE})",
+        f"(spacing {spacing[0]:.3f}/{spacing[1]:.3f}/{spacing[2]:.3f} A, "
+        f"target {VOXEL_SIZE_ANGSTROMS} A)",
         flush=True,
     )
 
-    report = peaks_by_local_max(structure, grid, z_score_cutoff)
+    min_distance = peak_min_distance(cell, grid.shape)
+    report = peaks_by_local_max(
+        structure, grid, z_score_cutoff, min_distance=min_distance
+    )
     print(
-        f"peak_local_max (min_distance={PEAK_MIN_DISTANCE} voxels): "
-        f"{len(report)} peaks at or above {z_score_cutoff:g} sigma",
+        f"peak_local_max (min_distance {min_distance} voxels "
+        f"= {PEAK_MIN_DISTANCE_ANGSTROMS:g} A): {len(report)} peaks at or above "
+        f"{z_score_cutoff:g} sigma",
         flush=True,
     )
     report.to_csv(str(out_csv), index=False)
