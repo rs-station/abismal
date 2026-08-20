@@ -181,7 +181,12 @@ def search_aniso_sigma(build_refinement, out_dir, ladder=ADP_ANISO_SIGMA_LADDER)
         ref = build_refinement(w)
         reset_b_factors(ref, torch)
         ref.get_scales()
+        # The trial is only meaningful if it actually ran at sigma=w. Without
+        # this the ladder can silently collapse to N identical runs at the
+        # default and still report a confident fitted value.
+        spec = {"simu": {"simu_sigma_aniso": float(w)}}
         for _ in range(ADP_SEARCH_CYCLES):
+            apply_adp_restraints(ref, spec, f"sigma={w:g} trial")
             ref.refine_scaler()
             ref.refine_adp()
         rw, rf = ref.get_rfactor()
@@ -216,6 +221,82 @@ def search_aniso_sigma(build_refinement, out_dir, ladder=ADP_ANISO_SIGMA_LADDER)
             flush=True,
         )
     return best
+
+
+def adp_restraint_spec(adp_mode, aniso_sigma):
+    """The ADP restraint parameters this worker owns, as {component: {attr: value}}.
+
+    One place that says what we intend, so `apply_adp_restraints` can re-assert
+    it after anything that rebuilds the targets. Empty for isotropic runs, which
+    keep torchref's defaults on every channel.
+    """
+    if adp_mode == "anisotropic" and aniso_sigma is not None:
+        # Only the anisotropy channel is touched; the `adp` group weight and the
+        # magnitude sigmas keep torchref's defaults.
+        return {"simu": {"simu_sigma_aniso": float(aniso_sigma)}}
+    return {}
+
+
+def apply_adp_restraints(ref, spec, where):
+    """(Re)apply ADP component restraint parameters and verify they took.
+
+    torchref keeps these on the ADP *target objects*, and
+    `Refinement._init_targets` rebuilds those from scratch passing no restraint
+    parameters -- once per resolution cutoff inside `refine_rigid_body`, and
+    again on the ensemble and `create_from_state_dict` paths. A rebuild
+    therefore resets whatever we set back to the component defaults
+    (`simu_sigma` 2.0, `simu_sigma_aniso` 1.0), silently: no error, no warning,
+    and the run continues at a restraint weight nobody chose.
+
+    So the worker holds its own copy and re-asserts it. The call is idempotent
+    and costs nothing measurable, so it goes at the top of every macrocycle
+    rather than only where a rebuild is known to happen today -- that way
+    enabling rigid body later cannot quietly invalidate a fitted sigma.
+
+    The read-back assert is the point. Without it this helper would fail the
+    same silent way the bug does if torchref ever renames an attribute.
+
+    Group *weights* need no propagation: `ref.weighting` lives on the Refinement,
+    not on the targets, and survives rigid body and macrocycles untouched
+    (verified 2026-08-20). Only these component sigmas are at risk.
+
+    Fixed upstream on kmdalton/TorchRef branch
+    `fix/adp-restraint-config-lost-on-rebuild`, which adds an `adp_restraints=`
+    constructor argument that reapplies on every rebuild. Delete this helper and
+    pass that instead once it lands.
+    """
+    if not spec:
+        return
+    for component, attrs in spec.items():
+        target = ref.adp_target[component]
+        for attr, value in attrs.items():
+            setattr(target, attr, value)
+            got = getattr(target, attr)
+            if abs(float(got) - float(value)) > 1e-5:
+                raise RuntimeError(
+                    f"adp/{component}.{attr} did not stick at {where}: "
+                    f"set {value:g}, read back {float(got):g}. A target rebuild "
+                    "happened after this call, or the attribute was renamed."
+                )
+
+
+def restraint_audit(ref, spec):
+    """One-line summary of what the restraints and weights actually are.
+
+    Printed per macrocycle so a run's log carries evidence of the values it used
+    rather than the values it was asked for -- the distinction this whole helper
+    exists to preserve.
+    """
+    bits = []
+    for component, attrs in (spec or {}).items():
+        for attr in attrs:
+            bits.append(f"{component}.{attr}={float(getattr(ref.adp_target[component], attr)):g}")
+    try:
+        weights = ref.weighting(ref.complete_loss_state())
+        bits.append(f"w[adp]={float(weights.get('adp', float('nan'))):g}")
+    except Exception:
+        pass
+    return "  ".join(bits)
 
 
 def reset_b_factors(ref, torch):
@@ -501,10 +582,9 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
             french_wilson=False,
             **kwargs,
         )
-        # Only the anisotropy channel is touched; the `adp` group weight and
-        # the magnitude sigmas keep torchref's defaults.
-        if adp_mode == "anisotropic":
-            r.adp_target["simu"].simu_sigma_aniso = aniso_sigma
+        apply_adp_restraints(
+            r, adp_restraint_spec(adp_mode, aniso_sigma), "construction"
+        )
         return r
 
     if adp_mode != "anisotropic":
@@ -541,14 +621,23 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
     # refined. torchref's own docs say to call it once at construction and use
     # refine_scaler() inside the loop.
     ref.get_scales()
+    spec = adp_restraint_spec(adp_mode, sigma)
     for cycle in range(macro_cycles):
+        # Re-assert the restraint configuration before every cycle. Nothing on
+        # today's path rebuilds the ADP targets, so this is currently a no-op --
+        # it is here so that adding a step which does (rigid body is the one we
+        # want next) cannot silently drop a fitted sigma back to the default.
+        # See apply_adp_restraints.
+        apply_adp_restraints(ref, spec, f"cycle {cycle + 1}")
         if getattr(ref.scaler, "solvent", None) is not None:
             ref.scaler.solvent.update_solvent()
         ref.refine_scaler()
         ref.refine_adp()
         rw, rf = ref.get_rfactor()
+        audit = restraint_audit(ref, spec)
         print(
-            f"Cycle {cycle + 1:2d}/{macro_cycles}: Rwork={rw:.4f}  Rfree={rf:.4f}",
+            f"Cycle {cycle + 1:2d}/{macro_cycles}: Rwork={rw:.4f}  Rfree={rf:.4f}"
+            + (f"  [{audit}]" if audit else ""),
             flush=True,
         )
 
