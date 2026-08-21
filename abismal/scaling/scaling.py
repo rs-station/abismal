@@ -442,17 +442,15 @@ class ImageScaler(tfk.models.Model):
         ) = inputs
 
         n = 2
+        noise = 0.
         if training and self.metadata_noise_factor > 0.:
             noise = self.metadata_noise_factor * metadata.with_flat_values(
                 tf.random.normal(
                     tfk.backend.shape(metadata.flat_values)
                 )
             )
-            metadata_noised = metadata + noise
-        else:
-            metadata_noised = metadata
 
-        image = [metadata_noised, iobs, sigiobs]
+        image = [metadata + noise, iobs, sigiobs]
         if self.hkl_to_imodel:
             image.append(0.02 * tf.cast(hkl, metadata.dtype))
 
