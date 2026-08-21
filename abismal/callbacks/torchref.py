@@ -32,7 +32,8 @@ class TorchRefRunner(tfk.callbacks.Callback):
                  r_free_mtz: str = None, r_free_value: int = None,
                  wavelength: float = None, adp_mode: str = 'auto',
                  adp_aniso_sigma: str = 'auto', rigid_body: bool = True,
-                 rigid_body_iter: int = 30, *args, **kwargs):
+                 rigid_body_iter: int = 30, allow_overlap: bool = False,
+                 *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.output_prefix = output_prefix
         self.asu_id = asu_id
@@ -48,6 +49,7 @@ class TorchRefRunner(tfk.callbacks.Callback):
         self.adp_aniso_sigma = adp_aniso_sigma
         self.rigid_body = rigid_body
         self.rigid_body_iter = rigid_body_iter
+        self.allow_overlap = allow_overlap
         self.output_directory = abspath(output_directory)
         self.processes = []
         # Epoch whose refinement the overlap guard skipped, if that skip is
@@ -56,6 +58,10 @@ class TorchRefRunner(tfk.callbacks.Callback):
 
         if not exists(self.output_directory):
             mkdir(output_directory)
+
+    # Concurrent workers tolerated under allow_overlap before saying something.
+    # Two is normal on the benchmarks; this is well clear of it.
+    OVERLAP_WARN_AT = 4
 
     def _reap(self, block=False):
         """Collect finished workers, reporting any that failed.
@@ -106,7 +112,7 @@ class TorchRefRunner(tfk.callbacks.Callback):
         self._reap()
         if self.pdb_file is None or (epoch + 1) % self.epoch_stride:
             return
-        if self.processes:
+        if self.processes and not self.allow_overlap:
             # Remember the most recent skip. If training ends here, on_train_end
             # picks it up rather than leaving the run without its final result.
             self._skipped_final_epoch = epoch
@@ -114,13 +120,25 @@ class TorchRefRunner(tfk.callbacks.Callback):
             # pile up would put N of them on the box at once, each fighting the
             # others and the trainer for cores, so skip instead. The next
             # multiple of epoch_stride will pick up better-converged data
-            # anyway.
+            # anyway. Set allow_overlap to refine every epoch regardless.
             warn(
                 f"skipping torchref at epoch {epoch + 1}: "
                 f"{len(self.processes)} earlier run(s) still going",
                 RuntimeWarning,
             )
             return
+        if len(self.processes) >= self.OVERLAP_WARN_AT:
+            # Steady-state concurrency is roughly worker_time / epoch_time, so
+            # it is self-limiting on the benchmarks (~2 at worst). Well past
+            # that means refinement is far slower than an epoch and the workers
+            # are contending with each other; say so rather than block, since
+            # the caller asked for every epoch.
+            warn(
+                f"{len(self.processes)} torchref runs already going at epoch "
+                f"{epoch + 1}; refinement is much slower than an epoch, so "
+                "these are competing for cores. Consider --torchref-frequency.",
+                RuntimeWarning,
+            )
         self._skipped_final_epoch = None
         self.run_torchref(epoch)
 

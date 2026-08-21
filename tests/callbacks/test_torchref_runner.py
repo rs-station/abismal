@@ -212,3 +212,45 @@ def test_no_pdb_means_no_spawn(tmp_path, spawned):
     runner = TorchRefRunner(str(tmp_path), pdb_file=None)
     runner.on_epoch_end(0)
     assert spawned == []
+
+
+# --------------------------------------------------------------------------
+# allow_overlap -- refine every epoch, for a complete per-epoch record
+# --------------------------------------------------------------------------
+
+def test_allow_overlap_refines_every_epoch(tmp_path, spawned):
+    """With allow_overlap, a running worker must not suppress the next epoch.
+
+    The default guard trades completeness for CPU headroom. A publication figure
+    needs the per-epoch trace with no gaps, so this path has to spawn on every
+    stride epoch regardless of what is still in flight.
+    """
+    runner = _runner(tmp_path, epoch_stride=1, allow_overlap=True)
+    for epoch in range(4):
+        runner.on_epoch_end(epoch)          # nothing ever finishes
+    assert len(spawned) == 4, "a live worker suppressed a later epoch"
+    assert len(runner.processes) == 4
+
+
+def test_allow_overlap_warns_once_concurrency_is_high(tmp_path, spawned):
+    """Deep stacking means refinement is far slower than an epoch. Say so.
+
+    Concurrency is self-limiting at about (refinement time / epoch time), which
+    is ~2 on the benchmarks. Well past that, the workers are fighting each
+    other, and the user should hear about it -- but not be blocked, since they
+    asked for every epoch.
+    """
+    runner = _runner(tmp_path, epoch_stride=1, allow_overlap=True)
+    for epoch in range(runner.OVERLAP_WARN_AT):
+        runner.on_epoch_end(epoch)
+    with pytest.warns(RuntimeWarning, match="competing for cores"):
+        runner.on_epoch_end(runner.OVERLAP_WARN_AT)
+
+
+def test_default_still_skips(tmp_path, spawned):
+    """allow_overlap must be opt-in -- the default keeps the guard."""
+    runner = _runner(tmp_path, epoch_stride=1)
+    runner.on_epoch_end(0)
+    with pytest.warns(RuntimeWarning, match="still going"):
+        runner.on_epoch_end(1)
+    assert len(spawned) == 1

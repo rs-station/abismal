@@ -97,6 +97,22 @@ args_and_kwargs = (
 
     (
         (
+            "--torchref-allow-overlap",
+        ), {
+            "help": "Refine every epoch even when an earlier torchref run is "
+                    "still going. By default a new run is skipped while one is "
+                    "in flight, since refinement is CPU-bound and overlapping "
+                    "runs compete for cores -- but that leaves gaps in the "
+                    "per-epoch record. Set this when you need a refinement for "
+                    "every epoch, such as for a publication figure. Concurrency "
+                    "is self-limiting at roughly (refinement time / epoch "
+                    "time); a warning is issued if it climbs past 4.",
+            "action": "store_true",
+        }
+    ),
+
+    (
+        (
             "--torchref-no-rigid-body",
         ), {
             "help": "Skip the per-chain rigid-body step torchref runs before "

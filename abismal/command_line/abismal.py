@@ -337,6 +337,7 @@ def main(args=None):
                 adp_aniso_sigma=parser.torchref_adp_aniso_sigma,
                 rigid_body=not parser.torchref_no_rigid_body,
                 rigid_body_iter=parser.torchref_rigid_body_iter,
+                allow_overlap=parser.torchref_allow_overlap,
             )
             callbacks.append(torchref_runner)
 
