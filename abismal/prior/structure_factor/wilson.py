@@ -222,6 +222,25 @@ class MultiWilsonPrior(PriorBase):
             correlation =self.correlation
             parent_id = self.rac.parent_miller_id
         else:
+            # The double-Wilson conditional needs the PARENT reflection's
+            # posterior sample, which for a batch is generally not in that
+            # batch: `log_prob` gathers `z` at `parent_miller_id`, indices into
+            # the full ASU collection, while a non-flat `z` runs over the
+            # observations present. Indexing one with the other either raises
+            # (small batch) or silently conditions each reflection on an
+            # unrelated observation (large batch).
+            #
+            # abismal never reaches here -- command_line/abismal.py forces
+            # posterior_kwargs['independent']=False for this prior, so only
+            # flat_distribution() runs. Fail loudly rather than return numbers
+            # that look plausible.
+            raise NotImplementedError(
+                "MultiWilsonPrior has no per-batch distribution: the "
+                "double-Wilson conditional needs the parent reflection's "
+                "posterior sample, which a batch does not generally contain. "
+                "Use flat_distribution() (independent=False), which is what "
+                "abismal does."
+            )
             root = self.rac.gather(self.rac.is_root, asu_id, hkl)
             centric = self.rac.gather(self.rac.centric, asu_id, hkl)
             epsilon = self.rac.gather(self.rac.epsilon, asu_id, hkl)

@@ -60,53 +60,85 @@ def test_map_grid_size_scales_with_cell_not_resolution(worker):
     assert [2 * n for n in small] == large
 
 
-@pytest.mark.parametrize("cell,spacegroup", [
-    ((60.0, 70.0, 80.0, 90, 90, 90), "P 21 21 21"),      # orthorhombic
-    ((93.99, 93.99, 130.87, 90, 90, 120), "P 61 2 2"),   # hexagonal
-    ((40.0, 45.0, 50.0, 75, 80, 85), "P 1"),             # oblique triclinic
-])
-def test_requested_voxel_size_holds_in_real_space(worker, cell, spacegroup):
-    """The realised spacing must honour the request on every axis, for any cell.
+CELLS = [
+    ((60.0, 70.0, 80.0, 90, 90, 90), "P 21 21 21"),   # orthorhombic
+    ((93.99, 93.99, 130.87, 90, 90, 120), "P 61 2 2"),  # hexagonal
+    ((40.0, 45.0, 50.0, 50, 55, 60), "P 1"),          # strongly oblique
+]
 
-    The regression: `cell.a / nu` is the grid STEP length, which equals the
-    perpendicular inter-plane distance only when the cell is orthogonal. Deriving
-    physical sizes from it over-reported by 13% on the P6122 benchmark, so a
-    voxel meant a different physical size per dataset -- precisely what sizing
-    the map by voxel size exists to prevent.
-    """
+
+def _sized_grid(worker, cell, spacegroup, voxel_size=0.3):
     unit_cell = gemmi.UnitCell(*cell)
-    grid = gemmi.FloatGrid(*worker.map_grid_size(unit_cell, voxel_size=0.3))
-    # set_unit_cell(), not `grid.unit_cell = ...`: gemmi recomputes `spacing`
-    # only in the setter, so assignment leaves it at the default cell's value.
+    grid = gemmi.FloatGrid(*worker.map_grid_size(unit_cell, voxel_size=voxel_size))
+    # set_unit_cell(), not `grid.unit_cell = ...`: gemmi recomputes derived
+    # geometry only in the setter, so assignment leaves it on the default cell.
     grid.set_unit_cell(unit_cell)
     grid.spacegroup = gemmi.SpaceGroup(spacegroup)
-
-    for spacing in worker.grid_spacing(grid):
-        assert spacing <= 0.3 + 1e-9
+    return unit_cell, grid
 
 
-@pytest.mark.parametrize("cell,spacegroup", [
-    ((60.0, 70.0, 80.0, 90, 90, 90), "P 21 21 21"),
-    ((93.99, 93.99, 130.87, 90, 90, 120), "P 61 2 2"),
-    ((40.0, 45.0, 50.0, 75, 80, 85), "P 1"),
-])
+def _voxel_step_real_space(unit_cell, shape, axis):
+    """Real-space distance covered by one voxel step along `axis`.
+
+    Measured through orthogonalized coordinates rather than computed, so the
+    test cannot restate the implementation's own arithmetic.
+    """
+    origin = unit_cell.orthogonalize(gemmi.Fractional(0, 0, 0))
+    frac = [0.0, 0.0, 0.0]
+    frac[axis] = 1.0 / shape[axis]
+    return unit_cell.orthogonalize(gemmi.Fractional(*frac)).dist(origin)
+
+
+@pytest.mark.parametrize("cell,spacegroup", CELLS)
+def test_requested_voxel_size_holds_in_real_space(worker, cell, spacegroup):
+    """One voxel must span at most the requested size, on every axis.
+
+    Asserted against orthogonalized coordinates. Comparing against
+    ``cell.a / nu`` instead would just restate ``map_grid_size``'s own ceil and
+    pass for any cell.
+    """
+    unit_cell, grid = _sized_grid(worker, cell, spacegroup)
+    for axis in range(3):
+        step = _voxel_step_real_space(unit_cell, grid.shape, axis)
+        assert step <= 0.3 + 1e-9, f"axis {axis} spans {step:.4f} A"
+
+
+@pytest.mark.parametrize("cell,spacegroup", CELLS)
 def test_peak_separation_never_overshoots(worker, cell, spacegroup):
     """min_distance voxels must span at most the requested separation.
 
-    peak_local_max measures min_distance isotropically in index space, so the
-    coarsest axis binds -- overshooting there is what would merge two real
-    atoms, e.g. the two sulfurs of a disulfide 2.0 A apart.
+    The regression: sizing this against gemmi's ``Grid.spacing`` -- the
+    perpendicular inter-plane distance, always <= the step-vector length --
+    inflates the voxel count. On the oblique cell here that gave 4 voxels
+    spanning 1.19 A for a requested 1.0 A, which merges maxima that should stay
+    resolved. Measuring in real space is what makes this test able to fail;
+    dividing the requested separation by the same quantity the implementation
+    uses is an arithmetic identity.
     """
-    unit_cell = gemmi.UnitCell(*cell)
-    grid = gemmi.FloatGrid(*worker.map_grid_size(unit_cell, voxel_size=0.3))
-    # set_unit_cell(), not `grid.unit_cell = ...`: gemmi recomputes `spacing`
-    # only in the setter, so assignment leaves it at the default cell's value.
-    grid.set_unit_cell(unit_cell)
-    grid.spacegroup = gemmi.SpaceGroup(spacegroup)
-
+    unit_cell, grid = _sized_grid(worker, cell, spacegroup)
     n = worker.peak_min_distance(grid, separation=1.0)
     assert n >= 1
-    assert n * max(worker.grid_spacing(grid)) <= 1.0 + 1e-9
+    for axis in range(3):
+        span = n * _voxel_step_real_space(unit_cell, grid.shape, axis)
+        assert span <= 1.0 + 1e-9, (
+            f"{n} voxels along axis {axis} span {span:.4f} A, requested 1.0"
+        )
+
+
+def test_peak_separation_resolves_a_disulfide(worker):
+    """The separation must stay well under an S-S bond.
+
+    hewl's four disulfides are 2.02-2.05 A apart and each sulfur is its own
+    anomalous scatterer, so a separation at or above that silently halves the
+    site count -- which is what the connected-component finder this replaced
+    did.
+    """
+    for cell, spacegroup in CELLS:
+        unit_cell, grid = _sized_grid(worker, cell, spacegroup)
+        n = worker.peak_min_distance(grid)
+        widest = max(_voxel_step_real_space(unit_cell, grid.shape, axis)
+                     for axis in range(3))
+        assert n * widest < 2.0, f"{cell} would merge a disulfide"
 
 
 def test_peak_min_distance_never_zero(worker):

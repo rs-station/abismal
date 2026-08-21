@@ -87,8 +87,8 @@ args_and_kwargs = (
             "help": "Sigma on the deviatoric (anisotropy) channel of torchref's "
                     "SIMU restraint -- the dial that regularizes ADP tensor "
                     "shape, which is where all the extra anisotropic "
-                    "parameters live. 'auto' (default) fits it once by "
-                    "minimising Rfree, refit each epoch against that epoch's "
+                    "parameters live. 'auto' (default) fits it by "
+                    "minimising Rfree each epoch, against that epoch's "
                     "own merged data. Ignored for isotropic runs.",
             "default": "auto",
             "type": str,

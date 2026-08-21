@@ -172,31 +172,40 @@ def map_grid_size(cell, voxel_size=VOXEL_SIZE_ANGSTROMS):
             for length in (cell.a, cell.b, cell.c)]
 
 
-def grid_spacing(grid):
-    """True perpendicular spacing (A) of a gemmi grid, one value per axis.
+def grid_step_lengths(grid):
+    """Real-space length of a one-voxel step along each index axis (A).
 
-    ``cell.a / nu`` is the length of the grid *step vector*, which equals the
-    inter-plane distance only for an orthogonal cell. On the P6122 benchmark it
-    over-reports by 13% (0.2937 A against gemmi's 0.2544 A), and the error is a
-    function of the cell angles -- so anything derived from it means a different
-    physical size per dataset, which is exactly what sizing the map by voxel
-    size exists to prevent.
+    ``cell.a / nu`` exactly: moving one voxel along index u displaces you by the
+    a-axis step vector, whose length is ``cell.a / nu`` for any cell, orthogonal
+    or not. Verified on a (40, 45, 50, 50, 55, 60) triclinic cell against
+    orthogonalized coordinates -- agreement to 4 decimals.
 
-    Note gemmi recomputes ``spacing`` only inside ``set_unit_cell``; assigning
-    ``grid.unit_cell`` directly leaves it reporting the previous cell's value.
-    Grids from ``transform_f_phi_to_map`` are always set correctly.
+    Deliberately NOT ``gemmi.Grid.spacing``, which is the perpendicular distance
+    between lattice planes, ``1/(n_i a*_i)``. That is always <= the step length
+    (0.239 vs 0.299 on the cell above) and answers a different question. An
+    earlier version of this module used it here on the theory that the step
+    length "over-reported" the spacing; it does, but the spacing is not the
+    quantity ``min_distance`` measures, and substituting it inflated the voxel
+    count and so overshot the requested separation by 20%.
     """
-    return tuple(grid.spacing)
+    cell = grid.unit_cell
+    return (cell.a / grid.shape[0],
+            cell.b / grid.shape[1],
+            cell.c / grid.shape[2])
 
 
 def peak_min_distance(grid, separation=PEAK_MIN_DISTANCE_ANGSTROMS):
     """`separation` in Angstroms expressed as whole voxels, at least 1.
 
-    peak_local_max measures min_distance isotropically in index space, so use
-    the COARSEST axis: that is where a given voxel count spans the most
-    Angstroms, and overshooting there is what would merge two real atoms.
+    skimage suppresses within a Chebyshev radius in index space (its default
+    ``p_norm=inf``), so the exclusion region is a cube of half-width
+    ``min_distance`` voxels and its widest real-space extent is along the
+    coarsest axis. Sizing against that axis keeps the separation at or under
+    what was asked for; sizing against a finer one would merge atoms that should
+    stay resolved, which on hewl means the two sulfurs of a disulfide 2.02 A
+    apart.
     """
-    return max(1, int(separation / max(grid_spacing(grid))))
+    return max(1, int(separation / max(grid_step_lengths(grid))))
 
 # Markers delimiting the machine-readable summary at the end of stdout. Keep
 # these in sync with the parser in abismal-benchmarks/scripts/plot_progress.py.
@@ -251,7 +260,8 @@ def resolve_adp_mode(adp_mode, pdb_path):
     return mode
 
 
-def search_aniso_sigma(build_refinement, ladder=ADP_ANISO_SIGMA_LADDER):
+def search_aniso_sigma(build_refinement, has_fixed_free_set=True,
+                       ladder=ADP_ANISO_SIGMA_LADDER):
     """Fit SIMU's deviatoric sigma by cross-validation on Rfree.
 
     Refines at each candidate sigma and keeps the one with the lowest Rfree --
@@ -277,6 +287,17 @@ def search_aniso_sigma(build_refinement, ladder=ADP_ANISO_SIGMA_LADDER):
         f"({ADP_SEARCH_CYCLES} macrocycles per trial)...",
         flush=True,
     )
+    if not has_fixed_free_set:
+        # ADP_SEARCH_RFREE_SE was calibrated by a PAIRED bootstrap -- both rungs
+        # scored on the same reflections. Without a supplied R-free set torchref
+        # draws a fresh random one per trial (seed=None), so the rungs are not
+        # comparable at that tolerance and the selection is largely noise.
+        print(
+            "    WARNING: no fixed R-free set, so every rung is scored against "
+            "a different random one. The 1-SE tolerance assumes a paired "
+            "comparison; pass --r-free-mtz for this fit to mean anything.",
+            flush=True,
+        )
     results = []
     for w in ladder:
         ref = build_refinement(w)
@@ -404,10 +425,10 @@ def restraint_audit(ref, spec):
             bits.append(f"{component}.{attr}={float(getattr(ref.adp_target[component], attr)):g}")
     try:
         weights = ref.weighting(ref.complete_loss_state())
-    except (AttributeError, TypeError) as err:
-        # Narrow, and loud. This helper exists to make silent restraint loss
-        # visible, so it must not go silent itself when torchref renames the
-        # weighting API.
+    except Exception as err:  # noqa: BLE001 - see below
+        # Broad, but reported rather than swallowed. This is a print-only
+        # helper: it must not be able to abort a refinement, and it must not go
+        # quiet either -- its whole job is making silent restraint loss visible.
         bits.append(f"w[adp]=<unavailable: {type(err).__name__}>")
     else:
         bits.append(f"w[adp]={float(weights.get('adp', float('nan'))):g}")
@@ -465,14 +486,31 @@ def run_rigid_body(ref, spec, iterations=RIGID_BODY_ITER):
         print(
             f"    NOTE: {rmsd:.3f} A is a large correction, beyond the regime "
             f"where {RIGID_BODY_ITER} iterations were shown to converge. "
-            "Consider --rigid-body-iter 100.",
+            "Consider --torchref-rigid-body-iter 100 (or --rigid-body-iter "
+            "when driving this worker directly).",
             flush=True,
         )
 
 
 def reset_b_factors(ref, torch):
-    """Flatten every refinable B to RESET_B and invalidate the SF cache."""
-    from torchref.model.parameter_wrappers import PositiveMixedTensor
+    """Flatten every atomic displacement parameter to RESET_B.
+
+    torchref keeps ADPs in two places: a scalar ``model.adp`` for isotropic
+    atoms and a 6-component ``model.u`` for anisotropic ones. ``Model.adp_u6``
+    returns ``where(aniso_flag, U, B/8pi^2 * I)``, so for an anisotropic atom
+    ``adp`` is ignored entirely -- ``_apply_adp_partition`` does not even mark
+    it refinable. Resetting only ``adp`` therefore left the deposited tensors
+    untouched on every anisotropic atom, which on hewl is 1112 of 1210: 92% of
+    the model kept its published ADPs while the log claimed a flat start.
+
+    That defeats the point of the reset (RESET_B), and it silently biased
+    `search_aniso_sigma`, whose trials all began from the deposited tensors.
+    Both channels are reset here, the U tensor to the isotropic equivalent
+    ``B/(8 pi^2)`` on the diagonal and zero off it.
+    """
+    from torchref.model.parameter_wrappers import (
+        CholeskyMixedTensor, PositiveMixedTensor,
+    )
 
     adp = ref.model.adp
     ref.model.adp = PositiveMixedTensor(
@@ -480,6 +518,19 @@ def reset_b_factors(ref, torch):
         refinable_mask=adp.refinable_mask,
         name="adp",
     )
+
+    u = getattr(ref.model, "u", None)
+    if u is not None:
+        u_iso = RESET_B / (8.0 * math.pi ** 2)
+        current = u().detach()
+        flat = torch.zeros_like(current)
+        flat[..., :3] = u_iso          # u11, u22, u33; u12/u13/u23 stay zero
+        ref.model.u = CholeskyMixedTensor(
+            flat,
+            refinable_mask=u.refinable_mask,
+            name="aniso_U",
+            device=current.device,
+        )
     ref.model.reset_cache()
 
 
@@ -761,24 +812,27 @@ def peaks_by_local_max(structure, grid, z_score_cutoff,
 
         # `dedup_symmetry` keeps whichever symmetry copy was strongest, so the
         # centroid can sit anywhere in the cell while the matched atom sits in
-        # the model's own copy. Move the centroid onto the atom's image before
-        # reporting, or `cen*` and `coord*` land in different frames and their
-        # separation bears no relation to `dist` -- 60-120 A apart in practice.
+        # the model's own copy -- 60-120 A apart in practice, with `dist`
+        # reporting the true symmetry-aware separation between them.
+        #
+        # Move the CENTROID onto the model's frame, not the atom onto the
+        # peak's. `coord*` must stay the position that appears in the PDB, since
+        # rsbooster's peak_report writes `cra.atom.pos` there and callers join
+        # peaks.csv back to the model by coordinate. Reporting a symmetry image
+        # present in no file would satisfy |cen - coord| == dist while breaking
+        # every such consumer.
         best = None
         for mark in ns.find_atoms(centroid):
             cra = mark.to_cra(model)
             image = cell.find_nearest_pbc_image(centroid, cra.atom.pos, mark.image_idx)
             dist = image.dist()
             if best is None or dist < best[0]:
-                # Move the ATOM onto the image nearest the peak. The peak is
-                # the measurement; the atom is what it is being attributed to,
-                # and this keeps |cen - coord| == dist exactly.
                 best = (dist, cra, cell.find_nearest_pbc_position(
-                    centroid, cra.atom.pos, mark.image_idx))
+                    cra.atom.pos, centroid, mark.image_idx, True))
         if best is None or best[0] > distance_cutoff:
             n_unmatched += 1
             continue
-        dist, cra, atom_pos = best
+        dist, cra, peak_pos = best
         rows.append({
             "chain": cra.chain.name,
             "seqid": cra.residue.seqid.num,
@@ -789,8 +843,8 @@ def peaks_by_local_max(structure, grid, z_score_cutoff,
             "peakz": (peak_value - mu) / sd,
             "score": score,
             "scorez": score / sd,
-            "cenx": centroid.x, "ceny": centroid.y, "cenz": centroid.z,
-            "coordx": atom_pos.x, "coordy": atom_pos.y, "coordz": atom_pos.z,
+            "cenx": peak_pos.x, "ceny": peak_pos.y, "cenz": peak_pos.z,
+            "coordx": cra.atom.pos.x, "coordy": cra.atom.pos.y, "coordz": cra.atom.pos.z,
         })
     if n_unmatched:
         print(
@@ -828,7 +882,7 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
     grid = mtz.transform_f_phi_to_map(
         "ANOM", "PANOM", min_size=map_grid_size(structure.cell)
     )
-    spacing = grid_spacing(grid)
+    spacing = grid_step_lengths(grid)
     print(
         f"anomalous map grid {tuple(grid.shape)} "
         f"(spacing {spacing[0]:.3f}/{spacing[1]:.3f}/{spacing[2]:.3f} A, "
@@ -913,7 +967,7 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
         sigma = None
         print("isotropic ADPs: no anisotropy restraint to fit", flush=True)
     elif adp_aniso_sigma == "auto":
-        sigma = search_aniso_sigma(build)
+        sigma = search_aniso_sigma(build, r_free_mtz is not None)
     else:
         sigma = float(adp_aniso_sigma)
         print(f"adp aniso sigma: {sigma:g} (fixed)", flush=True)
@@ -1012,7 +1066,7 @@ def print_summary(rwork, rfree, peaks_csv=None, adp_mode=None, adp_aniso_sigma=N
         print(Path(peaks_csv).read_text().strip(), flush=True)
         print(PEAKS_END, flush=True)
     else:
-        print("no anomalous peaks (non-anomalous data)", flush=True)
+        print("no anomalous peaks written", flush=True)
     print(SUMMARY_END, flush=True)
 
 

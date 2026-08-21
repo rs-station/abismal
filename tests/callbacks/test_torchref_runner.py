@@ -121,14 +121,21 @@ def test_r_free_value_needs_its_mtz(tmp_path, spawned):
 # --------------------------------------------------------------------------
 
 def test_finished_workers_are_reaped(tmp_path, spawned):
-    """`processes` must not grow without bound -- one zombie per epoch otherwise."""
+    """Finished workers must be cleared, not merely capped by the skip guard.
+
+    Asserting `len(processes) <= 1` would pass with reaping entirely disabled,
+    because the overlap guard caps the list at 1 by itself. What distinguishes
+    reaping is that the list reaches ZERO and that a spawn therefore happens on
+    every epoch.
+    """
     runner = _runner(tmp_path, epoch_stride=1)
-    for epoch in range(3):
+    for epoch in range(4):
         runner.on_epoch_end(epoch)
         for _, process in spawned:
             process.finish()
-    runner.on_epoch_end(3)
-    assert len(runner.processes) <= 1
+        runner._reap()
+        assert runner.processes == [], f"not reaped after epoch {epoch}"
+    assert len(spawned) == 4, "a finished worker blocked the next epoch"
 
 
 def test_overlapping_runs_are_skipped(tmp_path, spawned):
@@ -159,6 +166,22 @@ def test_train_end_waits_for_stragglers(tmp_path, spawned):
     runner.on_train_end()
     assert spawned[0][1].waited
     assert runner.processes == []
+
+
+def test_final_epoch_is_refined(tmp_path, spawned):
+    """The last epoch's model is the one that matters, so it must not be skipped.
+
+    A worker outliving its epoch makes the guard skip; if that lands on the
+    final epoch the best model is never refined at all.
+    """
+    runner = _runner(tmp_path, epoch_stride=1)
+    for epoch in range(3):
+        runner.on_epoch_end(epoch)
+        for _, process in spawned:
+            process.finish()
+        runner._reap()
+    epochs_refined = [argv[argv.index("--mtz") + 1] for argv, _ in spawned]
+    assert any("epoch_3" in m for m in epochs_refined), epochs_refined
 
 
 def test_no_pdb_means_no_spawn(tmp_path, spawned):
