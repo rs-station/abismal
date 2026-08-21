@@ -198,12 +198,19 @@ def peak_min_distance(grid, separation=PEAK_MIN_DISTANCE_ANGSTROMS):
     """`separation` in Angstroms expressed as whole voxels, at least 1.
 
     skimage suppresses within a Chebyshev radius in index space (its default
-    ``p_norm=inf``), so the exclusion region is a cube of half-width
-    ``min_distance`` voxels and its widest real-space extent is along the
-    coarsest axis. Sizing against that axis keeps the separation at or under
-    what was asked for; sizing against a finer one would merge atoms that should
-    stay resolved, which on hewl means the two sulfurs of a disulfide 2.02 A
-    apart.
+    ``p_norm=inf``), so the exclusion region is a CUBE of half-width
+    ``min_distance`` voxels, not a sphere. Its real-space extent therefore runs
+    from ``m * step`` along an axis to ``sqrt(3) * m * step`` along the body
+    diagonal, and no scalar ``min_distance`` can be isotropic on an anisotropic
+    grid. Sizing against the coarsest axis bounds the AXIAL extent by the
+    request; the diagonal necessarily exceeds it.
+
+    On the real hewl grid (steps 0.294/0.294/0.295 A, m=3) that means maxima
+    merge up to 1.53 A apart on the diagonal and resolve at 2.04 A, against an
+    S-S distance of 2.02-2.05 A. hewl's four disulfides resolve, but on a ~1%
+    margin, not the 2x the axial figure suggests -- so treat
+    PEAK_MIN_DISTANCE_ANGSTROMS as having no headroom, and re-measure
+    resolution on real data before changing it or VOXEL_SIZE_ANGSTROMS.
     """
     return max(1, int(separation / max(grid_step_lengths(grid))))
 
@@ -525,6 +532,11 @@ def reset_b_factors(ref, torch):
         current = u().detach()
         flat = torch.zeros_like(current)
         flat[..., :3] = u_iso          # u11, u22, u33; u12/u13/u23 stay zero
+        # Isotropic atoms are stored as all-NaN rows -- that is how torchref
+        # marks the iso/aniso split (`_apply_adp_partition` tests
+        # `isfinite(U).all(dim=1)`). Zeroing them would make every atom look
+        # anisotropic to any later `set_adp_mode`/`set_default_masks` call.
+        flat[~torch.isfinite(current).all(dim=-1)] = float("nan")
         ref.model.u = CholeskyMixedTensor(
             flat,
             refinable_mask=u.refinable_mask,
@@ -979,6 +991,10 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
     # ADP KL singularity this sits on.
     reset_b_factors(ref, torch)
 
+    # Scale BEFORE reporting. The scale in force here was fitted by the
+    # constructor against the deposited B-factors, so measuring a flat-B model
+    # with it reads ~0.034 pessimistic and inflates the apparent improvement.
+    ref.get_scales()
     rw0, rf0 = ref.get_rfactor()
     print(
         f"Initial (B reset to {RESET_B}): Rwork={rw0:.4f}  Rfree={rf0:.4f}",
@@ -996,7 +1012,6 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
     # solvent and anisotropy terms, discarding the scale the previous cycle
     # refined. torchref's own docs say to call it once at construction and use
     # refine_scaler() inside the loop.
-    ref.get_scales()
     spec = adp_restraint_spec(adp_mode, sigma)
 
     # Rigid body first, on the flat-B model, so the macrocycles refine ADPs

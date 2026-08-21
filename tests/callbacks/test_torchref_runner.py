@@ -168,20 +168,44 @@ def test_train_end_waits_for_stragglers(tmp_path, spawned):
     assert runner.processes == []
 
 
-def test_final_epoch_is_refined(tmp_path, spawned):
-    """The last epoch's model is the one that matters, so it must not be skipped.
+def test_final_epoch_is_refined_even_when_skipped(tmp_path, spawned):
+    """The last epoch must be refined even if the guard skipped it.
 
-    A worker outliving its epoch makes the guard skip; if that lands on the
-    final epoch the best model is never refined at all.
+    Deliberately leaves the first worker RUNNING, so the guard skips every
+    later epoch -- the case that matters. A version of this test that finishes
+    and reaps each worker constructs the situation where nothing overlaps and
+    would pass with the whole mechanism absent.
+
+    This is the headline result: on measured timings a worker takes 1.33x an
+    epoch on hewl, so the final epoch really can be skipped, and a multi-hour
+    run would end with no refinement of the model it is judged on.
     """
+    runner = _runner(tmp_path, epoch_stride=1)
+    runner.on_epoch_end(0)                      # spawns, stays running
+    assert len(spawned) == 1
+    for epoch in (1, 2):
+        with pytest.warns(RuntimeWarning, match="still going"):
+            runner.on_epoch_end(epoch)
+    assert len(spawned) == 1, "guard should have suppressed the middle epochs"
+
+    runner.on_train_end()
+    refined = [argv[argv.index("--mtz") + 1] for argv, _ in spawned]
+    assert any("epoch_3" in m for m in refined), (
+        f"final epoch never refined; only {refined}"
+    )
+
+
+def test_no_skip_means_no_catch_up(tmp_path, spawned):
+    """A run whose final epoch already refined must not refine it twice."""
     runner = _runner(tmp_path, epoch_stride=1)
     for epoch in range(3):
         runner.on_epoch_end(epoch)
         for _, process in spawned:
             process.finish()
         runner._reap()
-    epochs_refined = [argv[argv.index("--mtz") + 1] for argv, _ in spawned]
-    assert any("epoch_3" in m for m in epochs_refined), epochs_refined
+    before = len(spawned)
+    runner.on_train_end()
+    assert len(spawned) == before, "on_train_end re-ran an epoch that was not skipped"
 
 
 def test_no_pdb_means_no_spawn(tmp_path, spawned):

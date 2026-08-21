@@ -104,16 +104,16 @@ def test_requested_voxel_size_holds_in_real_space(worker, cell, spacegroup):
 
 
 @pytest.mark.parametrize("cell,spacegroup", CELLS)
-def test_peak_separation_never_overshoots(worker, cell, spacegroup):
-    """min_distance voxels must span at most the requested separation.
+def test_peak_separation_bounds_the_axial_extent(worker, cell, spacegroup):
+    """min_distance voxels must span at most the request ALONG AN AXIS.
 
-    The regression: sizing this against gemmi's ``Grid.spacing`` -- the
-    perpendicular inter-plane distance, always <= the step-vector length --
-    inflates the voxel count. On the oblique cell here that gave 4 voxels
-    spanning 1.19 A for a requested 1.0 A, which merges maxima that should stay
-    resolved. Measuring in real space is what makes this test able to fail;
-    dividing the requested separation by the same quantity the implementation
-    uses is an arithmetic identity.
+    Only the axial extent is bounded. skimage suppresses within a Chebyshev
+    cube, so the diagonal reaches sqrt(3) times further -- see
+    `test_peak_separation_actually_resolves_two_maxima` for what that costs.
+
+    The regression: sizing against gemmi's `Grid.spacing` (the perpendicular
+    inter-plane distance, always <= the step length) inflates the voxel count.
+    On the oblique cell that gives 4 voxels spanning 1.19 A for a requested 1.0.
     """
     unit_cell, grid = _sized_grid(worker, cell, spacegroup)
     n = worker.peak_min_distance(grid, separation=1.0)
@@ -125,20 +125,36 @@ def test_peak_separation_never_overshoots(worker, cell, spacegroup):
         )
 
 
-def test_peak_separation_resolves_a_disulfide(worker):
-    """The separation must stay well under an S-S bond.
+def test_peak_separation_actually_resolves_two_maxima(worker):
+    """Two maxima an S-S bond apart must come back as two peaks.
 
-    hewl's four disulfides are 2.02-2.05 A apart and each sulfur is its own
-    anomalous scatterer, so a separation at or above that silently halves the
-    site count -- which is what the connected-component finder this replaced
-    did.
+    Asserted by running the finder on a synthetic map rather than by dividing
+    the requested separation by the quantity the implementation divides by --
+    that is a floor identity and passes for any step-based implementation.
+
+    Pins the real quantity: hewl's disulfide sulfurs are 2.02-2.05 A apart and
+    each is its own anomalous scatterer, so merging them halves the site count.
+    The margin is thin by design (the exclusion cube's diagonal is ~2.04 A),
+    which is precisely why it is worth a test.
     """
-    for cell, spacegroup in CELLS:
-        unit_cell, grid = _sized_grid(worker, cell, spacegroup)
-        n = worker.peak_min_distance(grid)
-        widest = max(_voxel_step_real_space(unit_cell, grid.shape, axis)
-                     for axis in range(3))
-        assert n * widest < 2.0, f"{cell} would merge a disulfide"
+    unit_cell = gemmi.UnitCell(79.34, 79.34, 37.81, 90, 90, 90)   # hewl
+    shape = worker.map_grid_size(unit_cell, voxel_size=0.3)
+    grid = gemmi.FloatGrid(*shape)
+    grid.set_unit_cell(unit_cell)
+    grid.spacegroup = gemmi.SpaceGroup("P 1")
+    n = worker.peak_min_distance(grid)
+
+    arr = np.zeros(shape, dtype=np.float32)
+    step = _voxel_step_real_space(unit_cell, shape, 0)
+    offset = int(round(2.02 / step))          # an S-S bond along the a axis
+    arr[20, 20, 20] = 10.0
+    arr[20 + offset, 20, 20] = 9.0
+
+    found = worker.periodic_peak_indices(arr, n, threshold=1.0)
+    assert len(found) == 2, (
+        f"min_distance={n} ({n * step:.2f} A axial) merged two maxima "
+        f"{offset * step:.2f} A apart"
+    )
 
 
 def test_peak_min_distance_never_zero(worker):
@@ -307,3 +323,100 @@ def test_apply_adp_restraints_noop_on_empty_spec(worker):
             raise AssertionError("empty spec must not reach adp_target")
 
     worker.apply_adp_restraints(Boom(), {}, "test")
+
+
+# --------------------------------------------------------------------------
+# peaks.csv frames -- both halves of the property, on a non-P1 spacegroup
+# --------------------------------------------------------------------------
+
+def _one_atom_structure(spacegroup, cell, pos):
+    st = gemmi.Structure()
+    st.cell = gemmi.UnitCell(*cell)
+    st.spacegroup_hm = spacegroup
+    model = gemmi.Model("1")
+    chain = gemmi.Chain("A")
+    residue = gemmi.Residue()
+    residue.name = "ZN"
+    residue.seqid = gemmi.SeqId(1, " ")
+    atom = gemmi.Atom()
+    atom.name = "ZN"
+    atom.element = gemmi.Element("Zn")
+    atom.pos = gemmi.Position(*pos)
+    atom.occ = 1.0
+    atom.b_iso = 20.0
+    residue.add_atom(atom)
+    chain.add_residue(residue)
+    model.add_chain(chain)
+    st.add_model(model)
+    st.setup_entities()
+    # Populate cell.images from the spacegroup; without them NeighborSearch
+    # only sees the model's own copy and a peak on a symmetry image matches
+    # nothing.
+    st.setup_cell_images()
+    return st
+
+
+def test_peaks_csv_frames_agree(worker):
+    """`|cen - coord| == dist` AND `coord*` is a modelled atom position.
+
+    Both halves, together, on a non-P1 spacegroup with the density placed on a
+    SYMMETRY IMAGE of the atom rather than on the atom itself -- which is what
+    `dedup_symmetry` routinely leaves behind, since it keeps whichever copy was
+    strongest wherever it sits.
+
+    Each half alone is satisfiable by a wrong implementation, and both were
+    gotten wrong in turn:
+      - reporting the unmoved centroid satisfies neither;
+      - moving the ATOM onto the peak satisfies the invariant while making
+        `coord*` a position present in no file, breaking any consumer that
+        joins peaks.csv back to the model by coordinate.
+    """
+    cell = (60.0, 60.0, 90.0, 90, 90, 90)
+    st = _one_atom_structure("P 43 21 2", cell, (12.0, 18.0, 25.0))
+
+    grid = gemmi.FloatGrid(*worker.map_grid_size(st.cell, voxel_size=0.5))
+    grid.set_unit_cell(st.cell)
+    grid.spacegroup = gemmi.SpaceGroup("P 43 21 2")
+
+    # Put a blob on a symmetry image of the atom, not on the atom.
+    op = list(gemmi.SpaceGroup("P 43 21 2").operations())[3]
+    frac = st.cell.fractionalize(st[0][0][0][0].pos)
+    image = np.mod(op.apply_to_xyz([frac.x, frac.y, frac.z]), 1.0)
+    centre = np.round(image * np.array(grid.shape)).astype(int)
+    arr = np.array(grid, copy=False)
+    for du in (-1, 0, 1):
+        for dv in (-1, 0, 1):
+            for dw in (-1, 0, 1):
+                idx = tuple(np.mod(centre + [du, dv, dw], grid.shape))
+                arr[idx] = 10.0 - abs(du) - abs(dv) - abs(dw)
+
+    report = worker.peaks_by_local_max(st, grid, z_score_cutoff=3.0)
+    assert len(report) >= 1, "the planted blob was not found"
+
+    modelled = [a.pos for ch in st[0] for r in ch for a in r]
+    for _, row in report.iterrows():
+        cen = np.array([row["cenx"], row["ceny"], row["cenz"]])
+        crd = np.array([row["coordx"], row["coordy"], row["coordz"]])
+        assert abs(np.linalg.norm(cen - crd) - row["dist"]) < 1e-6, (
+            "cen* and coord* are in different symmetry frames"
+        )
+        assert any(p.dist(gemmi.Position(*crd)) < 1e-6 for p in modelled), (
+            "coord* is not a modelled atom position"
+        )
+
+
+def test_peaks_by_local_max_empty_keeps_the_schema(worker):
+    """No peaks must still yield the full column set, not an empty frame.
+
+    peaks.csv is read by abismal-benchmarks; a frame missing its columns turns
+    a quiet epoch into a KeyError downstream.
+    """
+    cell = (40.0, 40.0, 40.0, 90, 90, 90)
+    st = _one_atom_structure("P 1", cell, (10.0, 10.0, 10.0))
+    grid = gemmi.FloatGrid(*worker.map_grid_size(st.cell, voxel_size=0.5))
+    grid.set_unit_cell(st.cell)
+    grid.spacegroup = gemmi.SpaceGroup("P 1")
+
+    report = worker.peaks_by_local_max(st, grid, z_score_cutoff=5.0)
+    assert len(report) == 0
+    assert list(report.columns) == worker.PEAK_COLUMNS

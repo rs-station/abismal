@@ -50,6 +50,9 @@ class TorchRefRunner(tfk.callbacks.Callback):
         self.rigid_body_iter = rigid_body_iter
         self.output_directory = abspath(output_directory)
         self.processes = []
+        # Epoch whose refinement the overlap guard skipped, if that skip is
+        # still the most recent one. on_train_end refines it. See there.
+        self._skipped_final_epoch = None
 
         if not exists(self.output_directory):
             mkdir(output_directory)
@@ -81,13 +84,32 @@ class TorchRefRunner(tfk.callbacks.Callback):
         self.processes = still_running
 
     def on_train_end(self, logs=None):
+        """Wait out the running workers, then refine the final epoch if it was skipped.
+
+        The final epoch is the headline result -- it is the model the run is
+        judged on -- so it is the one epoch that must not be lost to the overlap
+        guard. Whether it is lost is otherwise a coin flip: measured on the
+        banked benchmarks, a worker takes 1.33x an epoch on hewl and 0.97x on
+        cxidb_61, so those skip roughly every other epoch and whichever way the
+        parity falls decides whether the last one ran.
+
+        Blocking here is free -- training is over.
+        """
         self._reap(block=True)
+        if self._skipped_final_epoch is not None:
+            epoch = self._skipped_final_epoch
+            self._skipped_final_epoch = None
+            self.run_torchref(epoch)
+            self._reap(block=True)
 
     def on_epoch_end(self, epoch, logs=None):
         self._reap()
         if self.pdb_file is None or (epoch + 1) % self.epoch_stride:
             return
         if self.processes:
+            # Remember the most recent skip. If training ends here, on_train_end
+            # picks it up rather than leaving the run without its final result.
+            self._skipped_final_epoch = epoch
             # Refinement is CPU-bound and can outlast an epoch. Letting runs
             # pile up would put N of them on the box at once, each fighting the
             # others and the trainer for cores, so skip instead. The next
@@ -99,6 +121,7 @@ class TorchRefRunner(tfk.callbacks.Callback):
                 RuntimeWarning,
             )
             return
+        self._skipped_final_epoch = None
         self.run_torchref(epoch)
 
     def run_torchref(self, epoch):
