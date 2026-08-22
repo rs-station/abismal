@@ -2,6 +2,26 @@
 Estimate cchalf from abismal output.
 """
 
+def freeze_all_but_posterior(model):
+    """
+    Configure `model` so that only the structure factors are refined.
+
+    Do NOT do this by setting `model.trainable = False` and re-enabling the child:
+    tf_keras' `Layer.trainable_weights` short-circuits to `[]` whenever the layer
+    itself is not trainable, regardless of what its children report.
+    `VariationalMergingModel.train_step` filters its gradients through
+    `model.trainable_variables`, so a frozen top-level model turns every
+    `apply_gradients()` into a no-op and the half-dataset structure factors never
+    move. Freeze the siblings instead and leave the model itself trainable.
+    """
+    model.trainable = True
+    model.scale_model.trainable = False
+    model.likelihood.trainable = False
+    model.prior.trainable = False
+    model.surrogate_posterior.trainable = True
+    return model
+
+
 def main(args=None):
     from argparse import ArgumentParser
     parser = ArgumentParser(__doc__)
@@ -46,8 +66,7 @@ def main(args=None):
                 model.surrogate_posterior.set_weights(
                     sf_model.surrogate_posterior.get_weights())
 
-            model.trainable = False
-            model.surrogate_posterior.trainable = True
+            freeze_all_but_posterior(model)
 
             #Reset optimizer state to remove frozen variables
             opt = model.optimizer.from_config(model.optimizer.get_config()) 

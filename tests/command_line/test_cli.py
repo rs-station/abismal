@@ -3,6 +3,7 @@ End to end tests for abismal using a limited feature set
 """
 import gemmi #this is necessary for some baffling dependency reason
 import reciprocalspaceship as rs
+import numpy as np
 import tf_keras as tfk
 import tensorflow as tf
 tf.config.set_visible_devices([], 'GPU')
@@ -11,6 +12,7 @@ from abismal.command_line.cchalf import main as cchalf_main
 import pytest
 from os.path import exists
 from os import chdir
+from glob import glob
 from tempfile import TemporaryDirectory
 
 
@@ -58,6 +60,57 @@ def run_abismal(flags, files, additional_asserts=()):
         args = " datamanager.yml epoch_2.keras --run-eagerly --sf-init epoch_0.keras "
         cchalf_main(args.split())
         assert exists('abismal_xval.mtz')
+        assert_cchalf_optimized()
+
+
+def assert_cchalf_optimized():
+    """
+    The half-dataset structure factors must actually move during abismal.cchalf.
+
+    cchalf freezes everything but the surrogate posterior. Doing that by way of
+    `model.trainable = False` silently zeroes out `model.trainable_variables`
+    -- tf_keras gates a layer's trainable weights on the layer itself -- and
+    `train_step` then applies gradients to nothing. cchalf still ran to
+    completion and still wrote every mtz, so only the *values* betray it: the
+    per-epoch files came out byte-identical. Compare them.
+    """
+    def read(path):
+        # An asu with nothing `seen` in this half writes a zero-row mtz, which
+        # gemmi refuses to read back. At test scale that is routine (--separate
+        # gives six asus ten steps to be observed in), and it is not the failure
+        # this assertion is looking for, so pass over those.
+        try:
+            ds = rs.read_mtz(path)
+        except RuntimeError:
+            return None
+        return ds if len(ds) > 0 else None
+
+    compared = 0
+    for first_path in sorted(glob('half_*/asu_*_epoch_1.mtz')):
+        first = read(first_path)
+        last = read(first_path.replace('_epoch_1.mtz', '_epoch_2.mtz'))
+        if first is None or last is None:
+            continue
+
+        # `seen` only ever grows, so epoch 2 covers at least epoch 1's reflections.
+        shared = first.index.intersection(last.index)
+        # Posterior type and anomalous flag decide whether the columns are F, I or
+        # F(+)/F(-), so take every float column rather than naming one.
+        keys = [k for k in first.columns if k in last.columns
+                and np.issubdtype(first[k].to_numpy().dtype, np.floating)]
+        if len(shared) == 0 or len(keys) == 0:
+            continue
+
+        compared += 1
+        before = np.concatenate([first.loc[shared][k].to_numpy('float32') for k in keys])
+        after = np.concatenate([last.loc[shared][k].to_numpy('float32') for k in keys])
+        assert not np.array_equal(before, after), (
+            f"{first_path}: structure factors are unchanged after an epoch of "
+            f"cchalf; the surrogate posterior is not being optimized"
+        )
+
+    assert compared > 0, "no half-dataset mtz pair had reflections to compare"
+
 
 def test_mtz(conventional_mtz):
     flags = base_flags
