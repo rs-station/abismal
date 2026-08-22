@@ -1,6 +1,5 @@
-import tensorflow as tf
 import tf_keras as tfk
-from os.path import exists,dirname,abspath
+from os.path import exists, abspath
 import reciprocalspaceship as rs
 from os import mkdir
 import numpy as np

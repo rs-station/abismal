@@ -1,15 +1,10 @@
 from abismal.distributions import FoldedNormal, Rice
 import tensorflow as tf
-from tensorflow_probability.python.internal import special_math
-from tensorflow_probability import distributions as tfd
 from tensorflow_probability.python.internal import dtype_util
-import tensorflow_probability as tfp
-from tensorflow_probability import bijectors as tfb
 from tensorflow_probability.python.internal import tensor_util
 import numpy as np
 from tensorflow_probability.python.distributions import distribution
 from tensorflow_probability.python.internal import reparameterization
-from tensorflow_probability.python.distributions import kullback_leibler
 from tensorflow_probability.python.internal import parameter_properties
 from tensorflow_probability.python.bijectors import exp as exp_bijector
 

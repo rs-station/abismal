@@ -1,11 +1,5 @@
-import numpy as np
 import tensorflow as tf
 import tf_keras as tfk
-from tensorflow_probability import distributions as tfd
-from tensorflow_probability import layers as tfl
-from tensorflow_probability import util as tfu
-from tensorflow_probability import bijectors as tfb
-import tensorflow_probability as tfp
 
 
 class FeedForward(tfk.layers.Layer):

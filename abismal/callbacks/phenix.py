@@ -1,10 +1,7 @@
 import tf_keras as tfk
-import tensorflow as tf
-from os.path import exists,dirname,abspath
+from os.path import exists, abspath
 from os import mkdir,environ
-from subprocess import Popen,DEVNULL
-from abismal.callbacks import MtzSaver
-import gemmi
+from subprocess import Popen
 
 class PhenixRunner(tfk.callbacks.Callback):
     """ Run PHENIX periodically on the output. """

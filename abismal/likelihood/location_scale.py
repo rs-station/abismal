@@ -1,6 +1,5 @@
 import tensorflow as tf
 import tf_keras as tfk
-from tensorflow_probability import distributions as tfd
 
 def weighted_pearsonr(x, y, w=None, axis=-1, keepdims=False, eps=1e-12):
     """

@@ -1,7 +1,5 @@
 #/usr/bin/env cctbx.python
 import numpy as np
-import argparse
-import pandas as pd
 import gemmi
 import tensorflow as tf
 from .loader import DataLoader

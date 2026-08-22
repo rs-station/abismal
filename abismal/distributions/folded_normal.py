@@ -1,13 +1,10 @@
 import tensorflow as tf
 from tensorflow.python.ops import array_ops
 from tensorflow_probability.python.internal import dtype_util
-from tensorflow_probability.python.internal import special_math
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability.python.internal import reparameterization
 from tensorflow_probability.python.internal import prefer_static as ps
 import numpy as np
-from tensorflow_probability.python.bijectors import exp as exp_bijector
-from tensorflow_probability.python.bijectors import absolute_value as abs_bijector
 from tensorflow_probability.python.internal import parameter_properties
 from tensorflow_probability.python.internal import samplers
 from tensorflow_probability import math as tfm

@@ -13,7 +13,6 @@ def main(args=None):
     set_log_level(parser.tf_log_level)
     set_gpu(parser.gpu_id)
 
-    import math
     import tensorflow as tf
     import tf_keras as tfk
     from abismal import __version__ as version
@@ -34,10 +33,9 @@ def main(args=None):
         StandardizationFreezer,
         DifferenceMap,
     )
-    from abismal.io import split_dataset_train_test, set_gpu
+    from abismal.io import set_gpu
     from abismal.scaling import ImageScaler
-    from abismal.surrogate_posterior.structure_factor import FoldedNormalPosterior
-    from tf_keras.callbacks import ModelCheckpoint,EarlyStopping
+    from tf_keras.callbacks import EarlyStopping
     import gemmi
     import logging
     from os.path import exists

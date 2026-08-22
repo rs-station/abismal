@@ -1,5 +1,3 @@
-import tensorflow.compat.v2 as tf
-import tensorflow_probability as tfp
 
 import tf_keras as tfk
 

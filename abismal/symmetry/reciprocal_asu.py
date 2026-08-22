@@ -3,8 +3,6 @@ from reciprocalspaceship.utils import hkl_to_asu,is_absent
 from reciprocalspaceship.decorators import spacegroupify,cellify
 import tensorflow as tf
 import tf_keras as tfk
-from tensorflow_probability import distributions as tfd
-from inspect import signature
 import gemmi
 from abismal.symmetry.op import Op
 

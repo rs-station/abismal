@@ -1,8 +1,6 @@
-import tensorflow as tf
-import tf_keras as tfk
-from os.path import exists,dirname,abspath
-from os import mkdir,listdir,environ
-from subprocess import Popen,DEVNULL
+from os.path import exists
+from os import mkdir, environ
+from subprocess import Popen
 from abismal.callbacks import PhenixRunner
 from glob import glob
 

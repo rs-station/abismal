@@ -4,9 +4,6 @@ import numpy as np
 import tensorflow as tf
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import math as tfm
-from tensorflow_probability import layers  as tfl
-from tensorflow_probability import util as tfu
-from tensorflow_probability import bijectors as tfb
 import tf_keras as tfk
 
 

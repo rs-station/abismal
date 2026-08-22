@@ -1,4 +1,3 @@
-import tensorflow as tf
 from tensorflow.python.ops.ragged.ragged_tensor import RaggedTensor
 
 def quiet_rep(self, *args, **kwargs):
