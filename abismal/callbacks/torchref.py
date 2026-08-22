@@ -1,7 +1,7 @@
 import sys
 import tf_keras as tfk
 from os.path import exists, abspath, dirname, join
-from os import mkdir, environ
+from os import mkdir
 from subprocess import Popen
 from warnings import warn
 
@@ -153,13 +153,13 @@ class TorchRefRunner(tfk.callbacks.Callback):
             mkdir(result_dir)
 
         worker = join(dirname(abspath(__file__)), "_torchref_worker.py")
-        # On Colab, abismal and torchref share one environment, so the training
-        # interpreter (sys.executable) can run the worker directly. When they
-        # live in separate environments (common for local Jupyter), point
-        # ABISMAL_TORCHREF_PYTHON at an interpreter that has torchref installed.
-        python_exe = environ.get("ABISMAL_TORCHREF_PYTHON", sys.executable)
+        # abismal and torchref install into one environment (`abismal[torchref]`),
+        # so the training interpreter always has torchref and can run the worker
+        # directly. The subprocess is still worth keeping: it isolates the worker's
+        # PyTorch/CUDA context from TensorFlow's, and a crash in refinement cannot
+        # take training down with it.
         command = [
-            python_exe, worker,
+            sys.executable, worker,
             "--mtz", mtz_file,
             "--pdb", self.pdb_file,
             "--out-dir", result_dir,

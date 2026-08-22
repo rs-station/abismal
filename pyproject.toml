@@ -19,7 +19,11 @@ dependencies = [
     "matplotlib",
     "seaborn",
     "rs-booster",
-    "scikit-image",
+    # tensorflow 2.18 caps numpy at <2.1, and scikit-image >=0.25 pulls a tifffile
+    # that requires numpy>=2.1. Left unpinned, `pip install abismal` resolves
+    # scikit-image to a release that drags numpy above tensorflow's ceiling and
+    # breaks the install.
+    "scikit-image<0.25",
     "ray",
 ]
 
@@ -33,6 +37,13 @@ dev = [
 ]
 cuda = [
     "tensorflow[and-cuda]==2.18.0",
+]
+# Per-epoch refinement via --torchref-pdb. Optional because it pulls torch, which
+# is large and irrelevant to a plain merging run. Installing it puts torchref in
+# the same interpreter as abismal, so no separate environment is needed.
+torchref = [
+    "torch>=2.4.0",
+    "torchref>=0.6.0",
 ]
 
 [project.urls]
