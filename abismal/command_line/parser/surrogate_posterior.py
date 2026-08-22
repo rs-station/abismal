@@ -1,6 +1,8 @@
 title = "Surrogate posteriors"
 description = "Arguments affecting the parameterization and initialization of surrogate posteriors"
 
+import argparse
+
 from abismal.scaling.scaling import ImageScaler
 
 args_and_kwargs = (
@@ -18,8 +20,10 @@ args_and_kwargs = (
         (
             "--anomalous",
         ),{
-            "help": "Keep the two halves of reciprocal space separate during merging.",
-            "action": 'store_true',
+            "help": "Keep the two halves of reciprocal space separate during merging. "
+                    "On by default; disable with --no-anomalous.",
+            "action": argparse.BooleanOptionalAction,
+            "default": True,
         }
     ),
 
@@ -64,9 +68,9 @@ args_and_kwargs = (
             "--scale-posterior-distribution",
         ),{
             "help": "Define the type of posterior distribution for scales. "
-                    "The default is normal. ",
+                    "The default is foldednormal. ",
             "type": str.lower,
-            "default" : "normal",
+            "default" : "foldednormal",
             "choices" : ImageScaler.posterior_dict.keys(),
         }
     ),

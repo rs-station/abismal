@@ -82,7 +82,7 @@ args_and_kwargs = (
         ),{
             "help": "The scale prior to use.  "
                     "Cauchy is the defalt",
-            "default": 'Cauchy',
+            "default": 'lognormal',
             "type": str.lower,
             "choices" : ImageScaler.prior_dict.keys(),
         }
