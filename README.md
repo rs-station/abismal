@@ -24,35 +24,56 @@ pip install abismal
 
 `conda` works in place of `micromamba` throughout.
 
-For NVIDIA CUDA support, add the `cuda` extra:
+## Extras
+
+abismal ships two optional extras. They **compose** -- name both in one set of
+brackets rather than running two installs, so pip resolves everything in a single
+pass:
+
+| extra | what it adds |
+| --- | --- |
+| `cuda` | GPU-accelerated TensorFlow for merging (`tensorflow[and-cuda]`) |
+| `torchref` | PyTorch + torchref, for per-epoch refinement (`--torchref-pdb`) |
 
 ```bash
-pip install "abismal[cuda]"
+pip install "abismal[cuda,torchref]"
 ```
 
 Test GPU support with `abismal --list-devices`.
 
 ## Per-epoch refinement (`--torchref-pdb`)
 
-Add the `torchref` extra. It pulls PyTorch, so it is optional -- a plain merging
-run does not need it. Extras combine, so ask for both in one command rather than
-installing them one after another:
+The `torchref` extra puts torchref in the same interpreter as abismal, so
+`--torchref-pdb` works with no further configuration. Refinement still runs in a
+subprocess, so a failure there cannot take training down, but that subprocess is
+the environment you are already in -- there is no second environment to build or
+point at.
+
+**Install the CPU build of PyTorch.** Refinement runs on CPU -- that is the
+default and nothing exposes a GPU option -- so the CUDA build of torch is several
+gigabytes that never get used, and it puts a second CUDA stack next to
+TensorFlow's for no benefit. Install torch from PyTorch's CPU index *first*, then
+the extras:
 
 ```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install "abismal[cuda,torchref]"
 ```
 
-torchref then lives in the same interpreter as abismal, and `--torchref-pdb`
-works with no further configuration. Refinement still runs in a subprocess, so a
-failure there cannot take training down, but that subprocess is the environment
-you are already in -- there is no second environment to build or point at.
+Order matters. The second command finds `torch>=2.4.0` already satisfied and
+leaves it alone. Doing it the other way around installs the CUDA build and then
+you are stuck with it: **do not try to uninstall it afterwards.** PyTorch's CUDA
+wheels share the `nvidia/` namespace with TensorFlow's, and removing them deletes
+shared libraries that TensorFlow needs -- it will report no GPU and silently fall
+back to CPU. Rebuild the environment instead.
 
-Both extras bring their own GPU stack and they do not collide: TensorFlow pins
-the CUDA 12 wheels (`nvidia-cudnn-cu12==9.3.0.75`) while current PyTorch pins the
-CUDA 13 ones (`nvidia-cudnn-cu13`). Different package names, so each framework
-gets exactly the version it asked for. Older PyTorch (2.9 and earlier) was also
-built on CUDA 12 and did contend with TensorFlow for those pins -- it resolved to
-the newer versions and both still worked, but the combination above is cleaner.
+If you do want the CUDA build of torch, it coexists with `abismal[cuda]` as long
+as the two sit on different CUDA majors: TensorFlow 2.18 pins the CUDA 12 wheels
+(`nvidia-cudnn-cu12==9.3.0.75`) and current PyTorch pins the CUDA 13 ones, so
+each gets exactly what it asked for. Older PyTorch (2.9 and earlier) was also
+built on CUDA 12 and contended with TensorFlow for those pins; it resolved to the
+newer versions and both still worked, but nothing guarantees that in general.
+Re-check `pip list | grep nvidia` after any TensorFlow or PyTorch bump.
 
 ## About the version pins
 
@@ -86,7 +107,8 @@ git clone https://github.com/rs-station/abismal.git
 cd abismal
 micromamba create -yn abismal -c conda-forge python=3.12 dials "pandas<2.4" "scipy<1.18"
 micromamba activate abismal
-pip install -e ".[dev,torchref]"
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -e ".[dev,cuda,torchref]"
 ```
 
 Tests are run by calling `pytest` in the root of the abismal source code directory. 
