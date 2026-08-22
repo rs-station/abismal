@@ -8,6 +8,7 @@ was used.
 """
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -254,3 +255,71 @@ def test_default_still_skips(tmp_path, spawned):
     with pytest.warns(RuntimeWarning, match="still going"):
         runner.on_epoch_end(1)
     assert len(spawned) == 1
+
+
+# --------------------------------------------------------------------------
+# The interpreter the worker runs on
+#
+# abismal and torchref install into one environment, so the worker runs on
+# sys.executable. That replaced an ABISMAL_TORCHREF_PYTHON env var naming a
+# second environment's interpreter. Nothing above covers it: every test here
+# stubs Popen, so a worker that could never actually start would still pass.
+# --------------------------------------------------------------------------
+
+def test_worker_runs_on_the_training_interpreter(tmp_path, spawned):
+    _runner(tmp_path).run_torchref(0)
+    argv, _ = spawned[0]
+
+    assert argv[0] == sys.executable
+    assert argv[1].endswith("_torchref_worker.py")
+
+
+def test_interpreter_is_not_overridable_by_the_environment(tmp_path, spawned, monkeypatch):
+    """A stale ABISMAL_TORCHREF_PYTHON must not redirect the worker.
+
+    The variable used to select the interpreter. Anyone whose shell profile
+    still exports it would otherwise have the worker silently launched from a
+    different environment than the one abismal is running in.
+    """
+    monkeypatch.setenv("ABISMAL_TORCHREF_PYTHON", "/nonexistent/python")
+    _runner(tmp_path).run_torchref(0)
+
+    assert spawned[0][0][0] == sys.executable
+
+
+def test_worker_script_is_runnable_by_this_interpreter():
+    """Actually start the worker, rather than asserting on a stubbed argv.
+
+    This is the one test that spawns the real subprocess the callback would.
+    It catches a worker that cannot start at all -- a syntax error, or an
+    import missing from the environment abismal is installed in.
+    """
+    import subprocess
+    from abismal.callbacks import torchref as torchref_callback
+
+    worker = Path(torchref_callback.__file__).parent / "_torchref_worker.py"
+    assert worker.exists()
+
+    result = subprocess.run(
+        [sys.executable, str(worker), "--help"],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--macro-cycles" in result.stdout
+
+
+def test_torchref_imports_in_the_training_interpreter():
+    """The invariant that lets the env var go: one environment holds both.
+
+    Skips when the `torchref` extra is not installed, so a plain
+    `pip install abismal[dev]` checkout still passes.
+    """
+    import subprocess
+
+    pytest.importorskip("torchref")
+    result = subprocess.run(
+        [sys.executable, "-c", "import torchref; print(torchref.__version__)"],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip()
