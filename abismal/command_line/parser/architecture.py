@@ -2,7 +2,6 @@ title = "Architecture"
 description = "Arguments affecting the model architecture and dimensions"
 
 from abismal.layers import FeedForward
-from abismal.command_line.parser.custom_types import float_or_none
 
 
 def int_or_none_type(x):
@@ -18,16 +17,16 @@ args_and_kwargs = (
     (
         ("--d-model",),
         {
-            "help": "The number of channels in the model with default 256.",
-            "default": 256,
+            "help": "The number of channels in the model with default 32.",
+            "default": 32,
             "type": int,
         },
     ),
     (
         ("--layers",),
         {
-            "help": "The number of feedfoward layers with default 5.",
-            "default": 5,
+            "help": "The number of feedfoward layers with default 20.",
+            "default": 20,
             "type": int,
         },
     ),
@@ -42,8 +41,8 @@ args_and_kwargs = (
     (
         ("--normalizer",),
         {
-            "help": "Optional pre-normalization function for feed forward layers. The default is 'activation'",
-            "default": "activation",
+            "help": "Optional pre-normalization function for feed forward layers. The default is 'l2'",
+            "default": "l2",
             "type": str,
             "choices": FeedForward.norm_dict.keys(),
         },
@@ -65,8 +64,8 @@ args_and_kwargs = (
     (
         ("--normalizer-gain",),
         {
-            "help": "Gain applied in the numerator of the 'l2'/'rms' feed forward normalizers. The default is 1.0",
-            "default": 1.0,
+            "help": "Gain applied in the numerator of the 'l2'/'rms' feed forward normalizers. The default is 0.1",
+            "default": 0.1,
             "type": float,
         },
     ),
@@ -91,9 +90,9 @@ args_and_kwargs = (
         ("--ff-epsilon",),
         {
             "help": "Epsilon used in the feed forward layers' pre-normalization (see --normalizer). "
-            "Defaults to 0.0. Pass 'none' to fall back to --epsilon instead.",
-            "default": 0.0,
-            "type": float_or_none,
+            "Defaults to None, in which case it falls back to --epsilon.",
+            "default": None,
+            "type": float,
         },
     ),
     (

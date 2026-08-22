@@ -96,11 +96,9 @@ args_and_kwargs = (
         (
             "--early-stopping-patience",
         ),{
-            "help": "How many epochs to wait after training progress stalls. "
-                    "Defaults to 30, matching --epochs, so training runs to "
-                    "completion unless a shorter patience is asked for.",
+            "help": "How many epochs to wait after training progress stalls.",
             "type" : int,
-            "default": 30,
+            "default": 5,
         }
     ),
 
@@ -110,7 +108,7 @@ args_and_kwargs = (
         ),{
             "help": "Which metric to use for early termination.",
             "choices" : ['val_loss', 'val_NLL', 'val_CCpred', 'val_wCCpred', 'KL', 'val_KL'],
-            "default": 'KL',
+            "default": 'val_wCCpred',
         }
     ),
 

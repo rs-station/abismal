@@ -100,7 +100,7 @@ args_and_kwargs=(
             "--optimizer",
         ),{
             "help": "Choose the optimizer to use.",
-            "default" : 'adabelief', 
+            "default" : 'adam', 
             "type" : str.lower,
             "choices": optimizer_dict.keys(),
         }
