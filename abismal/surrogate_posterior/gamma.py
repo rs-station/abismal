@@ -57,9 +57,3 @@ class GammaPosteriorBase(object):
         q = self._distribution(self.concentration, self.rate)
         return q
 
-    def distribution(self, asu_id, hkl):
-        concentration = self.rac.gather(self.concentration, asu_id, hkl)
-        rate = self.rac.gather(self.rate, asu_id, hkl)
-        q = self._distribution(concentration, rate)
-        return q
-

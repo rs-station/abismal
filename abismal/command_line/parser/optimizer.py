@@ -97,15 +97,6 @@ args_and_kwargs=(
 
     (
         (
-            "--amsgrad",
-        ),{
-            "help": "Optionally use the amsgrad variant of Adam.",
-            "action": 'store_true',
-        }
-    ),
-
-    (
-        (
             "--optimizer",
         ),{
             "help": "Choose the optimizer to use.",

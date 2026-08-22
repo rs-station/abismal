@@ -74,13 +74,6 @@ class Average(tfk.layers.Layer):
     def call(self, data, **kwargs):
         out = data
         if self.dropout is not None:
-            #mask = tf.ragged.map_flat_values(random_like, data[...,:1])
-            #w = tf.cast(mask >= self.dropout, tfk.backend.dtype(data))
-            #w = w * tf.math.reciprocal_no_nan(
-            #    tf.math.reduce_sum(w, self.axis, self.keepdims)
-            #)
-            #out = tf.reduce_sum(w * data, self.axis, self.keepdims)
-            #return out
             out = tf.nn.dropout(out, self.dropout)
         out = tf.reduce_mean(out, self.axis, self.keepdims)
         return out

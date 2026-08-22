@@ -380,20 +380,6 @@ def main(args=None):
         from IPython import embed
         embed(colors='linux')
 
-    # for x,y in train:
-    #    model(x)
-    #    break
-    # with tf.GradientTape(persistent=True) as tape:
-    #    y_pred = model(x, training=True)  # Forward pass
-    #    # Compute the loss value
-    #    # (the loss function is configured in `compile()`)
-    #    loss = model.compiled_loss(y, y_pred, regularization_losses=model.losses)
-    # q_vars = model.surrogate_posterior.trainable_variables
-    # grad_q= tape.gradient(loss, q_vars)
-    # from abismal.merging.merging import to_indexed_slices
-    # gis_q = [to_indexed_slices(g) for g in grad_q]
-    # from IPython import embed
-    # embed(colors='linux')
 
     logger.info("Starting training...")
     history = model.fit(

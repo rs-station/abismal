@@ -286,20 +286,11 @@ class VariationalMergingModel(tfk.models.Model):
 
         ll = tf.reduce_mean(ll)
 
-        kl_bins = 5
-        #kl_quants = tfp.stats.quantiles(kl_div.flat_values, kl_bins)
-        #for i in range(kl_bins):
-        #    self.add_metric(kl_quants[i], f'KL_{i+1}')
 
 
         self.add_metric(-ll, name='NLL')
         self.add_loss(-ll)
 
-        #self.add_metric(tf.reduce_mean(kl_div), name='KL')                       # true mean, unfloored
-        #self.add_metric(tfp.stats.percentile(kl_div, 50.), name='KL_med')        # for anchoring λ
-        #free_bits = 5.0                                                          # nats/reflection
-        #self.add_loss(self.kl_weight * tf.reduce_mean(tf.maximum(kl_div, free_bits)))
-        #self.add_metric(tf.reduce_mean(tf.cast(kl_div <= free_bits, 'float32')), 'NumSaturated')
 
         kl_div = tf.reduce_mean(kl_div) 
         self.add_metric(kl_div, name='KL')
