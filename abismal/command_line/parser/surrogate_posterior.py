@@ -66,7 +66,7 @@ args_and_kwargs = (
             "help": "Define the type of posterior distribution for scales. "
                     "The default is normal. ",
             "type": str.lower,
-            "default" : "normal",
+            "default" : "foldednormal",
             "choices" : ImageScaler.posterior_dict.keys(),
         }
     ),

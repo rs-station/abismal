@@ -2,6 +2,7 @@ title = "Architecture"
 description = "Arguments affecting the model architecture and dimensions"
 
 from abismal.layers import FeedForward
+from abismal.command_line.parser.custom_types import transform_name
 
 
 def int_or_none_type(x):
@@ -17,34 +18,36 @@ args_and_kwargs = (
     (
         ("--d-model",),
         {
-            "help": "The number of channels in the model with default 32.",
-            "default": 32,
+            "help": "The number of channels in the model with default 256.",
+            "default": 256,
             "type": int,
         },
     ),
     (
         ("--layers",),
         {
-            "help": "The number of feedfoward layers with default 20.",
-            "default": 20,
+            "help": "The number of feedfoward layers with default 5.",
+            "default": 5,
             "type": int,
         },
     ),
     (
         ("--activation",),
         {
-            "help": "The name of the activation function used in the scale model. The default is 'relu'",
+            "help": "Applied between the two linear layers of each feed forward layer. "
+            "Either a normalizer -- one of " + ", ".join(sorted(FeedForward.norm_dict))
+            + " -- or any keras activation. The default is 'relu'.",
             "default": "relu",
-            "type": str,
+            "type": transform_name,
         },
     ),
     (
-        ("--normalizer",),
+        ("--pre-activation",),
         {
-            "help": "Optional pre-normalization function for feed forward layers. The default is 'l2'",
-            "default": "l2",
-            "type": str,
-            "choices": FeedForward.norm_dict.keys(),
+            "help": "Applied to each feed forward layer's input, before the first linear "
+            "layer. Takes the same values as --activation. The default is 'relu'.",
+            "default": "relu",
+            "type": transform_name,
         },
     ),
     (
@@ -59,14 +62,6 @@ args_and_kwargs = (
         {
             "help": "Use a Gated (GLU) architecture for the feed forward layers.",
             "action": "store_true",
-        },
-    ),
-    (
-        ("--normalizer-gain",),
-        {
-            "help": "Gain applied in the numerator of the 'l2'/'rms' feed forward normalizers. The default is 0.1",
-            "default": 0.1,
-            "type": float,
         },
     ),
     (
@@ -89,9 +84,9 @@ args_and_kwargs = (
     (
         ("--ff-epsilon",),
         {
-            "help": "Epsilon used in the feed forward layers' pre-normalization (see --normalizer). "
-            "Defaults to None, in which case it falls back to --epsilon.",
-            "default": None,
+            "help": "Epsilon used by the feed forward layers' --pre-activation, when that "
+            "is a normalizer. Defaults to 0.0.",
+            "default": 0.0,
             "type": float,
         },
     ),
