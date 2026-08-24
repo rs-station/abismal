@@ -123,12 +123,24 @@ class FoldedNormal(tfd.Distribution):
         return tf.TensorShape([])
 
     def _cdf(self, x):
-        loc,scale = self.loc,self.scale
+        # F(x) = Phi((x - loc)/scale) + Phi((x + loc)/scale) - 1, which in terms of
+        # erf is the *sum* below. This read `erf(a) - erf(b)` until 2026-08-24,
+        # which is a different function entirely -- at loc=scale=1, x=0.5 it gave
+        # 0.6247 where the folded normal CDF is 0.2417. Nothing in abismal calls
+        # cdf(), so no result depended on it, but it agreed with neither _log_prob
+        # nor the sampler's implicit-reparameterization gradients, both of which
+        # are and were correct.
+        loc, scale = self.loc, self.scale
         x = tf.convert_to_tensor(x)
         a = (x + loc) / scale
         b = (x - loc) / scale
-        ir2 = tf.constant(tf.math.reciprocal(tf.sqrt(2.)), dtype=x.dtype)
-        return 0.5 * (tf.math.erf(ir2 * a) - tf.math.erf(ir2 * b))
+        # Build the constant at x's dtype rather than computing it in float32 and
+        # casting, which cost ~2e-8 relative error in a float64 distribution.
+        ir2 = tf.constant(1.0 / math.sqrt(2.0), dtype=x.dtype)
+        cdf = 0.5 * (tf.math.erf(ir2 * a) + tf.math.erf(ir2 * b))
+        # The support is non-negative; without this the expression runs negative
+        # below zero (-0.477 at x=-1, loc=scale=1) rather than returning 0.
+        return tf.where(x < 0, tf.zeros_like(cdf), cdf)
 
     def _sample_n(self, n, seed=None):
         seed = samplers.sanitize_seed(seed)
