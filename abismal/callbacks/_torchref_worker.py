@@ -867,13 +867,99 @@ def peaks_by_local_max(structure, grid, z_score_cutoff,
     return pd.DataFrame(rows, columns=PEAK_COLUMNS)
 
 
+def rescale_mtz_to_absolute(refined_mtz, refinement):
+    """Put the refined mtz's amplitudes on an absolute (electron) scale.
+
+    abismal merges on an arbitrary scale. torchref refines against those
+    amplitudes and scales its calculated structure factors *down* to match, so
+    every amplitude it writes -- F-obs, F-model, FWT, DELFWT, ANOM -- inherits
+    that scale. On hewl it runs ~200x below absolute, which makes the 2Fo-Fc map
+    rmsd 0.0018 instead of ~0.4. Nothing is wrong with the maps: peak heights in
+    rmsd are unaffected, and so are the R-factors, since a scale cancels. But a
+    viewer that shows an absolute contour level shows ~0.003, and coot's initial
+    1.5-rmsd level then reads as 0.00 -- which is what phenix output does not do,
+    because phenix reports on the model's absolute scale.
+
+    The factor comes from the refiner, as the ratio of ``|F_calc|`` (from the
+    model, absolute) to ``|scaler(F_calc)|`` (the scale the mtz is written on).
+    Note that ``Scaler.get_scale()`` is *not* this number: it is the geometric
+    mean of the per-bin log scale only, while ``Scaler.forward`` also applies a
+    per-bin B, anisotropy and bulk solvent. On hewl get_scale() overshoots by
+    1.56x, and the residual is flat across resolution -- it is not a subtlety
+    that averages out. Taking the ratio of the two structure factor sets picks up
+    every term the scaler applies.
+
+    Also wraps PANOM into [-180, 180]. torchref writes the anomalous phase as
+    ``phase - 90`` without wrapping, so it comes out spanning [-450, 90]. Phases
+    are periodic, so this is cosmetic, but it is out of range for the column type
+    and trips up anything that validates it.
+    """
+    import gemmi
+    import numpy as np
+    import torch
+
+    absolute = None
+    try:
+        with torch.no_grad():
+            f_abs = refinement.get_F_calc().detach().cpu().numpy().ravel()
+            f_scaled = refinement.get_F_calc_scaled().detach().cpu().numpy().ravel()
+    except Exception as error:  # pragma: no cover - depends on the torchref build
+        print(
+            f"could not read F_calc from the refiner ({error}); "
+            "leaving the mtz on its input scale",
+            flush=True,
+        )
+    else:
+        usable = (
+            np.isfinite(f_abs) & np.isfinite(f_scaled)
+            & (f_abs > 0) & (f_scaled > 0)
+        )
+        if usable.sum() < 100:
+            print(
+                f"only {usable.sum()} reflections usable for absolute scaling; "
+                "leaving the mtz on its input scale",
+                flush=True,
+            )
+        else:
+            # Least squares through the origin, so strong reflections -- where the
+            # scale is best determined -- dominate.
+            candidate = float(
+                (f_abs[usable] * f_scaled[usable]).sum() / (f_scaled[usable] ** 2).sum()
+            )
+            if np.isfinite(candidate) and candidate > 0:
+                absolute = candidate
+            else:
+                print(
+                    f"absolute scale came out {candidate}; "
+                    "leaving the mtz on its input scale",
+                    flush=True,
+                )
+
+    mtz = gemmi.read_mtz_file(str(refined_mtz))
+    for column in mtz.columns:
+        # Amplitudes, anomalous amplitudes (G) and their sigmas (L/Q) all carry the
+        # scale. Phases (P), Miller indices (H) and the R-free flags (I) must not.
+        if absolute is not None and column.type in ("F", "G", "L", "Q", "D"):
+            np.array(column, copy=False)[:] *= absolute
+        elif column.label == "PANOM":
+            phase = np.array(column, copy=False)
+            phase[:] = (phase + 180.0) % 360.0 - 180.0
+
+    mtz.write_to_file(str(refined_mtz))
+    if absolute is not None:
+        print(f"scaled refined.mtz to absolute (k={absolute:.1f})", flush=True)
+    return absolute
+
+
 def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
                          z_score_cutoff=Z_SCORE_CUTOFF):
     """Search torchref's anomalous difference map for peaks near the model.
 
     ANOM/PANOM come straight out of ``write_out_mtz`` on anomalous data, so the
     map is built from the anomalously refined model rather than reconstructed
-    here.
+    here. ``rescale_mtz_to_absolute`` has run by this point, so the ``peak`` and
+    ``score`` columns are on an absolute scale; ``peakz``/``scorez`` are rmsd
+    ratios and do not depend on it either way.
 
     """
     import gemmi
@@ -1048,6 +1134,10 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
     # On anomalous data this also writes F-obs(+/-), F-model(+/-) and the
     # ANOM/PANOM difference map coefficients that peak finding runs on.
     ref.write_out_mtz(str(refined_mtz))
+    # Before peak finding, so peaks.csv heights are quoted on the same scale as
+    # the map anyone opens afterwards. Peak finding is z-scored, so this does not
+    # move which peaks are found.
+    rescale_mtz_to_absolute(refined_mtz, ref)
     print(f"wrote refined.pdb and refined.mtz to {out_dir}", flush=True)
 
     peaks_csv = None

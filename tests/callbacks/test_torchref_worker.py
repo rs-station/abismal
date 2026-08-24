@@ -420,3 +420,141 @@ def test_peaks_by_local_max_empty_keeps_the_schema(worker):
     report = worker.peaks_by_local_max(st, grid, z_score_cutoff=5.0)
     assert len(report) == 0
     assert list(report.columns) == worker.PEAK_COLUMNS
+
+
+# --------------------------------------------------------------------------
+# absolute scaling of the refined mtz
+#
+# abismal merges on an arbitrary scale and torchref inherits it, so every
+# amplitude it writes lands a couple of hundred times below absolute. The maps
+# are fine -- rmsd-normalised quantities do not move -- but a viewer showing an
+# absolute contour level shows ~0.003, and coot's initial 1.5-rmsd level then
+# reads as 0.00.
+# --------------------------------------------------------------------------
+
+class FakeRefinement:
+    """Stands in for the torchref refiner: the two structure factor sets only.
+
+    `F_calc` is the model on an absolute scale, `F_calc_scaled` is that pushed
+    through the scaler onto the observed scale, so their ratio is the factor.
+    """
+
+    def __init__(self, f_scaled, scale):
+        torch = pytest.importorskip("torch")
+        self._scaled = torch.tensor(f_scaled, dtype=torch.float64)
+        self._abs = self._scaled * scale
+
+    def get_F_calc(self):
+        return self._abs
+
+    def get_F_calc_scaled(self):
+        return self._scaled
+
+
+@pytest.fixture
+def refined_mtz(tmp_path):
+    """An mtz on an arbitrary scale, with PANOM unwrapped as torchref writes it."""
+    n = 400
+    rng = np.random.default_rng(0)
+    hkls = np.array([(h, k, l)
+                     for h in range(1, 9) for k in range(1, 9) for l in range(1, 9)],
+                    dtype=float)[:n]
+    amplitude = rng.uniform(0.05, 4.0, size=n)
+    phase = np.linspace(-179.0, 179.0, n)
+
+    mtz = gemmi.Mtz(with_base=True)
+    mtz.cell = gemmi.UnitCell(30.0, 30.0, 30.0, 90, 90, 90)
+    mtz.spacegroup = gemmi.SpaceGroup("P 1")
+    mtz.add_dataset("refined")
+    for label, ctype in (
+        ("F-model", "F"), ("FWT", "F"), ("ANOM", "F"), ("SIGF-obs", "Q"),
+        ("PHWT", "P"), ("PANOM", "P"), ("R-free-flags", "I"),
+    ):
+        mtz.add_column(label, ctype)
+    mtz.set_data(np.column_stack([
+        hkls,
+        amplitude,              # F-model
+        amplitude * 0.9,        # FWT
+        amplitude * 0.01,       # ANOM
+        amplitude * 0.05,       # SIGF-obs
+        phase,                  # PHWT, already in range
+        phase - 90.0,           # PANOM, unwrapped exactly as torchref writes it
+        np.zeros(n),            # R-free-flags
+    ]))
+    path = tmp_path / "refined.mtz"
+    mtz.write_to_file(str(path))
+    return path, amplitude
+
+
+def _column(path, label):
+    mtz = gemmi.read_mtz_file(str(path))
+    return np.array(mtz.column_with_label(label), copy=False).copy()
+
+
+def test_scale_comes_from_the_refiner(worker, refined_mtz):
+    """The factor is |F_calc| / |scaler(F_calc)|, taken from the refiner itself."""
+    path, amplitude = refined_mtz
+    K = 250.0
+    before = _column(path, "F-model")
+
+    scale = worker.rescale_mtz_to_absolute(path, FakeRefinement(amplitude, K))
+
+    assert scale == pytest.approx(K, rel=1e-6)
+    assert np.allclose(_column(path, "F-model"), before * K, rtol=1e-5)
+
+
+def test_every_amplitude_column_is_scaled(worker, refined_mtz):
+    """FWT, ANOM and the sigmas must move with F-model, or the maps disagree."""
+    path, amplitude = refined_mtz
+    before = {c: _column(path, c) for c in ("FWT", "ANOM", "SIGF-obs")}
+
+    scale = worker.rescale_mtz_to_absolute(path, FakeRefinement(amplitude, 250.0))
+
+    for label, original in before.items():
+        assert np.allclose(_column(path, label), original * scale, rtol=1e-5), (
+            f"{label} was not scaled"
+        )
+
+
+def test_phases_and_flags_are_left_alone(worker, refined_mtz):
+    """Scaling a phase or an R-free flag would be a corruption, not a rescale."""
+    path, amplitude = refined_mtz
+    phwt_before = _column(path, "PHWT")
+    flags_before = _column(path, "R-free-flags")
+
+    worker.rescale_mtz_to_absolute(path, FakeRefinement(amplitude, 250.0))
+
+    assert np.allclose(_column(path, "PHWT"), phwt_before)
+    assert np.allclose(_column(path, "R-free-flags"), flags_before)
+
+
+def test_panom_is_wrapped_into_range(worker, refined_mtz):
+    """torchref writes `phase - 90` unwrapped, so PANOM arrives spanning [-450, 90]."""
+    path, amplitude = refined_mtz
+    before = _column(path, "PANOM")
+    assert before.min() < -180.0, "fixture should start out of range"
+
+    worker.rescale_mtz_to_absolute(path, FakeRefinement(amplitude, 250.0))
+
+    after = _column(path, "PANOM")
+    assert after.min() >= -180.0 and after.max() <= 180.0
+    # Wrapping must be a no-op on the map: same angle, different representation.
+    assert np.allclose(np.cos(np.deg2rad(after)), np.cos(np.deg2rad(before)), atol=1e-4)
+    assert np.allclose(np.sin(np.deg2rad(after)), np.sin(np.deg2rad(before)), atol=1e-4)
+
+
+def test_a_refiner_without_structure_factors_is_survivable(worker, refined_mtz):
+    """No scale available must leave amplitudes untouched, not zero or nan them.
+
+    PANOM is still wrapped -- that correction needs nothing from the refiner.
+    """
+    path, _ = refined_mtz
+    fmodel_before = _column(path, "F-model")
+    panom_before = _column(path, "PANOM")
+
+    scale = worker.rescale_mtz_to_absolute(path, object())
+
+    assert scale is None
+    assert np.allclose(_column(path, "F-model"), fmodel_before)
+    assert _column(path, "PANOM").min() >= -180.0
+    assert panom_before.min() < -180.0
