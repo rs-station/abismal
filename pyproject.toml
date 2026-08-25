@@ -74,8 +74,31 @@ abismal = "abismal.command_line.abismal:main"
 "abismal.friedelize" = "abismal.command_line.friedelize:main"
 "abismal.plot_history" = "abismal.command_line.plot_history:main"
 
+[tool.coverage.run]
+source = ["abismal"]
+# The runner tails its log, polls, and reaps the child on daemon threads. Without this
+# every line they execute reports as uncovered.
+concurrency = ["thread"]
+omit = [
+    # Dead code: nothing imports it, components/__init__.py does not export it, and it
+    # is the package's only consumer of solara. Counting it would depress the coverage
+    # delta for a file no one runs. Drop this line if it is ever revived or deleted.
+    "abismal/gui/components/file_browser.py",
+]
+
+[tool.coverage.report]
+exclude_also = [
+    # Colab- and JupyterLab-only branches. Both imports are guarded on purpose and
+    # neither is available in CI, so these are unreachable there by design.
+    "except ImportError:",
+    "if TYPE_CHECKING:",
+]
+
 [tool.pytest.ini_options]
-addopts = "-n auto --cov=abismal --cov-config=.coveragerc --cov-report xml"
+# No --cov-config: coverage finds [tool.coverage.*] in this file on its own. It used to
+# name .coveragerc, which did not exist -- .gitignore's `.coverage*` had been swallowing
+# it, so anyone who wrote one had git ignore it silently.
+addopts = "-n auto --cov=abismal --cov-report xml"
 testpaths = [
     "tests",
 ]
