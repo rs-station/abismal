@@ -168,19 +168,38 @@ class GemmiMolViewer():
         self.mtz_url = mtz_url if mtz_url is not None else mtz_file
         self.viewer_id = viewer_id or str(uuid.uuid4())
 
+    # (amplitude, phase) column pairs, in the order the viewer should stack them.
+    # gemmimol's load_maps_from_mtz takes one flat list and reads it pairwise, so the
+    # pairing has to be preserved exactly.
+    #
+    # phenix and torchref spell the same maps differently: phenix writes 2FOFCWT/
+    # PH2FOFCWT, torchref writes FWT/PHWT. Only phenix's names were listed here, so
+    # every --torchref-pdb run loaded the anomalous difference map alone and no 2Fo-Fc
+    # map at all -- silently, since a missing column is simply filtered out.
+    #
+    # The Fo-Fc maps (FOFCWT/PHFOFCWT, DELFWT/PHDELWT) are deliberately not included;
+    # this viewer has always shown 2Fo-Fc plus anomalous, and adding a third map is a
+    # display change rather than a fix.
+    map_columns = (
+        ('2FOFCWT', 'PH2FOFCWT'),   # phenix   2Fo-Fc
+        ('FWT', 'PHWT'),            # torchref 2Fo-Fc
+        ('ANOM', 'PANOM'),          # anomalous difference, spelled the same by both
+    )
+
     @property
     def map_keys(self):
-        defaults = [
-            '2FOFCWT',
-            'PH2FOFCWT',
-            'ANOM',
-            'PANOM',
-        ]
-
-        if self.pdb_file is None:
+        # The guard is on the mtz, which is what gets opened. It read `pdb_file` until
+        # 2026-08-25, so a viewer with a model but no mtz raised instead of returning
+        # None.
+        if self.mtz_file is None:
             return None
         ds = rs.read_mtz(self.mtz_file)
-        keys = [k for k in defaults if k in ds]
+        keys = []
+        for amplitude, phase in self.map_columns:
+            # Both halves or neither -- emitting a lone amplitude would shift every
+            # later pair by one and mis-assign the phases.
+            if amplitude in ds and phase in ds:
+                keys += [amplitude, phase]
         return keys
 
     @property
