@@ -271,3 +271,60 @@ def _iter(widget):
     yield widget
     for child in getattr(widget, "children", None) or ():
         yield from _iter(child)
+
+
+# ---------------------------------------------------------------------------
+# shutdown
+# ---------------------------------------------------------------------------
+
+def test_shutdown_stops_monitoring(runner_factory):
+    runner = runner_factory()
+    runner._monitoring_active = True
+
+    runner.shutdown()
+
+    assert runner._monitoring_active is False
+
+
+def test_shutdown_cancels_the_poll_timer(runner_factory):
+    """_schedule_poll re-arms on every tick and only stops re-arming once is_running
+    goes false, so an already-armed timer otherwise always survives."""
+    import threading
+
+    runner = runner_factory()
+    fired = threading.Event()
+    runner._poll_timer = threading.Timer(30.0, fired.set)
+    runner._poll_timer.daemon = True
+    runner._poll_timer.start()
+
+    runner.shutdown()
+
+    assert runner._poll_timer is None
+    assert not fired.is_set()
+
+
+def test_shutdown_is_idempotent(runner_factory):
+    runner = runner_factory()
+    runner.shutdown()
+    runner.shutdown()  # must not raise
+
+
+def test_shutdown_on_a_runner_that_never_started(runner_factory):
+    runner = runner_factory()
+    assert runner._poll_timer is None
+    runner.shutdown()
+
+
+def test_shutdown_leaves_the_subprocess_alone(runner_factory, monkeypatch):
+    """An attached job is meant to outlive the kernel; stop() is what kills it."""
+    import abismal.gui.runner as runner_module
+
+    killed = []
+    monkeypatch.setattr(runner_module.os, "kill", lambda pid, sig: killed.append(pid))
+    runner = runner_factory()
+    runner._pid = 12345
+
+    runner.shutdown()
+
+    assert not killed
+    assert runner._pid == 12345

@@ -278,6 +278,29 @@ class AbismalRunner:
 
         threading.Thread(target=_do_stop, daemon=True).start()
 
+    def shutdown(self, timeout=5.0):
+        """Stop monitoring and release this runner's threads. Idempotent.
+
+        Nothing else cancels the poll Timer. `_schedule_poll` re-arms itself on every
+        tick and only stops re-arming once `is_running` goes false, so an already-armed
+        timer always survives; and `_tail` clears `_monitoring_active` only on the
+        no-refinement path, so a `has_phenix` runner never clears it at all. The result
+        is that re-clicking Run, or a long-lived kernel, accumulates timer chains that
+        keep polling a finished job -- and on Colab keeps the browser's interval alive
+        for the life of the tab.
+
+        This does not terminate the subprocess: `stop()` does that, and an attached job
+        is deliberately allowed to outlive the kernel.
+        """
+        self._monitoring_active = False
+        timer = self._poll_timer
+        if timer is not None:
+            timer.cancel()
+            self._poll_timer = None
+        thread = self._tailer_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout)
+
     @property
     def is_running(self):
         return self._pid is not None and self._pid_is_abismal(self._pid)

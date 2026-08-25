@@ -199,10 +199,18 @@ def quiesce(runner, timeout=5.0):
     import os as _os
     import signal as _signal
 
-    runner._monitoring_active = False
-    timer = getattr(runner, "_poll_timer", None)
-    if timer is not None:
-        timer.cancel()
+    shutdown = getattr(runner, "shutdown", None)
+    if callable(shutdown):
+        shutdown(timeout=timeout)
+    else:  # pragma: no cover - abismal older than the shutdown() commit
+        runner._monitoring_active = False
+        timer = getattr(runner, "_poll_timer", None)
+        if timer is not None:
+            timer.cancel()
+
+    # shutdown() deliberately leaves the subprocess alone -- an attached job is meant
+    # to outlive the kernel. A test's replay child is not, and it was started with
+    # start_new_session=True so it will not die with pytest either.
     pid = getattr(runner, "_pid", None)
     if pid and runner.is_running:
         try:
