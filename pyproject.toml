@@ -45,6 +45,24 @@ torchref = [
     "torch>=2.4.0",
     "torchref>=0.6.0",
 ]
+# The notebook GUI (abismal/gui/, abismal_gui.ipynb). Optional because it pulls a
+# widget stack the merging code never touches, and a headless CLI or cluster run
+# has no use for it.
+#
+# Not listed, deliberately:
+#   google.colab   - present on Colab and nowhere else, and every use is guarded
+#                    by try/except, so declaring it would make the extra
+#                    uninstallable off Colab.
+#   jupyter_server - guarded the same way, and where the feature it drives applies
+#                    (resolving JupyterLab /files/ URLs) it is already installed,
+#                    because it is the server. Pulling it in would install a
+#                    notebook server for Colab users who cannot use it.
+#   matplotlib, pandas, reciprocalspaceship - already required by abismal itself.
+gui = [
+    "ipywidgets>=8",
+    "solara",
+    "ipython",
+]
 
 [project.urls]
 Repository = "https://github.com/rs-station/abismal"
