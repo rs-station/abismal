@@ -2,7 +2,28 @@ title = "Architecture"
 description = "Arguments affecting the model architecture and dimensions"
 
 from abismal.layers import FeedForward
-from abismal.command_line.parser.custom_types import transform_name
+
+# Keras has no registry of its named activations to enumerate. `dir` over
+# `tf_keras.activations` comes close, but it misses `leaky_relu` -- which resolves
+# through `tfk.activations.get` and works fine -- so it would silently drop a
+# usable option. This list is curated instead, and any of these may be given to
+# either of the two transform slots. `FeedForward.get_transform` still accepts any
+# keras activation; the restriction is the CLI's, so the choices render as a
+# dropdown in the notebook GUI, which builds itself from `action.choices`.
+NAMED_ACTIVATIONS = (
+    "relu",
+    "swish",
+    "leaky_relu",
+    "gelu",
+    "sigmoid",
+    "softmax",
+    "tanh",
+    "elu",
+)
+
+# The normalizers come from the layer, so adding one to `norm_dict` reaches the CLI
+# with no change here.
+TRANSFORM_CHOICES = tuple(sorted(FeedForward.norm_dict)) + NAMED_ACTIVATIONS
 
 
 def int_or_none_type(x):
@@ -35,10 +56,9 @@ args_and_kwargs = (
         ("--activation",),
         {
             "help": "Applied between the two linear layers of each feed forward layer. "
-            "Either a normalizer -- one of " + ", ".join(sorted(FeedForward.norm_dict))
-            + " -- or any keras activation. The default is 'relu'.",
+            "Either a normalizer or a named activation. The default is 'relu'.",
             "default": "relu",
-            "type": transform_name,
+            "choices": TRANSFORM_CHOICES,
         },
     ),
     (
@@ -47,7 +67,7 @@ args_and_kwargs = (
             "help": "Applied to each feed forward layer's input, before the first linear "
             "layer. Takes the same values as --activation. The default is 'relu'.",
             "default": "relu",
-            "type": transform_name,
+            "choices": TRANSFORM_CHOICES,
         },
     ),
     (
