@@ -55,7 +55,7 @@ jobs:
         # matters on a runner with a small disk. Installing it first means the
         # torchref extra finds torch>=2.4.0 already satisfied and leaves it be.
         pip install -q torch --index-url https://download.pytorch.org/whl/cpu
-        pip install -qe ".[dev,torchref]"
+        pip install -qe ".[dev,torchref,gui]"
 
     - name: Report the installed stack
       run: |
@@ -69,6 +69,12 @@ jobs:
         "
 
     - name: Run tests with pytest
+      env:
+        # tests/gui skips itself when ipywidgets is missing, so that a stock
+        # `pip install -e .[dev]` checkout still runs the suite. In CI the GUI extra is
+        # installed above, so a missing dependency has to be a hard failure -- without
+        # this the whole GUI suite would quietly shrink to nothing and stay that way.
+        ABISMAL_REQUIRE_GUI_TESTS: "1"
       run: |
         source $CONDA/etc/profile.d/conda.sh
         conda activate abismal

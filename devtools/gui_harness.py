@@ -38,15 +38,22 @@ REPLAY_DIR = REPO_ROOT / "tests" / "gui" / "replay"
 # Building
 # ---------------------------------------------------------------------------
 
-def build_form(parser=None):
-    """Return an ``ArgparseGUI`` with its widget tree already built.
+def build_form(parser=None, cls=None):
+    """Return a built form.
 
     ``to_widget()`` must run before ``to_args()`` -- it is what populates
     ``_all_args`` -- and it is not idempotent, so it is called exactly once here.
+
+    ``cls`` defaults to ``ArgparseGUI``, which maps `inputs`, `eff_files` and
+    `torchref_pdb` to filesystem-browsing selectors. Pass ``ArgparseGUIBase`` to get
+    the plain dispatch instead, which is what a small synthetic parser wants: its
+    `inputs` is an ordinary positional, not a reflection-file picker.
     """
     from abismal.gui import ArgparseGUI
 
-    gui = ArgparseGUI(parser=parser) if parser is not None else ArgparseGUI()
+    if cls is None:
+        cls = ArgparseGUI
+    gui = cls(parser=parser) if parser is not None else cls()
     gui.to_widget()
     return gui
 
@@ -64,6 +71,16 @@ def set_control(gui, dest, value):
     ``AttributeError``. The inner widget is always the last child.
     """
     widget = controls(gui)[dest]
+
+    # The file selectors are VBoxes of a browser UI; their `value` reads a private
+    # list of chosen paths rather than any one child widget, so setting the last
+    # child would land on a button.
+    if hasattr(widget, "_selected_files"):
+        widget._selected_files = list(value) if isinstance(value, (list, tuple)) else [value]
+        if hasattr(widget, "_update_selected_label"):
+            widget._update_selected_label()
+        return widget
+
     target = widget.children[-1] if getattr(widget, "children", None) else widget
     target.value = value
     return target
