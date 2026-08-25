@@ -1,11 +1,8 @@
 import tensorflow as tf
-import numpy as np
 from tensorflow_probability import distributions as tfd
-from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
 from tensorflow.python.ops.ragged import ragged_tensor
 import tf_keras as tfk
-from abismal.layers import *
 from abismal.distributions import FoldedNormal,Rice
 
 def _normalize(x, axis, epsilon=1e-3):
@@ -191,13 +188,12 @@ class ImageScaler(tfk.models.Model):
             kl_weight=1.,
             epsilon=1e-12,
             ff_epsilon=None,
-            normalizer_gain=0.1,
             num_image_samples=None,
             share_weights=True,
             prior_name='exponential',
             posterior_name='foldednormal',
             bijector_name='softplus',
-            normalizer_name=None,
+            pre_activation=None,
             hkl_to_imodel=False,
             gated=False,
             output_bias=True,
@@ -226,10 +222,8 @@ class ImageScaler(tfk.models.Model):
         epsilon : float (optional)
             A small constant for numerical stability defaults to 1e-12.
         ff_epsilon : float (optional)
-            Epsilon used in the feed forward layers' pre-normalization (see `normalizer_name`).
-            Defaults to None, in which case it falls back to `epsilon`.
-        normalizer_gain : float (optional)
-            Gain applied in the numerator of the 'l2'/'rms' feed forward normalizers. The default is 0.1.
+            Epsilon used by the feed forward layers' `pre_activation`, when that is a
+            normalizer. Defaults to None, in which case it falls back to `epsilon`.
         num_image_samples : int (optional)
             The number of reflections to sample in order to create the image representation vectors. 
             No subsampling will be done if this is set to None which is the default. 
@@ -242,8 +236,9 @@ class ImageScaler(tfk.models.Model):
             The posterior parameterization to use
         bijector_name : str (optional)
             The bijector to use for parameters that need to be constrained positive
-        normalizer_name : str (optional)
-            The name of the normalizing function to use in the neural network
+        pre_activation : str (optional)
+            Applied to each feed forward layer's input. Either the name of a normalizer
+            (a key of `FeedForward.norm_dict`) or a keras activation name.
         hkl_to_imodel : bool (optional)
             Optionally allow the neural network to access the miller indices while computing the image representation vector. 
         gated : bool (optional)
@@ -264,13 +259,12 @@ class ImageScaler(tfk.models.Model):
         self.mlp_depth = mlp_depth
         self.epsilon = epsilon
         self.ff_epsilon = ff_epsilon
-        self.normalizer_gain = normalizer_gain
         self.activation = activation
         self.share_weights = share_weights
         self.prior_name = prior_name.lower()
         self.posterior_name = posterior_name.lower()
         self.bijector_name = bijector_name
-        self.normalizer_name = normalizer_name
+        self.pre_activation = pre_activation
         self.hkl_to_imodel = hkl_to_imodel
         self.gated = gated
         self.output_bias = output_bias
@@ -308,9 +302,8 @@ class ImageScaler(tfk.models.Model):
                     activation=self.activation,
                     kernel_initializer=kernel_initializer,
                     use_bias=False,
-                    normalizer=normalizer_name,
+                    pre_activation=pre_activation,
                     epsilon=ffepsilon,
-                    normalizer_gain=normalizer_gain,
                 ) for _ in range(mlp_depth)])
         if share_weights:
             self.scale_network = self.image_network
@@ -321,9 +314,8 @@ class ImageScaler(tfk.models.Model):
                     kernel_initializer=kernel_initializer, 
                     activation=self.activation, 
                     use_bias=False,
-                    normalizer=normalizer_name,
+                    pre_activation=pre_activation,
                     epsilon=ffepsilon,
-                    normalizer_gain=normalizer_gain,
                     ) for _ in range(mlp_depth)
             ]) 
 
@@ -340,7 +332,6 @@ class ImageScaler(tfk.models.Model):
             'hidden_units': self.hidden_units,
             'epsilon' : self.epsilon,
             'ff_epsilon' : self.ff_epsilon,
-            'normalizer_gain' : self.normalizer_gain,
             'activation' : self.activation,
             'kl_weight' : self.kl_weight,
             'num_image_samples' : self.num_image_samples,
@@ -348,7 +339,7 @@ class ImageScaler(tfk.models.Model):
             'prior_name' : self.prior_name,
             'posterior_name' : self.posterior_name,
             'bijector_name' : self.bijector_name,
-            'normalizer_name' : self.normalizer_name,
+            'pre_activation' : self.pre_activation,
             'hkl_to_imodel' : self.hkl_to_imodel,
             'gated' : self.gated,
             'output_bias' : self.output_bias, 
@@ -442,17 +433,15 @@ class ImageScaler(tfk.models.Model):
         ) = inputs
 
         n = 2
+        noise = 0.
         if training and self.metadata_noise_factor > 0.:
             noise = self.metadata_noise_factor * metadata.with_flat_values(
                 tf.random.normal(
                     tfk.backend.shape(metadata.flat_values)
                 )
             )
-            metadata_noised = metadata + noise
-        else:
-            metadata_noised = metadata
 
-        image = [metadata_noised, iobs, sigiobs]
+        image = [metadata + noise, iobs, sigiobs]
         if self.hkl_to_imodel:
             image.append(0.02 * tf.cast(hkl, metadata.dtype))
 

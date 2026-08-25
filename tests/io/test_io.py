@@ -16,8 +16,12 @@ def test_mtz_loader(conventional_mtz):
     for i in ds.batch(2):
         break
 
-@pytest.mark.xfail
 def test_stills_loader(stills_expt, stills_refl):
+    # Needs DIALS. The documented install always has it, and CI installs it, but
+    # skip rather than fail for a checkout without it. This carried a bare xfail
+    # for the same reason, which then reported an unexpected pass everywhere the
+    # install is correct.
+    pytest.importorskip("dxtbx")
     loader = StillsLoader(
         [
             stills_expt,

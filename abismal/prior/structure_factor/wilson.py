@@ -1,11 +1,6 @@
-import numpy as np
 import tensorflow as tf
 from abismal.distributions import FoldedNormal,Nakagami,Rice
-from tensorflow_probability import distributions as tfd
-from tensorflow_probability import util as tfu
-from tensorflow_probability import bijectors as tfb
 import tf_keras as tfk
-from abismal.symmetry import Op,ReciprocalASUCollection
 from abismal.prior.base import PriorBase
 from abismal.prior.wilson import WilsonPriorBase,AutoWilsonPriorBase
 
@@ -99,6 +94,19 @@ class MultiWilsonDistribution:
         )
         return loc
 
+    def stddev(self):
+        """Marginal standard deviation of the single-Wilson (root) distribution.
+
+        Initialization only, like :meth:`mean` -- it deliberately ignores the
+        double-Wilson coupling, so for a child node this is the prior width
+        before conditioning on the parent, not the conditional width.
+        """
+        return tf.where(
+            self.centric,
+            centric_wilson(self.multiplicity, self.sigma).stddev(),
+            acentric_wilson(self.multiplicity, self.sigma).stddev(),
+        )
+
     def log_prob(self, z, z_pa=None):
         if z_pa is None:
             z_h = z
@@ -111,7 +119,13 @@ class MultiWilsonDistribution:
 
         #Double wilson case for child nodes
         loc = self.correlation * z_pa
-        scale = tf.sqrt(self.multiplicity * (1. - tf.square(self.correlation))),
+        # sqrt(epsilon_h * Sigma_h * (1 - r^2)), per the class docstring. Sigma
+        # was missing here while the root branch above passes it, so child nodes
+        # got a prior width off by sqrt(Sigma). Invisible at the default
+        # sigma=1.0 and wrong for empirical_wilson / AutoWilsonPrior.
+        scale = tf.sqrt(
+            self.multiplicity * self.sigma * (1. - tf.square(self.correlation))
+        )
         ll_dw = tf.where(
             self.centric,
             FoldedNormal(loc, scale).log_prob(z_h),
@@ -127,7 +141,7 @@ class MultiWilsonDistribution:
         return ll
 
 @tfk.saving.register_keras_serializable(package="abismal")
-class MultiWilsonPrior(tfk.layers.Layer):
+class MultiWilsonPrior(PriorBase):
     """
     This class uses reparameterized samples to approximate the log probability 
     of a multivariate Wilson prior. For this object, the user needs to specify
@@ -203,18 +217,43 @@ class MultiWilsonPrior(tfk.layers.Layer):
             correlation =self.correlation
             parent_id = self.rac.parent_miller_id
         else:
+            # The double-Wilson conditional needs the PARENT reflection's
+            # posterior sample, which for a batch is generally not in that
+            # batch: `log_prob` gathers `z` at `parent_miller_id`, indices into
+            # the full ASU collection, while a non-flat `z` runs over the
+            # observations present. Indexing one with the other either raises
+            # (small batch) or silently conditions each reflection on an
+            # unrelated observation (large batch).
+            #
+            # abismal never reaches here -- command_line/abismal.py forces
+            # posterior_kwargs['independent']=False for this prior, so only
+            # flat_distribution() runs. Fail loudly rather than return numbers
+            # that look plausible.
+            raise NotImplementedError(
+                "MultiWilsonPrior has no per-batch distribution: the "
+                "double-Wilson conditional needs the parent reflection's "
+                "posterior sample, which a batch does not generally contain. "
+                "Use flat_distribution() (independent=False), which is what "
+                "abismal does."
+            )
             root = self.rac.gather(self.rac.is_root, asu_id, hkl)
             centric = self.rac.gather(self.rac.centric, asu_id, hkl)
             epsilon = self.rac.gather(self.rac.epsilon, asu_id, hkl)
-            correlation = tf.squeeze(tf.gather(self.correlation, asu_id), axis=-1)
-            parent_id = None
-            asu_id = self.rac.asu_id
-            hkl = self.rac.Hunique
+            # `self.correlation` is the per-Miller-index expansion, so indexing
+            # it by asu_id would return the correlation of Miller ids 0..n_asu,
+            # silently yielding ~0 for most reflections. The per-ASU vector is
+            # `self._correlation`.
+            correlation = tf.gather(self._correlation, asu_id)
+            # log_prob gathers z at these indices, so they must be flat Miller
+            # ids into the full ASU collection -- the same space
+            # `rac.parent_miller_id` is already in.
+            parent_id = self.rac.gather(self.rac.parent_miller_id, asu_id, hkl)
             if len(tf.shape(sigma)) > 0:
-                sigma = tf.squeeze(
-                    self.rac.gather(self.sigma, asu_id, hkl),
-                    axis=-1,
-                )
+                # Gather with the CALLER's asu_id/hkl. These used to be
+                # overwritten with the full-ASU vectors just above, which both
+                # mismatched the batch length and passed a rank-2 hkl where a
+                # rank-1 index was expected.
+                sigma = self.rac.gather(self.sigma, asu_id, hkl)
         p = MultiWilsonDistribution(root, correlation, centric, epsilon, sigma, parent_id=parent_id)
         return p
 

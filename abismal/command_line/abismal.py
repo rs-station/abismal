@@ -13,7 +13,6 @@ def main(args=None):
     set_log_level(parser.tf_log_level)
     set_gpu(parser.gpu_id)
 
-    import math
     import tensorflow as tf
     import tf_keras as tfk
     from abismal import __version__ as version
@@ -34,10 +33,9 @@ def main(args=None):
         StandardizationFreezer,
         DifferenceMap,
     )
-    from abismal.io import split_dataset_train_test, set_gpu
+    from abismal.io import set_gpu
     from abismal.scaling import ImageScaler
-    from abismal.surrogate_posterior.structure_factor import FoldedNormalPosterior
-    from tf_keras.callbacks import ModelCheckpoint,EarlyStopping
+    from tf_keras.callbacks import EarlyStopping
     import gemmi
     import logging
     from os.path import exists
@@ -213,12 +211,11 @@ def main(args=None):
         kl_weight=parser.scale_kl_weight,
         epsilon=parser.epsilon,
         ff_epsilon=parser.ff_epsilon,
-        normalizer_gain=parser.normalizer_gain,
         num_image_samples=parser.sample_reflections_per_image,
         prior_name=parser.scale_prior_distribution,
         posterior_name=parser.scale_posterior_distribution,
         bijector_name=parser.scale_posterior_bijector,
-        normalizer_name=parser.normalizer,
+        pre_activation=parser.pre_activation,
         gated=parser.gated,
         optimize_prior_scale=parser.optimize_scale_prior,
         dropout=parser.dropout,
@@ -335,6 +332,9 @@ def main(args=None):
                 wavelength=parser.torchref_wavelength,
                 adp_mode=parser.torchref_adp_mode,
                 adp_aniso_sigma=parser.torchref_adp_aniso_sigma,
+                rigid_body=not parser.torchref_no_rigid_body,
+                rigid_body_iter=parser.torchref_rigid_body_iter,
+                allow_overlap=parser.torchref_allow_overlap,
             )
             callbacks.append(torchref_runner)
 
@@ -377,20 +377,6 @@ def main(args=None):
         from IPython import embed
         embed(colors='linux')
 
-    # for x,y in train:
-    #    model(x)
-    #    break
-    # with tf.GradientTape(persistent=True) as tape:
-    #    y_pred = model(x, training=True)  # Forward pass
-    #    # Compute the loss value
-    #    # (the loss function is configured in `compile()`)
-    #    loss = model.compiled_loss(y, y_pred, regularization_losses=model.losses)
-    # q_vars = model.surrogate_posterior.trainable_variables
-    # grad_q= tape.gradient(loss, q_vars)
-    # from abismal.merging.merging import to_indexed_slices
-    # gis_q = [to_indexed_slices(g) for g in grad_q]
-    # from IPython import embed
-    # embed(colors='linux')
 
     logger.info("Starting training...")
     history = model.fit(

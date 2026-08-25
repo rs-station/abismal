@@ -1,9 +1,6 @@
 #/usr/bin/env cctbx.python
 import numpy as np
-import argparse
 import reciprocalspaceship as rs
-import pandas as pd
-import gemmi
 import tensorflow as tf
 from .loader import DataLoader
 
@@ -45,6 +42,11 @@ class MTZLoader(DataLoader):
             sigma_key=None,
             asu_id=0,
         ):
+        # Whether the caller named the columns or left it to auto-detection.
+        # The two want opposite behaviour for a key the file lacks: absent keys
+        # are the normal case when scanning the canonical list, and a mistake
+        # when the user asked for something by name.
+        self.explicit_metadata_keys = metadata_keys is not None
         self.metadata_keys = metadata_keys
         if self.metadata_keys is None:
             self.metadata_keys = MTZ_METADATA_KEYS
@@ -63,6 +65,15 @@ class MTZLoader(DataLoader):
 
     def get_dataset(self):
         ds = rs.read_mtz(self.mtz_file)
+        missing = [k for k in self.metadata_keys if k not in ds]
+        if missing and self.explicit_metadata_keys:
+            raise ValueError(
+                f"{self.mtz_file}: requested metadata column(s) "
+                f"{', '.join(missing)} not present. Dropping them silently would "
+                "change the metadata width the scale model sees, so this is an "
+                f"error rather than a warning. Columns in this file: "
+                f"{', '.join(map(str, ds.columns))}"
+            )
         self.metadata_keys = [k for k in self.metadata_keys if k in ds]
         self.metadata_length = len(self.metadata_keys)
 

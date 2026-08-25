@@ -33,6 +33,18 @@ def _is_mtz_file(s):
 def _is_dials_file(s):
     return _is_refl_file(s) or _is_expt_file(s)
 
+def _split_metadata_keys(value):
+    """Turn the CLI's comma-separated string into the list MTZLoader wants.
+
+    Parsed here rather than in DataManager so the manager's own API takes a
+    list, which is what `MTZLoader` and the yaml config both use.
+    """
+    if value is None:
+        return None
+    keys = [k.strip() for k in value.split(",") if k.strip()]
+    return keys or None
+
+
 class DataManager:
     """
     A high-level class for managing I/O of reflection data.
@@ -41,7 +53,7 @@ class DataManager:
             num_cpus=None, separate=False, wavelength=None, ray_log_level="ERROR",
             test_fraction=0., separate_friedel_mates=False, cell_tol=None, isigi_cutoff=None, 
             shuffle_buffer_size=0, batch_size=100, steps_per_epoch=None, validation_steps=None,
-            epochs=30, ambiguate=False
+            epochs=30, ambiguate=False, mtz_metadata=None
         ):
         if separate_friedel_mates and separate:
             raise ValueError("Cannot combine --separate-friedel-mates and --separate")
@@ -59,6 +71,9 @@ class DataManager:
         self.separate_friedel_mates = separate_friedel_mates
         self.cell_tol = cell_tol
         self.isigi_cutoff = isigi_cutoff
+        # Explicit MTZ metadata columns, or None to let MTZLoader select the
+        # ones from MTZ_METADATA_KEYS that the file actually carries.
+        self.mtz_metadata = mtz_metadata
         self.shuffle_buffer_size = shuffle_buffer_size
         self.batch_size = batch_size
         self.steps_per_epoch = steps_per_epoch
@@ -86,6 +101,7 @@ class DataManager:
             'validation_steps' : self.validation_steps,
             'epochs' : self.epochs,
             'ambiguate' : self.ambiguate,
+            'mtz_metadata' : self.mtz_metadata,
         }
         return conf
 
@@ -100,6 +116,7 @@ class DataManager:
     def from_parser(cls, parser):
         return cls(
             inputs = parser.inputs,
+            mtz_metadata = _split_metadata_keys(parser.mtz_metadata),
             dmin = parser.dmin,
             cell = parser.cell, 
             spacegroup = parser.space_group,
@@ -196,7 +213,9 @@ class DataManager:
             from abismal.io import MTZLoader
             data = None
             for mtz in self.inputs:
-                loader = MTZLoader(mtz, dmin=self.dmin, cell=self.cell, spacegroup=self.spacegroup, asu_id=asu_id)
+                loader = MTZLoader(mtz, dmin=self.dmin, cell=self.cell,
+                                   spacegroup=self.spacegroup, asu_id=asu_id,
+                                   metadata_keys=self.mtz_metadata)
                 if self.separate:
                     asu_id += 1
                 _data = loader.get_dataset()

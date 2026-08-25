@@ -1,8 +1,6 @@
-import tensorflow as tf
 import tf_keras as tfk
-import numpy as np
 import pandas as pd
-from os.path import exists,dirname,abspath
+from os.path import exists, abspath
 from os import mkdir
 from time import time
 from subprocess import run

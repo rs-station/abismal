@@ -1,11 +1,4 @@
-import numpy as np
 import tensorflow as tf
-import tensorflow_probability as tfp
-import gemmi
-from tensorflow_probability import distributions as tfd
-from tensorflow_probability import layers  as tfl
-from tensorflow_probability import util as tfu
-from tensorflow_probability import bijectors as tfb
 from abismal.symmetry import Op
 import tf_keras as tfk
 #from abismal.layers import Standardize,Normalize
@@ -25,6 +18,21 @@ def to_indexed_slices(tensor):
         shape,
     )
     return result
+
+def grad_rms(grads):
+    """
+    Root-mean-square gradient magnitude over a group of variables.
+
+    Returns 0 for an empty group rather than nan. A frozen component (--freeze-scales,
+    --freeze-posterior, abismal.cchalf) has no trainable variables, so tape.gradient
+    hands back an empty list and tf.reduce_mean([]) is nan -- a frozen component would
+    otherwise report a nan gradient norm in the progress bar and in history.csv.
+    """
+    if len(grads) == 0:
+        return tf.constant(0., dtype=tf.float32)
+    return tf.sqrt(
+        tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grads])
+    )
 
 @tfk.saving.register_keras_serializable(package="abismal")
 class VariationalMergingModel(tfk.models.Model):
@@ -286,20 +294,11 @@ class VariationalMergingModel(tfk.models.Model):
 
         ll = tf.reduce_mean(ll)
 
-        kl_bins = 5
-        #kl_quants = tfp.stats.quantiles(kl_div.flat_values, kl_bins)
-        #for i in range(kl_bins):
-        #    self.add_metric(kl_quants[i], f'KL_{i+1}')
 
 
         self.add_metric(-ll, name='NLL')
         self.add_loss(-ll)
 
-        #self.add_metric(tf.reduce_mean(kl_div), name='KL')                       # true mean, unfloored
-        #self.add_metric(tfp.stats.percentile(kl_div, 50.), name='KL_med')        # for anchoring λ
-        #free_bits = 5.0                                                          # nats/reflection
-        #self.add_loss(self.kl_weight * tf.reduce_mean(tf.maximum(kl_div, free_bits)))
-        #self.add_metric(tf.reduce_mean(tf.cast(kl_div <= free_bits, 'float32')), 'NumSaturated')
 
         kl_div = tf.reduce_mean(kl_div) 
         self.add_metric(kl_div, name='KL')
@@ -326,19 +325,13 @@ class VariationalMergingModel(tfk.models.Model):
         # Compute gradients
         scale_vars = self.scale_model.trainable_variables
         grad_scale = tape.gradient(loss, scale_vars)
-        grad_s_norm = tf.sqrt(
-            tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_scale])
-        )
-        metrics["|∇s|"] = grad_s_norm
+        metrics["|∇s|"] = grad_rms(grad_scale)
 
         q_vars = self.surrogate_posterior.trainable_variables
         self.optimizer.lazy_vars = [v._unique_id for v in q_vars]
 
         grad_q = tape.gradient(loss, q_vars)
-        grad_q_norm = tf.sqrt(
-            tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_q])
-        )
-        metrics["|∇q|"] = grad_q_norm
+        metrics["|∇q|"] = grad_rms(grad_q)
         #grad_q = [to_indexed_slices(g) for g in grad_q] #This makes lazy adam work
 
         trainable_vars = scale_vars + q_vars 
@@ -348,22 +341,16 @@ class VariationalMergingModel(tfk.models.Model):
         ll_vars = self.likelihood.trainable_variables
         if len(ll_vars) > 0:
             grad_ll = tape.gradient(loss, ll_vars)
-            grad_ll_norm = tf.sqrt(
-                tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_ll])
-            )
             trainable_vars += ll_vars
             gradients += grad_ll
-            metrics["|∇ll|"] = grad_ll_norm
+            metrics["|∇ll|"] = grad_rms(grad_ll)
 
         p_vars = self.prior.trainable_variables
         if len(p_vars) > 0:
             grad_p = tape.gradient(loss, p_vars)
-            grad_p_norm = tf.sqrt(
-                tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grad_p])
-            )
             trainable_vars += p_vars
             gradients += grad_p
-            metrics["|∇p|"] = grad_p_norm
+            metrics["|∇p|"] = grad_rms(grad_p)
 
 
         gradients = [tf.where(tf.math.is_finite(g), g, 0.) for g in gradients]

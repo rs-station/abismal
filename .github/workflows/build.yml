@@ -43,13 +43,30 @@ jobs:
     - name: Install abismal
       run: |
         source $CONDA/etc/profile.d/conda.sh
-        conda create -qyn abismal -c conda-forge python=${{ matrix.python-version }} dials
+        conda create -qyn abismal -c conda-forge python=${{ matrix.python-version }} dials \
+          "pandas<2.4" "scipy<1.18"
         conda activate abismal
         echo "Using python from $(which python)"
         python --version
         echo "Using pip from ... $(which pip)"
         pip install -q --upgrade pip
-        pip install -qe .[dev]
+        # Refinement runs on CPU, and the runners have no GPU, so take the CPU
+        # build of torch. It is a fraction of the size of the CUDA wheels, which
+        # matters on a runner with a small disk. Installing it first means the
+        # torchref extra finds torch>=2.4.0 already satisfied and leaves it be.
+        pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+        pip install -qe ".[dev,torchref]"
+
+    - name: Report the installed stack
+      run: |
+        source $CONDA/etc/profile.d/conda.sh
+        conda activate abismal
+        python -c "
+        import numpy, tensorflow, torch, torchref, dxtbx
+        print(f'numpy {numpy.__version__}  tensorflow {tensorflow.__version__}')
+        print(f'torch {torch.__version__}  torchref {torchref.__version__}')
+        print(f'dxtbx {dxtbx.__file__}')
+        "
 
     - name: Run tests with pytest
       run: |

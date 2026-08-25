@@ -20,11 +20,9 @@
 # ==============================================================================
 
 
-import importlib
 import tf_keras as tfk
 import tensorflow as tf
 
-from typing import Union, Callable
 
 from abismal.optimizers.base import AbismalOptimizer
 

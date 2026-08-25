@@ -87,11 +87,53 @@ args_and_kwargs = (
             "help": "Sigma on the deviatoric (anisotropy) channel of torchref's "
                     "SIMU restraint -- the dial that regularizes ADP tensor "
                     "shape, which is where all the extra anisotropic "
-                    "parameters live. 'auto' (default) fits it once by "
-                    "minimising Rfree, refit each epoch against that epoch's "
+                    "parameters live. 'auto' (default) fits it by "
+                    "minimising Rfree each epoch, against that epoch's "
                     "own merged data. Ignored for isotropic runs.",
             "default": "auto",
             "type": str,
+        }
+    ),
+
+    (
+        (
+            "--torchref-allow-overlap",
+        ), {
+            "help": "Refine every epoch even when an earlier torchref run is "
+                    "still going. By default a new run is skipped while one is "
+                    "in flight, since refinement is CPU-bound and overlapping "
+                    "runs compete for cores -- but that leaves gaps in the "
+                    "per-epoch record. Set this when you need a refinement for "
+                    "every epoch, such as for a publication figure. Concurrency "
+                    "is self-limiting at roughly (refinement time / epoch "
+                    "time); a warning is issued if it climbs past 4.",
+            "action": "store_true",
+        }
+    ),
+
+    (
+        (
+            "--torchref-no-rigid-body",
+        ), {
+            "help": "Skip the per-chain rigid-body step torchref runs before "
+                    "the ADP macrocycles. It is on by default: six parameters "
+                    "per chain against tens of thousands of reflections cannot "
+                    "overfit, and it improves both Rwork and Rfree whenever the "
+                    "starting model is not already in register with the data.",
+            "action": "store_true",
+        }
+    ),
+
+    (
+        (
+            "--torchref-rigid-body-iter",
+        ), {
+            "type": int,
+            "default": 30,
+            "help": "LBFGS iterations per resolution cutoff during torchref's "
+                    "rigid-body step (default=30, which is converged for "
+                    "corrections of a few tenths of an Angstrom). Raise it if "
+                    "the run reports a large rigid-body shift.",
         }
     ),
 

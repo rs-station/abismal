@@ -1,0 +1,325 @@
+"""Tests for TorchRefRunner, the callback that spawns the torchref worker.
+
+None of these run torchref. They stub `Popen` and assert on the argv the
+callback builds and on how it manages the resulting processes, which is where
+the failures that actually bit us live: an option accepted by the worker but
+never forwarded is invisible until someone reads a log and notices the default
+was used.
+"""
+import sys
+import types
+from pathlib import Path
+
+import pytest
+
+tfk = pytest.importorskip("tf_keras")
+
+from abismal.callbacks.torchref import TorchRefRunner
+
+
+class FakeProcess:
+    """Stand-in for Popen: finishes when told to, records that it was waited on."""
+
+    def __init__(self, returncode=0, running=True):
+        self._returncode = returncode
+        self._running = running
+        self.waited = False
+
+    def finish(self):
+        self._running = False
+
+    def poll(self):
+        return None if self._running else self._returncode
+
+    def wait(self):
+        self.waited = True
+        self._running = False
+        return self._returncode
+
+    @property
+    def returncode(self):
+        return None if self._running else self._returncode
+
+
+@pytest.fixture
+def spawned(monkeypatch):
+    """Capture argv from every spawn; hand back the fake processes."""
+    calls = []
+
+    def fake_popen(command, **kwargs):
+        process = FakeProcess()
+        calls.append((command, process))
+        return process
+
+    monkeypatch.setattr("abismal.callbacks.torchref.Popen", fake_popen)
+    return calls
+
+
+def _runner(tmp_path, **kwargs):
+    pdb = tmp_path / "model.pdb"
+    pdb.write_text("END\n")
+    kwargs.setdefault("pdb_file", str(pdb))
+    return TorchRefRunner(str(tmp_path), **kwargs)
+
+
+def _argv_value(argv, flag):
+    return argv[argv.index(flag) + 1]
+
+
+# --------------------------------------------------------------------------
+# argv construction -- "accepted but never forwarded" is the bug class here
+# --------------------------------------------------------------------------
+
+def test_every_option_reaches_the_worker(tmp_path, spawned):
+    rfree = tmp_path / "rfree.mtz"
+    rfree.write_text("")
+    runner = _runner(
+        tmp_path, r_free_mtz=str(rfree), r_free_value=1, wavelength=1.54,
+        adp_mode="anisotropic", adp_aniso_sigma="0.2", macro_cycles=7,
+        z_score_cutoff=4.5, rigid_body_iter=100,
+    )
+    runner.run_torchref(0)
+    argv, _ = spawned[0]
+
+    assert _argv_value(argv, "--r-free-value") == "1"
+    assert _argv_value(argv, "--wavelength") == "1.54"
+    assert _argv_value(argv, "--adp-mode") == "anisotropic"
+    assert _argv_value(argv, "--adp-aniso-sigma") == "0.2"
+    assert _argv_value(argv, "--macro-cycles") == "7"
+    assert _argv_value(argv, "--z-score-cutoff") == "4.5"
+    assert _argv_value(argv, "--rigid-body-iter") == "100"
+    assert _argv_value(argv, "--r-free-mtz").endswith("rfree.mtz")
+
+
+def test_rigid_body_flag_only_when_disabled(tmp_path, spawned):
+    _runner(tmp_path, rigid_body=True).run_torchref(0)
+    assert "--no-rigid-body" not in spawned[0][0]
+
+    _runner(tmp_path, rigid_body=False).run_torchref(0)
+    assert "--no-rigid-body" in spawned[1][0]
+
+
+def test_zero_wavelength_is_forwarded(tmp_path, spawned):
+    """0 means "disable anomalous refinement", and 0 is falsy.
+
+    A truthiness test here would silently drop the option and quietly re-enable
+    anomalous refinement, so pin it.
+    """
+    _runner(tmp_path, wavelength=0.0).run_torchref(0)
+    assert _argv_value(spawned[0][0], "--wavelength") == "0.0"
+
+
+def test_r_free_value_needs_its_mtz(tmp_path, spawned):
+    """`--r-free-value` alone is meaningless and must not be emitted."""
+    _runner(tmp_path, r_free_value=1).run_torchref(0)
+    argv = spawned[0][0]
+    assert "--r-free-value" not in argv
+    assert "--r-free-mtz" not in argv
+
+
+# --------------------------------------------------------------------------
+# process lifecycle
+# --------------------------------------------------------------------------
+
+def test_finished_workers_are_reaped(tmp_path, spawned):
+    """Finished workers must be cleared, not merely capped by the skip guard.
+
+    Asserting `len(processes) <= 1` would pass with reaping entirely disabled,
+    because the overlap guard caps the list at 1 by itself. What distinguishes
+    reaping is that the list reaches ZERO and that a spawn therefore happens on
+    every epoch.
+    """
+    runner = _runner(tmp_path, epoch_stride=1)
+    for epoch in range(4):
+        runner.on_epoch_end(epoch)
+        for _, process in spawned:
+            process.finish()
+        runner._reap()
+        assert runner.processes == [], f"not reaped after epoch {epoch}"
+    assert len(spawned) == 4, "a finished worker blocked the next epoch"
+
+
+def test_overlapping_runs_are_skipped(tmp_path, spawned):
+    """A refinement outliving its epoch must not stack up N deep."""
+    runner = _runner(tmp_path, epoch_stride=1)
+    runner.on_epoch_end(0)
+    assert len(spawned) == 1
+    with pytest.warns(RuntimeWarning, match="still going"):
+        runner.on_epoch_end(1)
+    assert len(spawned) == 1, "second run started while the first was live"
+
+
+def test_worker_failure_is_surfaced(tmp_path, spawned):
+    """A nonzero exit must not pass silently -- stderr.txt is inside a result
+    directory nobody reads, and training otherwise reports success."""
+    runner = _runner(tmp_path, epoch_stride=1)
+    runner.on_epoch_end(0)
+    process = spawned[0][1]
+    process._returncode = 1
+    process.finish()
+    with pytest.warns(RuntimeWarning, match="exited with 1"):
+        runner.on_epoch_end(1)
+
+
+def test_train_end_waits_for_stragglers(tmp_path, spawned):
+    runner = _runner(tmp_path, epoch_stride=1)
+    runner.on_epoch_end(0)
+    runner.on_train_end()
+    assert spawned[0][1].waited
+    assert runner.processes == []
+
+
+def test_final_epoch_is_refined_even_when_skipped(tmp_path, spawned):
+    """The last epoch must be refined even if the guard skipped it.
+
+    Deliberately leaves the first worker RUNNING, so the guard skips every
+    later epoch -- the case that matters. A version of this test that finishes
+    and reaps each worker constructs the situation where nothing overlaps and
+    would pass with the whole mechanism absent.
+
+    This is the headline result: on measured timings a worker takes 1.33x an
+    epoch on hewl, so the final epoch really can be skipped, and a multi-hour
+    run would end with no refinement of the model it is judged on.
+    """
+    runner = _runner(tmp_path, epoch_stride=1)
+    runner.on_epoch_end(0)                      # spawns, stays running
+    assert len(spawned) == 1
+    for epoch in (1, 2):
+        with pytest.warns(RuntimeWarning, match="still going"):
+            runner.on_epoch_end(epoch)
+    assert len(spawned) == 1, "guard should have suppressed the middle epochs"
+
+    runner.on_train_end()
+    refined = [argv[argv.index("--mtz") + 1] for argv, _ in spawned]
+    assert any("epoch_3" in m for m in refined), (
+        f"final epoch never refined; only {refined}"
+    )
+
+
+def test_no_skip_means_no_catch_up(tmp_path, spawned):
+    """A run whose final epoch already refined must not refine it twice."""
+    runner = _runner(tmp_path, epoch_stride=1)
+    for epoch in range(3):
+        runner.on_epoch_end(epoch)
+        for _, process in spawned:
+            process.finish()
+        runner._reap()
+    before = len(spawned)
+    runner.on_train_end()
+    assert len(spawned) == before, "on_train_end re-ran an epoch that was not skipped"
+
+
+def test_no_pdb_means_no_spawn(tmp_path, spawned):
+    runner = TorchRefRunner(str(tmp_path), pdb_file=None)
+    runner.on_epoch_end(0)
+    assert spawned == []
+
+
+# --------------------------------------------------------------------------
+# allow_overlap -- refine every epoch, for a complete per-epoch record
+# --------------------------------------------------------------------------
+
+def test_allow_overlap_refines_every_epoch(tmp_path, spawned):
+    """With allow_overlap, a running worker must not suppress the next epoch.
+
+    The default guard trades completeness for CPU headroom. A publication figure
+    needs the per-epoch trace with no gaps, so this path has to spawn on every
+    stride epoch regardless of what is still in flight.
+    """
+    runner = _runner(tmp_path, epoch_stride=1, allow_overlap=True)
+    for epoch in range(4):
+        runner.on_epoch_end(epoch)          # nothing ever finishes
+    assert len(spawned) == 4, "a live worker suppressed a later epoch"
+    assert len(runner.processes) == 4
+
+
+def test_allow_overlap_warns_once_concurrency_is_high(tmp_path, spawned):
+    """Deep stacking means refinement is far slower than an epoch. Say so.
+
+    Concurrency is self-limiting at about (refinement time / epoch time), which
+    is ~2 on the benchmarks. Well past that, the workers are fighting each
+    other, and the user should hear about it -- but not be blocked, since they
+    asked for every epoch.
+    """
+    runner = _runner(tmp_path, epoch_stride=1, allow_overlap=True)
+    for epoch in range(runner.OVERLAP_WARN_AT):
+        runner.on_epoch_end(epoch)
+    with pytest.warns(RuntimeWarning, match="competing for cores"):
+        runner.on_epoch_end(runner.OVERLAP_WARN_AT)
+
+
+def test_default_still_skips(tmp_path, spawned):
+    """allow_overlap must be opt-in -- the default keeps the guard."""
+    runner = _runner(tmp_path, epoch_stride=1)
+    runner.on_epoch_end(0)
+    with pytest.warns(RuntimeWarning, match="still going"):
+        runner.on_epoch_end(1)
+    assert len(spawned) == 1
+
+
+# --------------------------------------------------------------------------
+# The interpreter the worker runs on
+#
+# abismal and torchref install into one environment, so the worker runs on
+# sys.executable. That replaced an ABISMAL_TORCHREF_PYTHON env var naming a
+# second environment's interpreter. Nothing above covers it: every test here
+# stubs Popen, so a worker that could never actually start would still pass.
+# --------------------------------------------------------------------------
+
+def test_worker_runs_on_the_training_interpreter(tmp_path, spawned):
+    _runner(tmp_path).run_torchref(0)
+    argv, _ = spawned[0]
+
+    assert argv[0] == sys.executable
+    assert argv[1].endswith("_torchref_worker.py")
+
+
+def test_interpreter_is_not_overridable_by_the_environment(tmp_path, spawned, monkeypatch):
+    """A stale ABISMAL_TORCHREF_PYTHON must not redirect the worker.
+
+    The variable used to select the interpreter. Anyone whose shell profile
+    still exports it would otherwise have the worker silently launched from a
+    different environment than the one abismal is running in.
+    """
+    monkeypatch.setenv("ABISMAL_TORCHREF_PYTHON", "/nonexistent/python")
+    _runner(tmp_path).run_torchref(0)
+
+    assert spawned[0][0][0] == sys.executable
+
+
+def test_worker_script_is_runnable_by_this_interpreter():
+    """Actually start the worker, rather than asserting on a stubbed argv.
+
+    This is the one test that spawns the real subprocess the callback would.
+    It catches a worker that cannot start at all -- a syntax error, or an
+    import missing from the environment abismal is installed in.
+    """
+    import subprocess
+    from abismal.callbacks import torchref as torchref_callback
+
+    worker = Path(torchref_callback.__file__).parent / "_torchref_worker.py"
+    assert worker.exists()
+
+    result = subprocess.run(
+        [sys.executable, str(worker), "--help"],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--macro-cycles" in result.stdout
+
+
+def test_torchref_imports_in_the_training_interpreter():
+    """The invariant that lets the env var go: one environment holds both.
+
+    Skips when the `torchref` extra is not installed, so a plain
+    `pip install abismal[dev]` checkout still passes.
+    """
+    import subprocess
+
+    pytest.importorskip("torchref")
+    result = subprocess.run(
+        [sys.executable, "-c", "import torchref; print(torchref.__version__)"],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip()

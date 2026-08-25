@@ -1,16 +1,11 @@
 #/usr/bin/env cctbx.python
 import mmap
 import numpy as np
-import argparse
-import reciprocalspaceship as rs
-import pandas as pd
 import gemmi
 import tensorflow as tf
 from abismal.io.common import check_for_ray,ray_context
-from abismal.io.loader import DataLoader
 from abismal.io.crystfel import StreamLoaderBase
 from reciprocalspaceship.decorators import spacegroupify,cellify
-from multiprocessing import cpu_count,Pool
 
 
 

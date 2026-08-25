@@ -162,21 +162,57 @@ def map_grid_size(cell, voxel_size=VOXEL_SIZE_ANGSTROMS):
     """Minimum grid dimensions giving at most `voxel_size` spacing on each axis.
 
     Passed to gemmi as `min_size`; gemmi rounds each up to an FFT-friendly
-    number, so the realised spacing is at most what was asked for.
+    number, so the realised spacing is at most what was asked for. Uses the
+    axis step length ``cell.a / nu``, which for a non-orthogonal cell is an
+    OVER-estimate of the true perpendicular spacing -- so the resulting grid is
+    never coarser than requested, only finer. Measure the realised spacing with
+    :func:`grid_spacing`, not by repeating this division.
     """
     return [int(math.ceil(length / voxel_size))
             for length in (cell.a, cell.b, cell.c)]
 
 
-def peak_min_distance(cell, shape, separation=PEAK_MIN_DISTANCE_ANGSTROMS):
+def grid_step_lengths(grid):
+    """Real-space length of a one-voxel step along each index axis (A).
+
+    ``cell.a / nu`` exactly: moving one voxel along index u displaces you by the
+    a-axis step vector, whose length is ``cell.a / nu`` for any cell, orthogonal
+    or not. Verified on a (40, 45, 50, 50, 55, 60) triclinic cell against
+    orthogonalized coordinates -- agreement to 4 decimals.
+
+    Deliberately NOT ``gemmi.Grid.spacing``, which is the perpendicular distance
+    between lattice planes, ``1/(n_i a*_i)``. That is always <= the step length
+    (0.239 vs 0.299 on the cell above) and answers a different question. An
+    earlier version of this module used it here on the theory that the step
+    length "over-reported" the spacing; it does, but the spacing is not the
+    quantity ``min_distance`` measures, and substituting it inflated the voxel
+    count and so overshot the requested separation by 20%.
+    """
+    cell = grid.unit_cell
+    return (cell.a / grid.shape[0],
+            cell.b / grid.shape[1],
+            cell.c / grid.shape[2])
+
+
+def peak_min_distance(grid, separation=PEAK_MIN_DISTANCE_ANGSTROMS):
     """`separation` in Angstroms expressed as whole voxels, at least 1.
 
-    peak_local_max measures min_distance isotropically in index space, so use
-    the COARSEST axis: that is where a given voxel count spans the most
-    Angstroms, and overshooting there is what would merge two real atoms.
+    skimage suppresses within a Chebyshev radius in index space (its default
+    ``p_norm=inf``), so the exclusion region is a CUBE of half-width
+    ``min_distance`` voxels, not a sphere. Its real-space extent therefore runs
+    from ``m * step`` along an axis to ``sqrt(3) * m * step`` along the body
+    diagonal, and no scalar ``min_distance`` can be isotropic on an anisotropic
+    grid. Sizing against the coarsest axis bounds the AXIAL extent by the
+    request; the diagonal necessarily exceeds it.
+
+    On the real hewl grid (steps 0.294/0.294/0.295 A, m=3) that means maxima
+    merge up to 1.53 A apart on the diagonal and resolve at 2.04 A, against an
+    S-S distance of 2.02-2.05 A. hewl's four disulfides resolve, but on a ~1%
+    margin, not the 2x the axial figure suggests -- so treat
+    PEAK_MIN_DISTANCE_ANGSTROMS as having no headroom, and re-measure
+    resolution on real data before changing it or VOXEL_SIZE_ANGSTROMS.
     """
-    coarsest = max(cell.a / shape[0], cell.b / shape[1], cell.c / shape[2])
-    return max(1, int(separation / coarsest))
+    return max(1, int(separation / max(grid_step_lengths(grid))))
 
 # Markers delimiting the machine-readable summary at the end of stdout. Keep
 # these in sync with the parser in abismal-benchmarks/scripts/plot_progress.py.
@@ -212,20 +248,27 @@ def resolve_adp_mode(adp_mode, pdb_path):
     """
     if adp_mode != "auto":
         return adp_mode
-    n_anisou = 0
-    with open(pdb_path) as f:
-        for line in f:
-            if line.startswith("ANISOU"):
-                n_anisou += 1
+    import gemmi
+
+    # Read through gemmi rather than grepping for ANISOU lines: prepare_data
+    # already loads the model with gemmi, and a .cif starting model has no
+    # ANISOU records at all, so text matching silently reports isotropic for
+    # every mmCIF input.
+    structure = gemmi.read_structure(str(pdb_path))
+    n_anisou = sum(
+        1 for model in structure for chain in model for residue in chain
+        for atom in residue if atom.aniso.nonzero()
+    )
     mode = "anisotropic" if n_anisou else "isotropic"
     print(
-        f"adp-mode auto -> {mode} ({n_anisou} ANISOU records in the model)",
+        f"adp-mode auto -> {mode} ({n_anisou} atoms with anisotropic U)",
         flush=True,
     )
     return mode
 
 
-def search_aniso_sigma(build_refinement, out_dir, ladder=ADP_ANISO_SIGMA_LADDER):
+def search_aniso_sigma(build_refinement, has_fixed_free_set=True,
+                       ladder=ADP_ANISO_SIGMA_LADDER):
     """Fit SIMU's deviatoric sigma by cross-validation on Rfree.
 
     Refines at each candidate sigma and keeps the one with the lowest Rfree --
@@ -251,6 +294,17 @@ def search_aniso_sigma(build_refinement, out_dir, ladder=ADP_ANISO_SIGMA_LADDER)
         f"({ADP_SEARCH_CYCLES} macrocycles per trial)...",
         flush=True,
     )
+    if not has_fixed_free_set:
+        # ADP_SEARCH_RFREE_SE was calibrated by a PAIRED bootstrap -- both rungs
+        # scored on the same reflections. Without a supplied R-free set torchref
+        # draws a fresh random one per trial (seed=None), so the rungs are not
+        # comparable at that tolerance and the selection is largely noise.
+        print(
+            "    WARNING: no fixed R-free set, so every rung is scored against "
+            "a different random one. The 1-SE tolerance assumes a paired "
+            "comparison; pass --r-free-mtz for this fit to mean anything.",
+            flush=True,
+        )
     results = []
     for w in ladder:
         ref = build_refinement(w)
@@ -259,7 +313,7 @@ def search_aniso_sigma(build_refinement, out_dir, ladder=ADP_ANISO_SIGMA_LADDER)
         # The trial is only meaningful if it actually ran at sigma=w. Without
         # this the ladder can silently collapse to N identical runs at the
         # default and still report a confident fitted value.
-        spec = {"simu": {"simu_sigma_aniso": float(w)}}
+        spec = adp_restraint_spec("anisotropic", w)
         for _ in range(ADP_SEARCH_CYCLES):
             apply_adp_restraints(ref, spec, f"sigma={w:g} trial")
             ref.refine_scaler()
@@ -345,13 +399,23 @@ def apply_adp_restraints(ref, spec, where):
     for component, attrs in spec.items():
         target = ref.adp_target[component]
         for attr, value in attrs.items():
+            # Check BEFORE setting. setattr on a plain object happily creates a
+            # new instance attribute, so a read-back after the fact returns what
+            # we just wrote no matter what the real knob is called -- the check
+            # would pass while the restraint stayed at its default.
+            if not hasattr(target, attr):
+                raise RuntimeError(
+                    f"adp/{component} has no attribute {attr!r} at {where}; "
+                    "torchref renamed or removed it, and setting it here would "
+                    "silently do nothing."
+                )
             setattr(target, attr, value)
             got = getattr(target, attr)
             if abs(float(got) - float(value)) > 1e-5:
                 raise RuntimeError(
                     f"adp/{component}.{attr} did not stick at {where}: "
-                    f"set {value:g}, read back {float(got):g}. A target rebuild "
-                    "happened after this call, or the attribute was renamed."
+                    f"set {value:g}, read back {float(got):g}. The setter "
+                    "clamped or rejected the value."
                 )
 
 
@@ -368,9 +432,13 @@ def restraint_audit(ref, spec):
             bits.append(f"{component}.{attr}={float(getattr(ref.adp_target[component], attr)):g}")
     try:
         weights = ref.weighting(ref.complete_loss_state())
+    except Exception as err:  # noqa: BLE001 - see below
+        # Broad, but reported rather than swallowed. This is a print-only
+        # helper: it must not be able to abort a refinement, and it must not go
+        # quiet either -- its whole job is making silent restraint loss visible.
+        bits.append(f"w[adp]=<unavailable: {type(err).__name__}>")
+    else:
         bits.append(f"w[adp]={float(weights.get('adp', float('nan'))):g}")
-    except Exception:
-        pass
     return "  ".join(bits)
 
 
@@ -425,14 +493,31 @@ def run_rigid_body(ref, spec, iterations=RIGID_BODY_ITER):
         print(
             f"    NOTE: {rmsd:.3f} A is a large correction, beyond the regime "
             f"where {RIGID_BODY_ITER} iterations were shown to converge. "
-            "Consider --rigid-body-iter 100.",
+            "Consider --torchref-rigid-body-iter 100 (or --rigid-body-iter "
+            "when driving this worker directly).",
             flush=True,
         )
 
 
 def reset_b_factors(ref, torch):
-    """Flatten every refinable B to RESET_B and invalidate the SF cache."""
-    from torchref.model.parameter_wrappers import PositiveMixedTensor
+    """Flatten every atomic displacement parameter to RESET_B.
+
+    torchref keeps ADPs in two places: a scalar ``model.adp`` for isotropic
+    atoms and a 6-component ``model.u`` for anisotropic ones. ``Model.adp_u6``
+    returns ``where(aniso_flag, U, B/8pi^2 * I)``, so for an anisotropic atom
+    ``adp`` is ignored entirely -- ``_apply_adp_partition`` does not even mark
+    it refinable. Resetting only ``adp`` therefore left the deposited tensors
+    untouched on every anisotropic atom, which on hewl is 1112 of 1210: 92% of
+    the model kept its published ADPs while the log claimed a flat start.
+
+    That defeats the point of the reset (RESET_B), and it silently biased
+    `search_aniso_sigma`, whose trials all began from the deposited tensors.
+    Both channels are reset here, the U tensor to the isotropic equivalent
+    ``B/(8 pi^2)`` on the diagonal and zero off it.
+    """
+    from torchref.model.parameter_wrappers import (
+        CholeskyMixedTensor, PositiveMixedTensor,
+    )
 
     adp = ref.model.adp
     ref.model.adp = PositiveMixedTensor(
@@ -440,6 +525,24 @@ def reset_b_factors(ref, torch):
         refinable_mask=adp.refinable_mask,
         name="adp",
     )
+
+    u = getattr(ref.model, "u", None)
+    if u is not None:
+        u_iso = RESET_B / (8.0 * math.pi ** 2)
+        current = u().detach()
+        flat = torch.zeros_like(current)
+        flat[..., :3] = u_iso          # u11, u22, u33; u12/u13/u23 stay zero
+        # Isotropic atoms are stored as all-NaN rows -- that is how torchref
+        # marks the iso/aniso split (`_apply_adp_partition` tests
+        # `isfinite(U).all(dim=1)`). Zeroing them would make every atom look
+        # anisotropic to any later `set_adp_mode`/`set_default_masks` call.
+        flat[~torch.isfinite(current).all(dim=-1)] = float("nan")
+        ref.model.u = CholeskyMixedTensor(
+            flat,
+            refinable_mask=u.refinable_mask,
+            name="aniso_U",
+            device=current.device,
+        )
     ref.model.reset_cache()
 
 
@@ -693,7 +796,7 @@ def peaks_by_local_max(structure, grid, z_score_cutoff,
 
     arr = np.array(grid, copy=False)
     if min_distance is None:
-        min_distance = peak_min_distance(structure.cell, arr.shape)
+        min_distance = peak_min_distance(grid)
     mu, sd = float(arr.mean()), float(arr.std())
     threshold = mu + z_score_cutoff * sd
 
@@ -708,7 +811,7 @@ def peaks_by_local_max(structure, grid, z_score_cutoff,
     voxel_volume = cell.volume / arr.size
     n = np.array(arr.shape, dtype=float)
 
-    rows = []
+    rows, n_unmatched = [], 0
     for i in idx:
         peak_value = float(arr[tuple(i)])
         off, vals = _peak_region(arr, i, min_distance, threshold)
@@ -719,15 +822,29 @@ def peaks_by_local_max(structure, grid, z_score_cutoff,
         centroid_idx = i + (off * vals[:, None]).sum(axis=0) / vals.sum()
         centroid = cell.orthogonalize(gemmi.Fractional(*(centroid_idx / n)))
 
+        # `dedup_symmetry` keeps whichever symmetry copy was strongest, so the
+        # centroid can sit anywhere in the cell while the matched atom sits in
+        # the model's own copy -- 60-120 A apart in practice, with `dist`
+        # reporting the true symmetry-aware separation between them.
+        #
+        # Move the CENTROID onto the model's frame, not the atom onto the
+        # peak's. `coord*` must stay the position that appears in the PDB, since
+        # rsbooster's peak_report writes `cra.atom.pos` there and callers join
+        # peaks.csv back to the model by coordinate. Reporting a symmetry image
+        # present in no file would satisfy |cen - coord| == dist while breaking
+        # every such consumer.
         best = None
         for mark in ns.find_atoms(centroid):
             cra = mark.to_cra(model)
-            dist = cell.find_nearest_pbc_image(centroid, cra.atom.pos, mark.image_idx).dist()
+            image = cell.find_nearest_pbc_image(centroid, cra.atom.pos, mark.image_idx)
+            dist = image.dist()
             if best is None or dist < best[0]:
-                best = (dist, cra)
+                best = (dist, cra, cell.find_nearest_pbc_position(
+                    cra.atom.pos, centroid, mark.image_idx, True))
         if best is None or best[0] > distance_cutoff:
+            n_unmatched += 1
             continue
-        dist, cra = best
+        dist, cra, peak_pos = best
         rows.append({
             "chain": cra.chain.name,
             "seqid": cra.residue.seqid.num,
@@ -738,32 +855,112 @@ def peaks_by_local_max(structure, grid, z_score_cutoff,
             "peakz": (peak_value - mu) / sd,
             "score": score,
             "scorez": score / sd,
-            "cenx": centroid.x, "ceny": centroid.y, "cenz": centroid.z,
+            "cenx": peak_pos.x, "ceny": peak_pos.y, "cenz": peak_pos.z,
             "coordx": cra.atom.pos.x, "coordy": cra.atom.pos.y, "coordz": cra.atom.pos.z,
         })
+    if n_unmatched:
+        print(
+            f"  {n_unmatched} peak(s) had no atom within {distance_cutoff:g} A "
+            "and were dropped",
+            flush=True,
+        )
     return pd.DataFrame(rows, columns=PEAK_COLUMNS)
 
 
+def rescale_mtz_to_absolute(refined_mtz, refinement):
+    """Put the refined mtz's amplitudes on an absolute (electron) scale.
+
+    abismal merges on an arbitrary scale. torchref refines against those
+    amplitudes and scales its calculated structure factors *down* to match, so
+    every amplitude it writes -- F-obs, F-model, FWT, DELFWT, ANOM -- inherits
+    that scale. On hewl it runs ~200x below absolute, which makes the 2Fo-Fc map
+    rmsd 0.0018 instead of ~0.4. Nothing is wrong with the maps: peak heights in
+    rmsd are unaffected, and so are the R-factors, since a scale cancels. But a
+    viewer that shows an absolute contour level shows ~0.003, and coot's initial
+    1.5-rmsd level then reads as 0.00 -- which is what phenix output does not do,
+    because phenix reports on the model's absolute scale.
+
+    The factor comes from the refiner, as the ratio of ``|F_calc|`` (from the
+    model, absolute) to ``|scaler(F_calc)|`` (the scale the mtz is written on).
+    Note that ``Scaler.get_scale()`` is *not* this number: it is the geometric
+    mean of the per-bin log scale only, while ``Scaler.forward`` also applies a
+    per-bin B, anisotropy and bulk solvent. On hewl get_scale() overshoots by
+    1.56x, and the residual is flat across resolution -- it is not a subtlety
+    that averages out. Taking the ratio of the two structure factor sets picks up
+    every term the scaler applies.
+
+    Also wraps PANOM into [-180, 180]. torchref writes the anomalous phase as
+    ``phase - 90`` without wrapping, so it comes out spanning [-450, 90]. Phases
+    are periodic, so this is cosmetic, but it is out of range for the column type
+    and trips up anything that validates it.
+    """
+    import gemmi
+    import numpy as np
+    import torch
+
+    absolute = None
+    try:
+        with torch.no_grad():
+            f_abs = refinement.get_F_calc().detach().cpu().numpy().ravel()
+            f_scaled = refinement.get_F_calc_scaled().detach().cpu().numpy().ravel()
+    except Exception as error:  # pragma: no cover - depends on the torchref build
+        print(
+            f"could not read F_calc from the refiner ({error}); "
+            "leaving the mtz on its input scale",
+            flush=True,
+        )
+    else:
+        usable = (
+            np.isfinite(f_abs) & np.isfinite(f_scaled)
+            & (f_abs > 0) & (f_scaled > 0)
+        )
+        if usable.sum() < 100:
+            print(
+                f"only {usable.sum()} reflections usable for absolute scaling; "
+                "leaving the mtz on its input scale",
+                flush=True,
+            )
+        else:
+            # Least squares through the origin, so strong reflections -- where the
+            # scale is best determined -- dominate.
+            candidate = float(
+                (f_abs[usable] * f_scaled[usable]).sum() / (f_scaled[usable] ** 2).sum()
+            )
+            if np.isfinite(candidate) and candidate > 0:
+                absolute = candidate
+            else:
+                print(
+                    f"absolute scale came out {candidate}; "
+                    "leaving the mtz on its input scale",
+                    flush=True,
+                )
+
+    mtz = gemmi.read_mtz_file(str(refined_mtz))
+    for column in mtz.columns:
+        # Amplitudes, anomalous amplitudes (G) and their sigmas (L/Q) all carry the
+        # scale. Phases (P), Miller indices (H) and the R-free flags (I) must not.
+        if absolute is not None and column.type in ("F", "G", "L", "Q", "D"):
+            np.array(column, copy=False)[:] *= absolute
+        elif column.label == "PANOM":
+            phase = np.array(column, copy=False)
+            phase[:] = (phase + 180.0) % 360.0 - 180.0
+
+    mtz.write_to_file(str(refined_mtz))
+    if absolute is not None:
+        print(f"scaled refined.mtz to absolute (k={absolute:.1f})", flush=True)
+    return absolute
+
+
 def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
-                         z_score_cutoff=Z_SCORE_CUTOFF, dmin=None):
+                         z_score_cutoff=Z_SCORE_CUTOFF):
     """Search torchref's anomalous difference map for peaks near the model.
 
     ANOM/PANOM come straight out of ``write_out_mtz`` on anomalous data, so the
     map is built from the anomalously refined model rather than reconstructed
-    here.
+    here. ``rescale_mtz_to_absolute`` has run by this point, so the ``peak`` and
+    ``score`` columns are on an absolute scale; ``peakz``/``scorez`` are rmsd
+    ratios and do not depend on it either way.
 
-    `dmin` fixes the FFT grid. gemmi has no dmin argument -- it sizes the grid
-    from the largest Miller index *present as a row*, NaN values included -- so
-    the cut has to happen before `transform_f_phi_to_map`. Reflections with a
-    NaN coefficient contribute nothing to the map, so dropping them changes only
-    the grid, never the density.
-
-    This matters because `peakz` is a max over grid nodes, which underestimates
-    the continuous maximum by more the coarser the grid. phenix pads
-    `refine_001.mtz` out to 1.0 A with all-NaN ANOM, so gemmi hands it a 0.38 A
-    grid where the same coefficients at abismal's true 1.8 A limit get 0.65 A --
-    worth ~1 sigma on every peak, purely from sampling. Peak heights are only
-    comparable on a common grid, so pin both sides to the same dmin.
     """
     import gemmi
     import reciprocalspaceship as rs
@@ -778,23 +975,12 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
         )
         return None
 
-    if dmin is not None:
-        n_before = len(ds)
-        ds = ds.compute_dHKL()
-        ds = ds.loc[ds["dHKL"] >= float(dmin)]
-        print(
-            f"peak finding at dmin={float(dmin):.2f} A: kept {len(ds)}/{n_before} "
-            "reflections (fixes the FFT grid)",
-            flush=True,
-        )
-
     structure = gemmi.read_pdb(str(pdb_file))
     mtz = ds[["ANOM", "PANOM"]].to_gemmi()
     grid = mtz.transform_f_phi_to_map(
         "ANOM", "PANOM", min_size=map_grid_size(structure.cell)
     )
-    cell = structure.cell
-    spacing = (cell.a / grid.shape[0], cell.b / grid.shape[1], cell.c / grid.shape[2])
+    spacing = grid_step_lengths(grid)
     print(
         f"anomalous map grid {tuple(grid.shape)} "
         f"(spacing {spacing[0]:.3f}/{spacing[1]:.3f}/{spacing[2]:.3f} A, "
@@ -802,13 +988,14 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
         flush=True,
     )
 
-    min_distance = peak_min_distance(cell, grid.shape)
+    min_distance = peak_min_distance(grid)
     report = peaks_by_local_max(
         structure, grid, z_score_cutoff, min_distance=min_distance
     )
     print(
         f"peak_local_max (min_distance {min_distance} voxels "
-        f"= {PEAK_MIN_DISTANCE_ANGSTROMS:g} A): {len(report)} peaks at or above "
+        f"= {min_distance * max(spacing):.2f} A, requested "
+        f"{PEAK_MIN_DISTANCE_ANGSTROMS:g} A): {len(report)} peaks at or above "
         f"{z_score_cutoff:g} sigma",
         flush=True,
     )
@@ -823,7 +1010,7 @@ def find_anomalous_peaks(refined_mtz, pdb_file, out_csv,
 def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
         z_score_cutoff=Z_SCORE_CUTOFF, r_free_mtz=None, r_free_value=None,
         wavelength=None, adp_mode="auto", adp_aniso_sigma="auto",
-        peak_dmin=None, rigid_body=True, rigid_body_iter=RIGID_BODY_ITER):
+        rigid_body=True, rigid_body_iter=RIGID_BODY_ITER):
     import torch
     from torchref import LBFGSRefinement
 
@@ -878,7 +1065,7 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
         sigma = None
         print("isotropic ADPs: no anisotropy restraint to fit", flush=True)
     elif adp_aniso_sigma == "auto":
-        sigma = search_aniso_sigma(build, out_dir)
+        sigma = search_aniso_sigma(build, r_free_mtz is not None)
     else:
         sigma = float(adp_aniso_sigma)
         print(f"adp aniso sigma: {sigma:g} (fixed)", flush=True)
@@ -890,6 +1077,10 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
     # ADP KL singularity this sits on.
     reset_b_factors(ref, torch)
 
+    # Scale BEFORE reporting. The scale in force here was fitted by the
+    # constructor against the deposited B-factors, so measuring a flat-B model
+    # with it reads ~0.034 pessimistic and inflates the apparent improvement.
+    ref.get_scales()
     rw0, rf0 = ref.get_rfactor()
     print(
         f"Initial (B reset to {RESET_B}): Rwork={rw0:.4f}  Rfree={rf0:.4f}",
@@ -907,7 +1098,6 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
     # solvent and anisotropy terms, discarding the scale the previous cycle
     # refined. torchref's own docs say to call it once at construction and use
     # refine_scaler() inside the loop.
-    ref.get_scales()
     spec = adp_restraint_spec(adp_mode, sigma)
 
     # Rigid body first, on the flat-B model, so the macrocycles refine ADPs
@@ -919,10 +1109,11 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
         run_rigid_body(ref, spec, rigid_body_iter)
 
     for cycle in range(macro_cycles):
-        # Re-assert the restraint configuration before every cycle. Nothing on
-        # today's path rebuilds the ADP targets, so this is currently a no-op --
-        # it is here so that adding a step which does (rigid body is the one we
-        # want next) cannot silently drop a fitted sigma back to the default.
+        # Re-assert the restraint configuration before every cycle. The
+        # rigid-body step above rebuilds the ADP targets once per resolution
+        # cutoff and resets component sigmas to their defaults, so this is load
+        # bearing, not defensive. Kept in the loop rather than only after rigid
+        # body so that any future step which rebuilds is covered too.
         # See apply_adp_restraints.
         apply_adp_restraints(ref, spec, f"cycle {cycle + 1}")
         if getattr(ref.scaler, "solvent", None) is not None:
@@ -943,13 +1134,17 @@ def run(mtz_path, pdb_path, out_dir, device="cpu", macro_cycles=MACRO_CYCLES,
     # On anomalous data this also writes F-obs(+/-), F-model(+/-) and the
     # ANOM/PANOM difference map coefficients that peak finding runs on.
     ref.write_out_mtz(str(refined_mtz))
+    # Before peak finding, so peaks.csv heights are quoted on the same scale as
+    # the map anyone opens afterwards. Peak finding is z-scored, so this does not
+    # move which peaks are found.
+    rescale_mtz_to_absolute(refined_mtz, ref)
     print(f"wrote refined.pdb and refined.mtz to {out_dir}", flush=True)
 
     peaks_csv = None
     if anomalous:
         out_csv = out_dir / "peaks.csv"
         if find_anomalous_peaks(
-            refined_mtz, refined_pdb, out_csv, z_score_cutoff, dmin=peak_dmin
+            refined_mtz, refined_pdb, out_csv, z_score_cutoff
         ) is not None:
             peaks_csv = out_csv
 
@@ -976,7 +1171,7 @@ def print_summary(rwork, rfree, peaks_csv=None, adp_mode=None, adp_aniso_sigma=N
         print(Path(peaks_csv).read_text().strip(), flush=True)
         print(PEAKS_END, flush=True)
     else:
-        print("no anomalous peaks (non-anomalous data)", flush=True)
+        print("no anomalous peaks written", flush=True)
     print(SUMMARY_END, flush=True)
 
 
@@ -1044,18 +1239,6 @@ def main(argv=None):
              "of 30 under-converges by its docstring.",
     )
     p.add_argument(
-        "--peak-dmin",
-        type=float,
-        default=None,
-        help="High-resolution limit (Angstroms) for the anomalous difference "
-             "map. Reflections beyond it are dropped before the FFT, which is "
-             "the only way to pin the grid -- gemmi sizes it from the largest "
-             "Miller index present, counting NaN-valued rows. Peak z-scores are "
-             "a max over grid nodes and so are only comparable between programs "
-             "on a common grid; set this to the same value on both sides. "
-             "Omitted uses whatever the refined MTZ contains.",
-    )
-    p.add_argument(
         "--wavelength",
         type=float,
         default=None,
@@ -1076,7 +1259,6 @@ def main(argv=None):
         wavelength=args.wavelength,
         adp_mode=args.adp_mode,
         adp_aniso_sigma=args.adp_aniso_sigma,
-        peak_dmin=args.peak_dmin,
         rigid_body=args.rigid_body,
         rigid_body_iter=args.rigid_body_iter,
     )

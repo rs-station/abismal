@@ -1,11 +1,7 @@
-import numpy as np
 import tensorflow as tf
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import util as tfu
 from tensorflow_probability import bijectors as tfb
-import tf_keras as tfk
-from abismal.distributions import FoldedNormal as FoldedNormal
-from abismal.surrogate_posterior import StructureFactorPosteriorBase
 
 
 
@@ -55,11 +51,5 @@ class GammaPosteriorBase(object):
 
     def flat_distribution(self):
         q = self._distribution(self.concentration, self.rate)
-        return q
-
-    def distribution(self, asu_id, hkl):
-        concentration = self.rac.gather(self.concentration, asu_id, hkl)
-        rate = self.rac.gather(self.rate, asu_id, hkl)
-        q = self._distribution(concentration, rate)
         return q
 
