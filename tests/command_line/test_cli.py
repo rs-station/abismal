@@ -11,7 +11,7 @@ from abismal.command_line.abismal import main as abismal_main
 from abismal.command_line.cchalf import main as cchalf_main
 import pytest
 from os.path import exists
-from os import chdir
+from os import chdir, getcwd
 from glob import glob
 from tempfile import TemporaryDirectory
 
@@ -31,6 +31,18 @@ base_flags = (
 )
 
 def run_abismal(flags, files, additional_asserts=()):
+    # Restore the working directory afterwards. TemporaryDirectory deletes the tree on
+    # exit, so leaving the process chdir'd into it leaves cwd pointing at a directory
+    # that no longer exists -- every later test that touches a relative path or scans
+    # the cwd then fails with a bare FileNotFoundError, a long way from the cause.
+    original_cwd = getcwd()
+    try:
+        _run_abismal(flags, files, additional_asserts)
+    finally:
+        chdir(original_cwd)
+
+
+def _run_abismal(flags, files, additional_asserts=()):
     with TemporaryDirectory() as output_dir:
         chdir(output_dir)
         flags = ' ' + ' '.join(flags) + ' ' 
