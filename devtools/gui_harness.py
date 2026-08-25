@@ -70,6 +70,138 @@ def set_control(gui, dest, value):
 
 
 # ---------------------------------------------------------------------------
+# Replaying a run
+# ---------------------------------------------------------------------------
+
+def make_results_template(directory):
+    """Write a tiny refined.pdb + refined.mtz for the stub to copy per epoch.
+
+    Generated rather than committed: the real per-epoch outputs are 1-4 MB each, and
+    generating them keeps the column schema visible here instead of hidden inside a
+    binary. The columns are torchref's spelling, which is what GemmiMolViewer.map_keys
+    now looks for.
+    """
+    import numpy as np
+    import reciprocalspaceship as rs
+
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+
+    directory.joinpath("refined.pdb").write_text(
+        "CRYST1   30.000   30.000   30.000  90.00  90.00  90.00 P 1           1\n"
+        "ATOM      1  N   ALA A   1       5.000   5.000   5.000  1.00 20.00           N\n"
+        "ATOM      2  CA  ALA A   1       6.500   5.200   5.100  1.00 20.00           C\n"
+        "ATOM      3  C   ALA A   1       7.100   6.500   5.600  1.00 20.00           C\n"
+        "ATOM      4  O   ALA A   1       8.300   6.700   5.500  1.00 20.00           O\n"
+        "END\n"
+    )
+
+    hkl = [(h, k, l) for h in range(1, 4) for k in range(1, 4) for l in range(1, 4)]
+    rng = np.random.default_rng(0)
+    n = len(hkl)
+    ds = rs.DataSet(
+        {
+            "H": np.array([i[0] for i in hkl], "int32"),
+            "K": np.array([i[1] for i in hkl], "int32"),
+            "L": np.array([i[2] for i in hkl], "int32"),
+            "FWT": rng.uniform(10, 100, n).astype("float32"),
+            "PHWT": rng.uniform(-180, 180, n).astype("float32"),
+            "ANOM": rng.uniform(0, 5, n).astype("float32"),
+            "PANOM": rng.uniform(-180, 180, n).astype("float32"),
+        },
+        cell=[30.0, 30.0, 30.0, 90.0, 90.0, 90.0],
+        spacegroup="P 1",
+    ).infer_mtz_dtypes()
+    ds.set_index(["H", "K", "L"], inplace=True)
+    ds.write_mtz(str(directory / "refined.mtz"))
+    return directory
+
+
+def stub_env(out_dir, *, console=None, history=None, results=None, delay=0.0,
+             prefix="torchref", exit_code=0, hang=False, ignore_sigterm=False):
+    """Environment for the replay stub. See tests/gui/replay/abismal."""
+    env = {
+        "ABISMAL_REPLAY_CONSOLE": str(console or REPLAY_DIR / "console.log"),
+        "ABISMAL_REPLAY_OUTDIR": str(out_dir),
+        "ABISMAL_REPLAY_PREFIX": prefix,
+        "ABISMAL_REPLAY_DELAY": str(delay),
+        "ABISMAL_REPLAY_EXIT": str(exit_code),
+    }
+    if history is not False:
+        env["ABISMAL_REPLAY_HISTORY"] = str(history or REPLAY_DIR / "history.csv")
+    if results:
+        env["ABISMAL_REPLAY_RESULTS"] = str(results)
+    if hang:
+        env["ABISMAL_REPLAY_HANG"] = "1"
+    if ignore_sigterm:
+        env["ABISMAL_REPLAY_IGNORE_SIGTERM"] = "1"
+    return env
+
+
+def start_replay(out_dir, *, has_phenix=True, total_epochs=12, poll_interval=0.05,
+                 args=(), **stub_kwargs):
+    """Start a replay through the real ``AbismalRunner.start()``.
+
+    Puts the stub first on PATH rather than patching Popen, so the launch, the pid
+    file, ``/proc`` liveness and the exit code all stay real. Returns the runner
+    without waiting -- use :func:`wait_for_replay`.
+    """
+    from abismal.gui.runner import AbismalRunner
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    os.environ["PATH"] = f"{REPLAY_DIR}{os.pathsep}{os.environ['PATH']}"
+    os.environ.update(stub_env(out_dir, **stub_kwargs))
+
+    AbismalRunner.poll_interval = poll_interval
+    runner = AbismalRunner(
+        args=list(args), out_dir=str(out_dir),
+        has_phenix=has_phenix, total_epochs=total_epochs,
+    )
+    runner.start()
+    return runner
+
+
+def wait_for_replay(runner, timeout=60.0):
+    """Block until the tailer thread has drained and finished."""
+    thread = runner._tailer_thread
+    if thread is not None:
+        thread.join(timeout)
+    return runner
+
+
+def quiesce(runner, timeout=5.0):
+    """Stop a runner and its threads. Safe to call more than once.
+
+    Nothing in AbismalRunner cancels the self-rescheduling poll Timer, and with
+    has_phenix=True ``_monitoring_active`` is never cleared, so a runner left alone
+    keeps a timer chain and a watcher thread alive. Tests and the CLI both need a way
+    to put one down.
+    """
+    import os as _os
+    import signal as _signal
+
+    runner._monitoring_active = False
+    timer = getattr(runner, "_poll_timer", None)
+    if timer is not None:
+        timer.cancel()
+    pid = getattr(runner, "_pid", None)
+    if pid and runner.is_running:
+        try:
+            _os.killpg(_os.getpgid(pid), _signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                _os.kill(pid, _signal.SIGKILL)
+            except OSError:
+                pass
+    thread = getattr(runner, "_tailer_thread", None)
+    if thread is not None:
+        thread.join(timeout)
+    return runner
+
+
+# ---------------------------------------------------------------------------
 # Reading the tree
 # ---------------------------------------------------------------------------
 

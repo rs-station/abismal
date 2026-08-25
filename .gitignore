@@ -12,5 +12,10 @@ coverage.xml
 .coverage
 .coverage.*
 *.log
+# ...except the replay fixtures. tests/gui/replay/console.log is a captured abismal
+# console log used to drive the GUI's log tailer without running a merge job; it is
+# test data, not an artifact. Force-adding it would work once and then silently fail
+# for the next person.
+!tests/gui/replay/*.log
 build/
 dist/

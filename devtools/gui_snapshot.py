@@ -2,8 +2,12 @@
 """Dump the abismal notebook GUI to files you can read without a browser.
 
     python devtools/gui_snapshot.py --scenario form   --out-dir /tmp/snap
+    python devtools/gui_snapshot.py --scenario replay --out-dir /tmp/snap
     python devtools/gui_snapshot.py --scenario runner --out-dir /tmp/snap --results DIR
     python devtools/gui_snapshot.py --scenario viewer --out-dir /tmp/snap --pdb X --mtz Y
+
+`replay` launches a stub abismal through the real subprocess path and snapshots a
+complete run in a couple of seconds. `runner` reads an existing output directory.
 
 Writes `tree.txt` (the whole widget tree, one line per widget), `tree.json`,
 `history.png` (the real plot, decoded out of the widget), `log.txt`, `argv.txt`, any
@@ -73,6 +77,50 @@ def scenario_runner(args):
     ), facts
 
 
+def scenario_replay(args):
+    """Launch the replay stub through the real start() path and snapshot the result.
+
+    This is the live one: a real subprocess, real log tailing, real progress updates
+    and a history plot that grows as it goes -- in a couple of seconds, with no GPU and
+    no merge job.
+    """
+    out_dir = Path(args.out_dir)
+    template = H.make_results_template(out_dir / "_template")
+    runner = H.start_replay(
+        out_dir / "run",
+        results=template,
+        delay=args.delay,
+        total_epochs=args.epochs,
+        has_phenix=True,
+    )
+    H.wait_for_replay(runner, timeout=args.timeout)
+
+    facts = {
+        "progress": f"{runner.progress_widget.value}/{runner.progress_widget.max}",
+        "bar_style": runner.progress_widget.bar_style,
+        "label": runner.progress_label.value,
+        "stop button disabled": runner.stop_button.disabled,
+        "log lines": len(H.log_text(runner).splitlines()),
+        "pid file cleaned up": not Path(runner.pid_file).exists(),
+    }
+    pdb_file, mtz_file = runner._find_latest_phenix_results()
+    facts["latest epoch dir"] = Path(pdb_file).parent.name if pdb_file else None
+
+    extra = {}
+    if pdb_file:
+        from abismal.gui.components.gemmimol import GemmiMolViewer
+
+        viewer = GemmiMolViewer(pdb_file=pdb_file, mtz_file=mtz_file)
+        extra["viewer.html"] = viewer.html
+        facts["map_keys"] = viewer.map_keys
+
+    written = H.write_artifacts(
+        args.out_dir, widget=runner.to_widget(), runner=runner, extra=extra
+    )
+    H.quiesce(runner)
+    return written, facts
+
+
 def scenario_viewer(args):
     """Just the standalone 3D viewer document, for the browser tier to load."""
     from abismal.gui.components.gemmimol import GemmiMolViewer
@@ -84,7 +132,12 @@ def scenario_viewer(args):
     ), facts
 
 
-SCENARIOS = {"form": scenario_form, "runner": scenario_runner, "viewer": scenario_viewer}
+SCENARIOS = {
+    "form": scenario_form,
+    "runner": scenario_runner,
+    "replay": scenario_replay,
+    "viewer": scenario_viewer,
+}
 
 
 def main(argv=None):
@@ -93,7 +146,10 @@ def main(argv=None):
     p.add_argument("--scenario", choices=sorted(SCENARIOS), default="form")
     p.add_argument("--out-dir", default="/tmp/abismal-gui-snap")
     p.add_argument("--results", help="an abismal output directory (scenario=runner)")
-    p.add_argument("--epochs", type=int, default=10)
+    p.add_argument("--epochs", type=int, default=12)
+    p.add_argument("--delay", type=float, default=0.0,
+                   help="seconds between replayed log lines (scenario=replay)")
+    p.add_argument("--timeout", type=float, default=60.0)
     p.add_argument("--pdb", help="scenario=viewer")
     p.add_argument("--mtz", help="scenario=viewer")
     args = p.parse_args(argv)

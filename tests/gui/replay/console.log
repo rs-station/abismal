@@ -1,0 +1,97 @@
+2026-05-15 14:17:48.962093: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-05-15 14:17:48.970679: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:477] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1778869068.980776  603023 cuda_dnn.cc:8310] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1778869068.983724  603023 cuda_blas.cc:1418] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+2026-05-15 14:17:48.995392: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+I0000 00:00:1778869071.448782  603023 gpu_device.cc:2022] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 46732 MB memory:  -> device: 0, name: NVIDIA RTX A6000, pci bus id: 0000:01:00.0, compute capability: 8.6
+/opt/env/lib/python3.12/site-packages/tf_keras/src/saving/saving_api.py:164: UserWarning: You are saving a model that has not yet been built. It might not contain any weights yet. Consider building the model first by calling it on some data.
+  saving_lib.save_model(model, filepath)
+Epoch 1/12
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1778869082.158141  603095 service.cc:148] XLA service 0x7f74d812fe90 initialized for platform CUDA (this does not guarantee that XLA will be used). Devices:
+I0000 00:00:1778869082.158173  603095 service.cc:156]   StreamExecutor device (0): NVIDIA RTX A6000, Compute Capability 8.6
+2026-05-15 14:18:02.161238: I tensorflow/compiler/mlir/tensorflow/utils/dump_mlir_util.cc:268] disabling MLIR crash reproducer, set env var `MLIR_CRASH_REPRODUCER_DIRECTORY` to enable.
+I0000 00:00:1778869082.172490  603095 cuda_dnn.cc:529] Loaded cuDNN version 90300
+I0000 00:00:1778869082.207106  603095 device_compiler.h:188] Compiled cluster using XLA!  This line is logged at most once for the lifetime of the process.
+2026-05-15 14:18:27.354855: I tensorflow/core/framework/local_rendezvous.cc:405] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+	 [[{{node IteratorGetNext}}]]
+2026-05-15 14:18:27.354907: I tensorflow/core/framework/local_rendezvous.cc:405] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+	 [[{{node IteratorGetNext}}]]
+	 [[Func/variational_merging_model/image_scaler/RaggedConcat/assert_equal_3/Assert/AssertGuard/else/_11/input/_410/_104]]
+2026-05-15 14:18:27.354929: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 16341305036309135514
+2026-05-15 14:18:27.354937: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 15600676783373648316
+2026-05-15 14:18:27.354944: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 17626796889519112450
+2026-05-15 14:18:27.354952: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 3955248197814042500
+2026-05-15 14:18:27.354958: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 14194721036538756324
+2026-05-15 14:18:27.354965: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 11422543850882615400
+2026-05-15 14:18:27.354972: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 11971754984640416324
+2026-05-15 14:18:27.354996: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 1557058366465920134
+2026-05-15 14:18:27.355001: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 3769705723218743956
+2026-05-15 14:18:27.355007: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 16067273791013557492
+2026-05-15 14:18:27.355012: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 12379776537854531276
+2026-05-15 14:18:27.355018: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 14317954525752039436
+2026-05-15 14:18:27.355023: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 2507830733819091330
+2026-05-15 14:18:27.355029: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 2953807542301989844
+2026-05-15 14:18:27.355034: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 2476380220319292388
+2026-05-15 14:18:27.355040: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 474074486983532042
+2026-05-15 14:18:27.355045: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 17595184065799528500
+2026-05-15 14:18:27.355050: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 6917899332272252464
+2026-05-15 14:18:27.355056: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 9891989316712589106
+2026-05-15 14:18:27.355061: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 8337866426268330182
+2026-05-15 14:18:27.355067: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 13074669749262330242
+2026-05-15 14:18:27.355072: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 4294971676142201576
+2026-05-15 14:18:27.355077: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 799650985432919298
+2026-05-15 14:18:27.355083: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 11046461995009455702
+2026-05-15 14:18:27.355088: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 3026898642701368370
+2026-05-15 14:18:27.355093: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 542407816640511258
+2026-05-15 14:18:27.355099: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 18075427175910981602
+2026-05-15 14:18:27.355105: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 8870567352637145343
+2026-05-15 14:18:27.355111: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 2225261775548956967
+2026-05-15 14:18:27.355117: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 7520828280103101229
+2026-05-15 14:18:27.355122: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 10436977460588460025
+2026-05-15 14:18:27.355127: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 13943081910536677541
+2026-05-15 14:18:27.355131: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 13114205431361817045
+2026-05-15 14:18:27.355137: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 16622329515403545115
+2026-05-15 14:18:27.355149: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 17714516160052857789
+2026-05-15 14:18:27.355156: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 260233995105496723
+2026-05-15 14:18:27.355163: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 16812543785058455537
+2026-05-15 14:18:27.355170: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 2938395854197534523
+2026-05-15 14:18:27.355176: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 4631228946983497963
+2026-05-15 14:18:27.355182: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 16939482923395912703
+2026-05-15 14:18:27.355189: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 10809258878802310329
+2026-05-15 14:18:27.355200: I tensorflow/core/framework/local_rendezvous.cc:428] Local rendezvous send item cancelled. Key hash: 8637806275827660111
+2026-05-15 14:18:27.355207: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 2940869831571330157
+2026-05-15 14:18:27.355214: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 10329737567771809663
+2026-05-15 14:18:27.355220: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 16778244840547997765
+2026-05-15 14:18:27.355227: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 15334557949584783699
+2026-05-15 14:18:27.355233: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 4144339621564863533
+2026-05-15 14:18:27.355240: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 6827428641979471647
+2026-05-15 14:18:27.355248: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 5756451756488810019
+2026-05-15 14:18:27.355269: I tensorflow/core/framework/local_rendezvous.cc:424] Local rendezvous recv item cancelled. Key hash: 15901529223717559881
+Freezing intensity standardization layer...
+Freezing metadata standardization layer...
+1000/1000 - 35s - loss: 34.6143 - NLL: 30.9167 - KL: 0.6009 - wCCpred: 0.4231 - CCpred: 0.3712 - KL_Σ: 3.0966 - Σ_mean: 0.1569 - Σ_std: 0.0960 - |∇s|: 2.0462 - |∇q|: 9.1757e-04 - val_loss: 27.6564 - val_NLL: 22.9896 - val_KL: 1.3566 - val_wCCpred: 0.7309 - val_CCpred: 0.6421 - val_KL_Σ: 3.3102 - val_Σ_mean: 0.2055 - val_Σ_std: 0.1183 - 35s/epoch - 35ms/step
+Epoch 2/12
+1000/1000 - 23s - loss: 21.7564 - NLL: 15.5912 - KL: 2.4381 - wCCpred: 0.8754 - CCpred: 0.8385 - KL_Σ: 3.7270 - Σ_mean: 0.1793 - Σ_std: 0.1058 - |∇s|: 7.3628 - |∇q|: 0.0018 - val_loss: 18.1742 - val_NLL: 11.2057 - val_KL: 3.0517 - val_wCCpred: 0.9375 - val_CCpred: 0.9264 - val_KL_Σ: 3.9168 - val_Σ_mean: 0.1753 - val_Σ_std: 0.1007 - 23s/epoch - 23ms/step
+Epoch 3/12
+1000/1000 - 23s - loss: 15.9339 - NLL: 8.7855 - KL: 3.1404 - wCCpred: 0.9544 - CCpred: 0.9507 - KL_Σ: 4.0080 - Σ_mean: 0.1890 - Σ_std: 0.1064 - |∇s|: 1.1585 - |∇q|: 0.0023 - val_loss: 14.6999 - val_NLL: 7.5010 - val_KL: 3.1518 - val_wCCpred: 0.9637 - val_CCpred: 0.9605 - val_KL_Σ: 4.0472 - val_Σ_mean: 0.2068 - val_Σ_std: 0.1138 - 23s/epoch - 23ms/step
+Epoch 4/12
+1000/1000 - 24s - loss: 13.3401 - NLL: 6.2135 - KL: 3.1144 - wCCpred: 0.9677 - CCpred: 0.9682 - KL_Σ: 4.0122 - Σ_mean: 0.2187 - Σ_std: 0.1202 - |∇s|: 4.9402 - |∇q|: 0.0029 - val_loss: 12.7305 - val_NLL: 5.7043 - val_KL: 3.0724 - val_wCCpred: 0.9713 - val_CCpred: 0.9703 - val_KL_Σ: 3.9538 - val_Σ_mean: 0.2261 - val_Σ_std: 0.1247 - 24s/epoch - 24ms/step
+Epoch 5/12
+1000/1000 - 24s - loss: 11.9142 - NLL: 4.9177 - KL: 3.0437 - wCCpred: 0.9723 - CCpred: 0.9743 - KL_Σ: 3.9528 - Σ_mean: 0.2527 - Σ_std: 0.1348 - |∇s|: 2.0872 - |∇q|: 0.0031 - val_loss: 11.6686 - val_NLL: 4.7564 - val_KL: 3.0108 - val_wCCpred: 0.9728 - val_CCpred: 0.9745 - val_KL_Σ: 3.9014 - val_Σ_mean: 0.2692 - val_Σ_std: 0.1420 - 24s/epoch - 24ms/step
+Epoch 6/12
+1000/1000 - 24s - loss: 11.0441 - NLL: 4.1639 - KL: 3.0013 - wCCpred: 0.9747 - CCpred: 0.9772 - KL_Σ: 3.8790 - Σ_mean: 0.2883 - Σ_std: 0.1487 - |∇s|: 3.8790 - |∇q|: 0.0036 - val_loss: 10.9697 - val_NLL: 4.1514 - val_KL: 2.9759 - val_wCCpred: 0.9732 - val_CCpred: 0.9768 - val_KL_Σ: 3.8423 - val_Σ_mean: 0.3061 - val_Σ_std: 0.1531 - 24s/epoch - 24ms/step
+Epoch 7/12
+1000/1000 - 25s - loss: 10.4821 - NLL: 3.6956 - KL: 2.9816 - wCCpred: 0.9759 - CCpred: 0.9788 - KL_Σ: 3.8049 - Σ_mean: 0.3244 - Σ_std: 0.1622 - |∇s|: 1.6868 - |∇q|: 0.0035 - val_loss: 10.5949 - val_NLL: 3.8063 - val_KL: 2.9717 - val_wCCpred: 0.9774 - val_CCpred: 0.9781 - val_KL_Σ: 3.8169 - val_Σ_mean: 0.3437 - val_Σ_std: 0.1647 - 25s/epoch - 25ms/step
+Epoch 8/12
+1000/1000 - 24s - loss: 10.0933 - NLL: 3.3847 - KL: 2.9724 - wCCpred: 0.9764 - CCpred: 0.9798 - KL_Σ: 3.7362 - Σ_mean: 0.3606 - Σ_std: 0.1752 - |∇s|: 0.6635 - |∇q|: 0.0038 - val_loss: 10.3485 - val_NLL: 3.6679 - val_KL: 2.9606 - val_wCCpred: 0.9750 - val_CCpred: 0.9788 - val_KL_Σ: 3.7200 - val_Σ_mean: 0.3768 - val_Σ_std: 0.1839 - 24s/epoch - 24ms/step
+Epoch 9/12
+1000/1000 - 24s - loss: 9.8371 - NLL: 3.2017 - KL: 2.9633 - wCCpred: 0.9767 - CCpred: 0.9804 - KL_Σ: 3.6720 - Σ_mean: 0.3964 - Σ_std: 0.1876 - |∇s|: 1.3157 - |∇q|: 0.0037 - val_loss: 10.1350 - val_NLL: 3.6012 - val_KL: 2.9517 - val_wCCpred: 0.9747 - val_CCpred: 0.9787 - val_KL_Σ: 3.5822 - val_Σ_mean: 0.4107 - val_Σ_std: 0.1964 - 24s/epoch - 24ms/step
+Epoch 10/12
+1000/1000 - 24s - loss: 9.6265 - NLL: 3.0590 - KL: 2.9507 - wCCpred: 0.9770 - CCpred: 0.9809 - KL_Σ: 3.6168 - Σ_mean: 0.4314 - Σ_std: 0.1995 - |∇s|: 3.5093 - |∇q|: 0.0038 - val_loss: 9.9351 - val_NLL: 3.3987 - val_KL: 2.9374 - val_wCCpred: 0.9756 - val_CCpred: 0.9800 - val_KL_Σ: 3.5990 - val_Σ_mean: 0.4403 - val_Σ_std: 0.2017 - 24s/epoch - 24ms/step
+Epoch 11/12
+1000/1000 - 24s - loss: 9.4694 - NLL: 2.9657 - KL: 2.9350 - wCCpred: 0.9771 - CCpred: 0.9812 - KL_Σ: 3.5687 - Σ_mean: 0.4653 - Σ_std: 0.2109 - |∇s|: 0.8942 - |∇q|: 0.0039 - val_loss: 9.8383 - val_NLL: 3.3178 - val_KL: 2.9229 - val_wCCpred: 0.9741 - val_CCpred: 0.9798 - val_KL_Σ: 3.5976 - val_Σ_mean: 0.4837 - val_Σ_std: 0.2099 - 24s/epoch - 24ms/step
+Epoch 12/12
+1000/1000 - 24s - loss: 9.3260 - NLL: 2.8796 - KL: 2.9184 - wCCpred: 0.9774 - CCpred: 0.9815 - KL_Σ: 3.5280 - Σ_mean: 0.4978 - Σ_std: 0.2217 - |∇s|: 1.4162 - |∇q|: 0.0036 - val_loss: 9.6198 - val_NLL: 3.2105 - val_KL: 2.9050 - val_wCCpred: 0.9709 - val_CCpred: 0.9803 - val_KL_Σ: 3.5043 - val_Σ_mean: 0.5086 - val_Σ_std: 0.2264 - 24s/epoch - 24ms/step

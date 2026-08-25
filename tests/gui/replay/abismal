@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""A stand-in for the real `abismal` console script.
+
+`AbismalRunner.start()` runs ``['abismal', *args, '--keras-verbosity', '2']`` resolved
+from PATH, so putting this directory first on PATH makes the runner launch it instead
+-- and everything else about the launch stays real: the actual subprocess.Popen call,
+start_new_session, the stdout redirect into console.log, the pid file, the exit code,
+and _pid_is_abismal's /proc/<pid>/cmdline check, which matches because this script is
+named `abismal`.
+
+That last point is why this exists rather than a Popen mock. is_running, the _tail exit
+condition, _schedule_poll's early return and the pid-file lifecycle are all driven by
+that /proc check, so mocking Popen would force mocking _pid_is_abismal too, and most of
+the behaviour under test would be stub.
+
+Stdlib only: it starts in tens of milliseconds and never imports TensorFlow.
+
+Behaviour is entirely env-driven so one file covers every scenario:
+
+    ABISMAL_REPLAY_CONSOLE     console log to replay to stdout
+    ABISMAL_REPLAY_DELAY       seconds between lines (default 0)
+    ABISMAL_REPLAY_OUTDIR      where to write history.csv and per-epoch dirs
+    ABISMAL_REPLAY_HISTORY     history.csv to grow one row per `Epoch N/M` line
+    ABISMAL_REPLAY_RESULTS     directory copied to <prefix>_0_asu_0_epoch_<N>/ per epoch
+    ABISMAL_REPLAY_PREFIX      that prefix, default 'torchref'
+    ABISMAL_REPLAY_EXIT        exit code, default 0
+    ABISMAL_REPLAY_IGNORE_SIGTERM  install a SIGTERM handler that ignores it
+    ABISMAL_REPLAY_HANG        sleep forever after replaying
+"""
+import os
+import re
+import shutil
+import signal
+import sys
+import time
+from pathlib import Path
+
+EPOCH = re.compile(r"^Epoch (\d+)/(\d+)")
+
+
+def env(name, default=None):
+    return os.environ.get(f"ABISMAL_REPLAY_{name}", default)
+
+
+def main():
+    if env("IGNORE_SIGTERM"):
+        # Proves the stop path escalates: SIGTERM is sent first, then SIGKILL after
+        # 20 x 0.5 s. Nothing else reaches that branch.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+    console = env("CONSOLE")
+    delay = float(env("DELAY", "0") or 0)
+    out_dir = Path(env("OUTDIR", ".") or ".")
+    history_src = env("HISTORY")
+    results_src = env("RESULTS")
+    prefix = env("PREFIX", "torchref")
+
+    history_rows = None
+    if history_src:
+        history_rows = Path(history_src).read_text().splitlines(keepends=True)
+        # Header now; a data row per epoch as we go, so the plot genuinely grows during
+        # the run rather than appearing complete at the end.
+        (out_dir / "history.csv").write_text(history_rows[0])
+
+    if console:
+        for line in Path(console).read_text().splitlines(keepends=True):
+            sys.stdout.write(line)
+            sys.stdout.flush()  # PYTHONUNBUFFERED is set by the runner, belt and braces
+
+            match = EPOCH.match(line)
+            if match:
+                epoch = int(match.group(1))
+                # Row 0 is the header and row 1 is abismal's `Epoch 0` row (the
+                # pre-training callback), so the row for `Epoch N` is at N+1. Indexing
+                # by `epoch` alone would lag the progress bar by one and stop the plot
+                # an epoch short.
+                if history_rows and epoch + 1 < len(history_rows):
+                    with open(out_dir / "history.csv", "a") as handle:
+                        handle.write(history_rows[epoch + 1])
+                if results_src:
+                    target = out_dir / f"{prefix}_0_asu_0_epoch_{epoch}"
+                    if not target.exists():
+                        shutil.copytree(results_src, target)
+            if delay:
+                time.sleep(delay)
+
+    if env("HANG"):
+        while True:
+            time.sleep(0.1)
+
+    return int(env("EXIT", "0") or 0)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
