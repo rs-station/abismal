@@ -1,0 +1,248 @@
+"""The whole runner path, driven by a replayed abismal.
+
+These launch a real subprocess through AbismalRunner.start(). Only the executable is
+substituted -- tests/gui/replay/abismal replays a captured console log and grows a
+history.csv as it goes. Everything else is the shipped code: subprocess.Popen,
+start_new_session, the stdout redirect into console.log, the pid file, /proc liveness,
+the exit code, the tailer thread and the poll timer.
+
+That is deliberate. is_running, _tail's exit condition, _schedule_poll's early return
+and the pid-file lifecycle are all driven by _pid_is_abismal reading
+/proc/<pid>/cmdline, so a Popen mock would force mocking that too and most of what
+these tests exist to cover would be stub talking to stub. The stub's cmdline contains
+`abismal`, so the real check passes for the right reason.
+"""
+import os
+import time
+from pathlib import Path
+
+import pytest
+
+import gui_harness as H
+
+pytestmark = pytest.mark.skipif(
+    not Path("/proc").is_dir(),
+    reason="_pid_is_abismal reads /proc/<pid>/cmdline",
+)
+
+
+def wait_until(predicate, timeout=15.0, interval=0.05):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return False
+
+
+@pytest.fixture
+def replay(tmp_path, runner_factory):
+    """Start a replay and register it for teardown."""
+    def start(**kwargs):
+        kwargs.setdefault("results", H.make_results_template(tmp_path / "_template"))
+        runner = H.start_replay(tmp_path / "run", **kwargs)
+        return runner_factory.adopt(runner)
+
+    return start
+
+
+# ---------------------------------------------------------------------------
+# the whole path
+# ---------------------------------------------------------------------------
+
+def test_a_complete_run(replay):
+    """The flagship: launch, tail, progress, history, results, exit -- in a second or
+    two, with no GPU and no merge job."""
+    runner = replay(total_epochs=12)
+    H.wait_for_replay(runner, timeout=30)
+
+    log = H.log_text(runner)
+    assert "oneDNN custom operations are on" in log      # first line of the fixture
+    assert "Epoch 12/12" in log                          # last epoch
+    assert log.index("Epoch 1/12") < log.index("Epoch 12/12")
+
+    assert runner.progress_widget.max == 12
+    assert runner.progress_widget.value == 12
+    assert runner.progress_widget.bar_style == "success"
+    assert runner.progress_label.value == "Finished"
+    assert runner.stop_button.disabled is True
+
+    pngs = H.extract_pngs(runner.history_widget)
+    assert pngs and pngs[0][1][:4] == b"\x89PNG"
+
+    pdb_file, _ = runner._find_latest_phenix_results()
+    assert pdb_file and "epoch_12" in pdb_file
+
+
+def test_the_log_is_escaped_on_the_way_in(replay):
+    """The captured log contains tab-indented `[[{{node IteratorGetNext}}]]` blocks."""
+    runner = replay()
+    H.wait_for_replay(runner, timeout=30)
+
+    assert "[[{{node" in H.log_text(runner)
+    assert "&lt;" in runner.log_widget.value or "<pre" in runner.log_widget.value
+
+
+def test_output_streams_rather_than_arriving_at_the_end(replay):
+    """This is the automated form of "did it launch and are the logs moving?".
+
+    Sampling from the test thread while the child is still writing shows the log
+    growing and the progress bar advancing.
+    """
+    runner = replay(delay=0.03, total_epochs=12)
+
+    samples = []
+    for _ in range(12):
+        time.sleep(0.25)
+        samples.append((runner.progress_widget.value, len(runner.log_widget.value)))
+        if not runner.is_running:
+            break
+    H.wait_for_replay(runner, timeout=30)
+
+    log_lengths = [n for _, n in samples]
+    progress = [p for p, _ in samples]
+    assert log_lengths[-1] > log_lengths[0], "the log never grew"
+    assert all(b >= a for a, b in zip(log_lengths, log_lengths[1:])), "log shrank"
+    assert all(b >= a for a, b in zip(progress, progress[1:])), "progress went backwards"
+
+
+def test_the_history_plot_is_redrawn_during_the_run(replay):
+    """The stub appends a history row per epoch, so the plot has to change mid-run."""
+    runner = replay(delay=0.03)
+
+    seen = set()
+    for _ in range(12):
+        time.sleep(0.25)
+        for _, png in H.extract_pngs(runner.history_widget):
+            seen.add(len(png))
+        if not runner.is_running:
+            break
+    H.wait_for_replay(runner, timeout=30)
+
+    assert len(seen) > 1, "the plot never changed while the job was running"
+
+
+def test_per_epoch_results_are_picked_up_as_they_appear(replay):
+    runner = replay(delay=0.02)
+    H.wait_for_replay(runner, timeout=30)
+
+    assert runner._viewer_initialized
+    assert runner._last_pdb is not None
+    assert "Epoch 12" in runner.viewer_label.value
+
+
+def test_the_first_epoch_renders_an_iframe_and_later_ones_reload_it(replay):
+    """Re-embedding the viewer per epoch would reset the camera, so subsequent epochs
+    postMessage into the existing iframe instead."""
+    runner = replay(delay=0.02)
+    H.wait_for_replay(runner, timeout=30)
+
+    viewer_payloads = [
+        item.get("data", {}) for item in (runner.viewer_widget.outputs or ())
+    ]
+    assert any("text/html" in payload for payload in viewer_payloads)
+
+    scripts = [js for _, js in H.extract_scripts(runner._js_widget)]
+    assert scripts, "no reload payload was emitted for the later epochs"
+    assert "postMessage" in scripts[0]
+    assert runner._viewer_id in scripts[0]
+
+
+# ---------------------------------------------------------------------------
+# how a run ends
+# ---------------------------------------------------------------------------
+
+def test_a_failing_run_is_reported_as_failed(replay):
+    runner = replay(exit_code=1)
+    H.wait_for_replay(runner, timeout=30)
+
+    assert runner.progress_widget.bar_style == "danger"
+    assert "Failed" in runner.progress_label.value
+    assert "1" in runner.progress_label.value
+
+
+def test_the_pid_file_is_written_then_cleaned_up(replay):
+    runner = replay(delay=0.03)
+    assert wait_until(lambda: os.path.exists(runner.pid_file)), "no pid file appeared"
+
+    H.wait_for_replay(runner, timeout=30)
+
+    assert not os.path.exists(runner.pid_file)
+
+
+def test_stop_terminates_a_running_job(replay):
+    runner = replay(hang=True)
+    assert wait_until(lambda: runner.is_running), "the child never came up"
+
+    runner.stop_button.click()
+
+    assert wait_until(lambda: not runner.is_running, timeout=15)
+    H.wait_for_replay(runner, timeout=15)
+    assert runner.stop_button.disabled is True
+
+
+def test_stop_escalates_to_sigkill(replay):
+    """The stop path sends SIGTERM, waits 20 x 0.5 s, then SIGKILL. A child that
+    ignores SIGTERM is the only way to reach the second half, and the 10 s wait is
+    hard-coded, so this is the one test here that cannot be fast."""
+    runner = replay(hang=True, ignore_sigterm=True)
+    assert wait_until(lambda: runner.is_running), "the child never came up"
+
+    runner.stop_button.click()
+
+    assert wait_until(lambda: not runner.is_running, timeout=25)
+
+
+# ---------------------------------------------------------------------------
+# attach
+# ---------------------------------------------------------------------------
+
+def test_attach_reconnects_to_a_job_this_process_did_not_start(replay, tmp_path):
+    """What happens when the kernel is restarted under a running job."""
+    from abismal.gui.runner import AbismalRunner
+
+    original = replay(hang=True, delay=0.03)
+    assert wait_until(lambda: os.path.exists(original.pid_file))
+    original.shutdown()          # stop monitoring, leave the child running
+
+    attached = AbismalRunner.attach(str(tmp_path / "run"))
+    assert attached is not None
+    assert attached._pid == original._pid
+
+    attached.resume()
+    assert wait_until(lambda: "Epoch" in H.log_text(attached), timeout=20)
+
+    attached.shutdown()
+    original.stop_button.click()
+    wait_until(lambda: not original.is_running, timeout=15)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="_tail opens console.log with no existence guard, so attaching to a job "
+           "whose log is not there yet kills the tailer daemon thread with an "
+           "unhandled FileNotFoundError -- silently, since nothing joins it.",
+)
+def test_attach_survives_a_missing_console_log(tmp_path, monkeypatch, runner_factory):
+    """The thread dying is itself the bug, so this has to watch for the exception.
+
+    Asserting the thread is no longer alive would pass either way -- it is not alive
+    precisely because it crashed. threading.excepthook is what catches that; without
+    it the traceback goes nowhere, since the thread is a daemon nobody joins.
+    """
+    import threading
+
+    from abismal.gui.runner import AbismalRunner
+
+    (tmp_path / "abismal.pid").write_text("12345")
+    monkeypatch.setattr(AbismalRunner, "_pid_is_abismal", staticmethod(lambda pid: True))
+
+    crashes = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: crashes.append(args))
+
+    runner = runner_factory.adopt(AbismalRunner.attach(str(tmp_path)))
+    runner.resume()
+    wait_until(lambda: not runner._tailer_thread.is_alive(), timeout=5)
+    runner.shutdown()
+
+    assert not crashes, f"tailer thread died: {crashes[0].exc_value!r}"
