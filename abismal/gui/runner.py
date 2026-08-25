@@ -303,6 +303,18 @@ class AbismalRunner:
 
     @property
     def is_running(self):
+        # For a child we launched, Popen is authoritative. The /proc check below has a
+        # window it cannot see through: between fork and exec, /proc/<pid>/cmdline is
+        # momentarily zero-length, so `b'abismal' in cmdline` is False for a process
+        # that is very much alive. The tailer reads that as "the run is over", drains a
+        # console.log nothing has been written to yet, and stops -- leaving an empty log
+        # for a job that ran. Measured at roughly 1 run in 30 for a job that finishes in
+        # ~50 ms, which is to say precisely the fast-failing runs whose log matters most.
+        if self._process is not None:
+            return self._process.poll() is None
+        # An attached job is not our child, so /proc is all there is. The window is not
+        # reachable there anyway: attach() only ever sees a process that has long since
+        # exec'd.
         return self._pid is not None and self._pid_is_abismal(self._pid)
 
     def to_widget(self):
