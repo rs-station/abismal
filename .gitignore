@@ -6,7 +6,11 @@
 
 # Coverage and build/log artifacts
 coverage.xml
-.coverage*
+# Coverage *data* files, including the per-process ones parallel mode writes.
+# Deliberately not `.coverage*`, which also swallowed `.coveragerc` -- the config
+# file that addopts references and that therefore has to be committed.
+.coverage
+.coverage.*
 *.log
 build/
 dist/

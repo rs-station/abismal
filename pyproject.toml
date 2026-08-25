@@ -79,6 +79,13 @@ addopts = "-n auto --cov=abismal --cov-config=.coveragerc --cov-report xml"
 testpaths = [
     "tests",
 ]
+# The GUI test suite and the developer snapshot CLI share one harness. Putting
+# devtools/ on the path here lets tests import it without sys.path juggling in a
+# conftest, and keeps it out of the wheel -- `packages.find` below names abismal*
+# explicitly, so a top-level devtools/ is not packaged.
+pythonpath = [
+    "devtools",
+]
 
 [tool.setuptools.packages.find]
 # Explicit, not auto-discovered. This is a flat layout, so setuptools's default
