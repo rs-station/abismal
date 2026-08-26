@@ -1,0 +1,11 @@
+# Local-only browser checks for the notebook GUI. NOT in pyproject.toml, and not
+# installed in CI: these drive a real browser, and the plan is to keep CI headless and
+# dependency-light.
+#
+#   pip install -r devtools/requirements-browser.txt
+#   playwright install chromium          # ~150 MB, once
+#
+# Playwright ships its own Chromium, so it does not care that the machine has no
+# system chrome. Everything under devtools/ sits outside pytest's testpaths, so these
+# cannot be collected by accident.
+playwright>=1.40
