@@ -142,40 +142,23 @@ def test_the_loss_panel_is_log_scaled(runner_factory, tmp_path):
     assert cc_ax.get_yscale() == "linear"   # CC runs through zero and near it
 
 
-def test_the_all_nan_epoch_zero_row_does_not_cost_the_log_axis(runner_factory,
-                                                               tmp_path):
-    """abismal's pre-training callback writes a row of NaN before epoch 1.
-    Matplotlib draws that as a gap on either scale; treating it as a reason to
-    fall back to linear would mean no run ever got a log axis."""
-    from abismal.gui.runner import _base_metrics, _is_loss_term, _log_scale_is_safe
-
+def test_a_negative_nll_does_not_cost_the_log_axis(runner_factory, tmp_path):
+    """NLL goes negative routinely. Matplotlib clips those points and draws the
+    rest, which is worth more than putting everything on a linear axis to keep
+    them -- and it never raises, even with nothing positive left to draw."""
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
     df = pd.read_csv(io.StringIO(HISTORY))
-    assert df.iloc[0].drop("Epoch").isna().all()
+    df.loc[2, "NLL"] = -4.0
+    df.loc[2, "val_NLL"] = -1.5
+    df.to_csv(out_dir / "history.csv", index=False)
 
-    assert _log_scale_is_safe(df, _base_metrics(df, _is_loss_term))
+    runner = runner_factory(out_dir=str(out_dir))
+    loss_ax, _ = _history_axes(runner)
 
-
-def test_a_non_positive_value_falls_back_to_linear():
-    """A log axis drops non-positive points silently and errors when none are
-    left. A run that has gone wrong is exactly when the plot is worth reading,
-    so show the evidence rather than hide it."""
-    from abismal.gui.runner import _log_scale_is_safe
-
-    df = pd.read_csv(io.StringIO(HISTORY))
-    assert _log_scale_is_safe(df, ["loss"])
-
-    df.loc[2, "val_loss"] = -0.5
-    assert not _log_scale_is_safe(df, ["loss"])
-
-
-def test_a_metric_that_is_all_nan_is_not_log_scaled():
-    from abismal.gui.runner import _log_scale_is_safe
-
-    df = pd.read_csv(io.StringIO(HISTORY))
-    df["loss"] = float("nan")
-    df["val_loss"] = float("nan")
-
-    assert not _log_scale_is_safe(df, ["loss"])
+    assert loss_ax.get_yscale() == "log"
+    runner._update_history()
+    assert png_of(runner.history_widget) is not None
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,6 @@ import uuid
 from pathlib import Path
 import ipywidgets as widgets
 from IPython.display import clear_output, display
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -45,24 +44,6 @@ def _is_loss_term(column):
     return 'loss' in column.lower() or column == 'NLL' or column.startswith('KL')
 
 
-def _log_scale_is_safe(df, metrics):
-    """Whether these metrics and their val_ partners can go on a log axis.
-
-    A log axis silently drops non-positive points, and errors outright when none
-    are left. NLL and the KL terms are positive in a healthy run, but nothing
-    guarantees it for one that has gone wrong -- which is exactly when the plot
-    is worth reading, so fall back to linear rather than hide the evidence.
-
-    NaN is not a reason to: the `Epoch 0` row abismal writes from its
-    pre-training callback is entirely NaN, and matplotlib draws that as a gap on
-    either scale.
-    """
-    columns = [c for m in metrics for c in (m, f'val_{m}') if c in df.columns]
-    values = df[columns].to_numpy(dtype=float)
-    finite = values[np.isfinite(values)]
-    return bool(finite.size and (finite > 0).all())
-
-
 def _history_figure(df):
     """The training-history figure for `df`, or None if there is nothing to draw.
 
@@ -90,8 +71,11 @@ def _history_figure(df):
     for ax, (metrics, title, ylabel, log) in zip(axes, panels):
         _plot_metrics(ax, df, metrics)
         # The loss and its terms span orders of magnitude; CC runs through zero
-        # and near it, where a log axis is meaningless.
-        if log and _log_scale_is_safe(df, metrics):
+        # and near it, where a log axis is meaningless. NLL goes negative often
+        # enough that those points are simply not drawn -- matplotlib clips them
+        # and carries on, and seeing the rest on a log axis is worth more than
+        # seeing all of it on a linear one.
+        if log:
             ax.set_yscale('log')
         ax.set_xlabel('Epoch')
         ax.set_title(title)
