@@ -7,6 +7,7 @@ dash pattern are the point and pixels are a poor way to assert on them.
 """
 import base64
 import io
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -14,10 +15,13 @@ import pytest
 import gui_harness as H
 
 
-HISTORY = """Epoch,loss,val_loss,CCpred,val_CCpred,wCCpred,val_wCCpred
-1,35.0,27.8,0.37,0.64,0.72,0.73
-2,21.6,18.4,0.83,0.87,0.94,0.95
-3,16.1,14.2,0.95,0.95,0.96,0.96
+# The shape abismal actually writes, down to the all-NaN row its pre-training
+# callback emits before epoch 1.
+HISTORY = """Epoch,loss,val_loss,NLL,val_NLL,KL,val_KL,KL_Σ,val_KL_Σ,CCpred,val_CCpred,wCCpred,val_wCCpred
+0,,,,,,,,,,,,
+1,35.0,27.8,30.9,22.9,0.61,1.36,3.10,3.31,0.37,0.64,0.72,0.73
+2,21.6,18.4,15.4,11.8,2.55,3.02,3.62,3.71,0.83,0.87,0.94,0.95
+3,16.1,14.2,9.10,8.30,3.31,3.30,3.85,3.88,0.95,0.95,0.96,0.96
 """
 
 PEAKS_HEADER = (
@@ -102,6 +106,122 @@ def test_val_columns_are_not_treated_as_metrics_of_their_own():
     df = pd.read_csv(io.StringIO(HISTORY))
     assert _base_metrics(df, lambda c: "loss" in c.lower()) == ["loss"]
     assert _base_metrics(df, lambda c: "CC" in c) == ["CCpred", "wCCpred"]
+
+
+# ---------------------------------------------------------------------------
+# the loss panel: every term of the objective, on a log axis
+# ---------------------------------------------------------------------------
+
+def test_the_loss_panel_carries_the_terms_the_loss_is_made_of():
+    """NLL and the KL terms are what `loss` sums to, and the only way to see
+    which one a plateau or a divergence is coming from."""
+    from abismal.gui.runner import _base_metrics, _is_loss_term
+
+    df = pd.read_csv(io.StringIO(HISTORY))
+
+    assert _base_metrics(df, _is_loss_term) == ["loss", "NLL", "KL", "KL_Σ"]
+
+
+def test_the_cc_metrics_stay_out_of_the_loss_panel():
+    from abismal.gui.runner import _is_loss_term
+
+    for column in ("CCpred", "wCCpred", "Σ_mean", "Σ_std", "Epoch",
+                   "Time (s)", "FB Used (MiB)"):
+        assert not _is_loss_term(column), column
+
+
+def test_the_loss_panel_is_log_scaled(runner_factory, tmp_path):
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
+    (out_dir / "history.csv").write_text(HISTORY)
+    runner = runner_factory(out_dir=str(out_dir))
+
+    loss_ax, cc_ax = _history_axes(runner)
+
+    assert loss_ax.get_yscale() == "log"
+    assert cc_ax.get_yscale() == "linear"   # CC runs through zero and near it
+
+
+def test_the_all_nan_epoch_zero_row_does_not_cost_the_log_axis(runner_factory,
+                                                               tmp_path):
+    """abismal's pre-training callback writes a row of NaN before epoch 1.
+    Matplotlib draws that as a gap on either scale; treating it as a reason to
+    fall back to linear would mean no run ever got a log axis."""
+    from abismal.gui.runner import _base_metrics, _is_loss_term, _log_scale_is_safe
+
+    df = pd.read_csv(io.StringIO(HISTORY))
+    assert df.iloc[0].drop("Epoch").isna().all()
+
+    assert _log_scale_is_safe(df, _base_metrics(df, _is_loss_term))
+
+
+def test_a_non_positive_value_falls_back_to_linear():
+    """A log axis drops non-positive points silently and errors when none are
+    left. A run that has gone wrong is exactly when the plot is worth reading,
+    so show the evidence rather than hide it."""
+    from abismal.gui.runner import _log_scale_is_safe
+
+    df = pd.read_csv(io.StringIO(HISTORY))
+    assert _log_scale_is_safe(df, ["loss"])
+
+    df.loc[2, "val_loss"] = -0.5
+    assert not _log_scale_is_safe(df, ["loss"])
+
+
+def test_a_metric_that_is_all_nan_is_not_log_scaled():
+    from abismal.gui.runner import _log_scale_is_safe
+
+    df = pd.read_csv(io.StringIO(HISTORY))
+    df["loss"] = float("nan")
+    df["val_loss"] = float("nan")
+
+    assert not _log_scale_is_safe(df, ["loss"])
+
+
+# ---------------------------------------------------------------------------
+# the legend
+# ---------------------------------------------------------------------------
+
+def test_the_legend_names_each_metric_once(runner_factory, tmp_path):
+    """A val_ line has no colour of its own -- it is its metric's colour, dashed
+    -- so listing both halves says the same thing twice, and doubled the legend
+    when NLL and the KL terms joined the panel."""
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
+    (out_dir / "history.csv").write_text(HISTORY)
+    runner = runner_factory(out_dir=str(out_dir))
+
+    loss_ax, _ = _history_axes(runner)
+    labels = [text.get_text() for text in loss_ax.get_legend().get_texts()]
+
+    assert labels == ["loss", "NLL", "KL", "KL_Σ", "training", "validation"]
+
+
+def test_the_lines_keep_their_real_labels(runner_factory, tmp_path):
+    """Only what the legend is built from is filtered; the artists are untouched,
+    so the val_ lines stay identifiable."""
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
+    (out_dir / "history.csv").write_text(HISTORY)
+    runner = runner_factory(out_dir=str(out_dir))
+
+    loss_ax, _ = _history_axes(runner)
+    labels = {line.get_label() for line in loss_ax.get_lines()}
+
+    assert {"loss", "val_loss", "KL_Σ", "val_KL_Σ"} <= labels
+
+
+def _history_axes(runner):
+    """The loss and CC axes, from the same function that draws them for real.
+
+    _update_history hands its widget a PNG, so asserting on scales and legends
+    means holding the figure itself -- and building an equivalent one here would
+    be free to drift from the one that ships.
+    """
+    from abismal.gui.runner import _history_figure
+
+    df = pd.read_csv(Path(runner.out_dir) / "history.csv")
+    return _history_figure(df).get_axes()
 
 
 def test_the_history_figure_reaches_the_widget(runner_factory, tmp_path):

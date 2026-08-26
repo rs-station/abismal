@@ -107,17 +107,25 @@ def test_output_streams_rather_than_arriving_at_the_end(replay):
 
 
 def test_the_history_plot_is_redrawn_during_the_run(replay):
-    """The stub appends a history row per epoch, so the plot has to change mid-run."""
-    runner = replay(delay=0.03)
+    """The stub appends a history row per epoch, so the plot has to change mid-run.
+
+    Sampled until a second render appears rather than across a fixed window: one
+    figure costs ~80 ms to draw and the replay takes a couple of seconds, so a
+    window wide enough on an idle machine is a coin toss on a loaded one.
+    """
+    runner = replay(delay=0.05)
 
     seen = set()
-    for _ in range(12):
-        time.sleep(0.25)
+    deadline = time.time() + 30
+    while time.time() < deadline and len(seen) < 2:
         for _, png in H.extract_pngs(runner.history_widget):
             seen.add(len(png))
-        if not runner.is_running:
+        if not runner.is_running and seen:
             break
+        time.sleep(0.05)
     H.wait_for_replay(runner, timeout=30)
+    for _, png in H.extract_pngs(runner.history_widget):
+        seen.add(len(png))
 
     assert len(seen) > 1, "the plot never changed while the job was running"
 

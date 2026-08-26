@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 import ipywidgets as widgets
 from IPython.display import clear_output, display
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -32,6 +33,96 @@ def _mtime(path):
         return os.path.getmtime(path)
     except OSError:
         return None
+
+
+def _is_loss_term(column):
+    """The objective and the pieces it is made of.
+
+    NLL and the KL terms are what `loss` is the sum of, so they belong on the
+    same axes as it -- they are the only way to see which term a plateau or a
+    divergence is coming from. KL_Sigma is matched by the KL prefix.
+    """
+    return 'loss' in column.lower() or column == 'NLL' or column.startswith('KL')
+
+
+def _log_scale_is_safe(df, metrics):
+    """Whether these metrics and their val_ partners can go on a log axis.
+
+    A log axis silently drops non-positive points, and errors outright when none
+    are left. NLL and the KL terms are positive in a healthy run, but nothing
+    guarantees it for one that has gone wrong -- which is exactly when the plot
+    is worth reading, so fall back to linear rather than hide the evidence.
+
+    NaN is not a reason to: the `Epoch 0` row abismal writes from its
+    pre-training callback is entirely NaN, and matplotlib draws that as a gap on
+    either scale.
+    """
+    columns = [c for m in metrics for c in (m, f'val_{m}') if c in df.columns]
+    values = df[columns].to_numpy(dtype=float)
+    finite = values[np.isfinite(values)]
+    return bool(finite.size and (finite > 0).all())
+
+
+def _history_figure(df):
+    """The training-history figure for `df`, or None if there is nothing to draw.
+
+    Separate from _update_history so tests can assert on the axes -- scales,
+    legends, line styles -- rather than on the PNG it ends up as. Rebuilding an
+    equivalent figure in the tests instead would be free to drift from this one.
+
+    Call it under _FIGURE_LOCK: matplotlib's unsafe state is global.
+    """
+    from matplotlib.figure import Figure
+
+    panels = [
+        (_base_metrics(df, _is_loss_term), 'Loss', 'Loss', True),
+        (_base_metrics(df, lambda c: 'CC' in c), 'CC', None, False),
+    ]
+    panels = [p for p in panels if p[0]]
+    if not panels:
+        return None
+
+    fig = Figure(figsize=(5 * len(panels), 4))
+    axes = fig.subplots(1, len(panels))
+    if len(panels) == 1:
+        axes = [axes]
+
+    for ax, (metrics, title, ylabel, log) in zip(axes, panels):
+        _plot_metrics(ax, df, metrics)
+        # The loss and its terms span orders of magnitude; CC runs through zero
+        # and near it, where a log axis is meaningless.
+        if log and _log_scale_is_safe(df, metrics):
+            ax.set_yscale('log')
+        ax.set_xlabel('Epoch')
+        ax.set_title(title)
+        if ylabel:
+            ax.set_ylabel(ylabel)
+        _metric_legend(ax)
+
+    fig.tight_layout()
+    return fig
+
+
+def _metric_legend(ax):
+    """Legend the colours once, and explain solid vs dashed once.
+
+    A `val_` line carries no colour of its own -- it is its metric's colour,
+    dashed -- so listing both halves of every pair says the same thing twice and
+    doubled the legend when NLL and the KL terms joined the panel. The lines keep
+    their real labels; only what the legend is built from is filtered.
+    """
+    from matplotlib.lines import Line2D
+
+    lines = ax.get_lines()
+    handles = [l for l in lines if not l.get_label().startswith('val_')]
+    labels = [l.get_label() for l in handles]
+    if any(l.get_label().startswith('val_') for l in lines):
+        handles += [
+            Line2D([], [], color='0.35', ls='-'),
+            Line2D([], [], color='0.35', ls='--'),
+        ]
+        labels += ['training', 'validation']
+    ax.legend(handles, labels, fontsize='small', ncol=2, framealpha=0.85)
 
 
 def _base_metrics(df, predicate):
@@ -537,33 +628,10 @@ class AbismalRunner:
         if df.empty:
             return
 
-        loss_metrics = _base_metrics(df, lambda c: 'loss' in c.lower())
-        cc_metrics = _base_metrics(df, lambda c: 'CC' in c)
-        panels = [
-            (loss_metrics, 'Loss', 'Loss'),
-            (cc_metrics, 'CC', None),
-        ]
-        panels = [p for p in panels if p[0]]
-        if not panels:
-            return
-
-        from matplotlib.figure import Figure
-
         with _FIGURE_LOCK:
-            fig = Figure(figsize=(5 * len(panels), 4))
-            axes = fig.subplots(1, len(panels))
-            if len(panels) == 1:
-                axes = [axes]
-
-            for ax, (metrics, title, ylabel) in zip(axes, panels):
-                _plot_metrics(ax, df, metrics)
-                ax.set_xlabel('Epoch')
-                ax.set_title(title)
-                if ylabel:
-                    ax.set_ylabel(ylabel)
-                ax.legend()
-
-            fig.tight_layout()
+            fig = _history_figure(df)
+            if fig is None:
+                return
             self._show_figure(self.history_widget, fig)
 
     def _update_peaks(self):
