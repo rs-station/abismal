@@ -34,7 +34,7 @@ single pass:
 | --- | --- |
 | `cuda` | GPU-accelerated TensorFlow for merging (`tensorflow[and-cuda]`) |
 | `torchref` | PyTorch + torchref, for per-epoch refinement (`--torchref-pdb`) |
-| `gui` | JupyterLab and the widget stack behind `abismal_gui.ipynb` |
+| `gui` | JupyterLab and the widget stack behind the `abismal.gui` notebook |
 
 ```bash
 pip install "abismal[cuda,torchref]"
@@ -78,24 +78,29 @@ Re-check `pip list | grep nvidia` after any TensorFlow or PyTorch bump.
 
 ## The notebook GUI
 
-`abismal[gui]` installs JupyterLab alongside the widgets, so the notebook is
-runnable straight after the install. **Start JupyterLab from your data
-directory**, and point it at the notebook wherever that happens to live:
+The notebook ships inside the package, and `abismal.gui` puts a copy in
+whatever directory you are standing in and opens it:
 
 ```bash
 pip install "abismal[gui]"
 cd /path/to/your/data
-jupyter lab /path/to/abismal/abismal_gui.ipynb
+abismal.gui
 ```
 
 Run the first cell (it re-installs only if `abismal.gui` will not import), then
 the second, which builds the form.
 
-The directory you were standing in is where the file pickers open and what a
-relative `out_dir` resolves against. It does not have to contain the notebook,
-and there is nothing to copy or symlink: the form asks the running server which
-directory it was launched from rather than looking at the kernel's own, which
-jupyter sets to wherever the .ipynb sits.
+That directory is where the file pickers open and what a relative `out_dir`
+resolves against, so **run it from your data**. The copy is yours: a second
+`abismal.gui` in the same directory opens what is already there rather than
+overwriting your edits, and `--fresh` replaces it with the packaged one.
+Anything the launcher does not recognise is handed to `jupyter lab`, so
+`abismal.gui --no-browser --port 9999` works as you would expect.
+
+Nothing needs to be copied or symlinked by hand, and the notebook does not have
+to sit with your data: the form asks the running server which directory it was
+launched from rather than looking at the kernel's own, which jupyter sets to
+wherever the .ipynb happens to be.
 
 `out_dir` may be anywhere you can write, including another filesystem. The 3D
 viewer embeds the model and maps in its own page rather than fetching them from

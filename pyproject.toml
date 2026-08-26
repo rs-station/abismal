@@ -79,6 +79,9 @@ abismal = "abismal.command_line.abismal:main"
 "abismal.cchalf" = "abismal.command_line.cchalf:main"
 "abismal.friedelize" = "abismal.command_line.friedelize:main"
 "abismal.plot_history" = "abismal.command_line.plot_history:main"
+# Copies the packaged notebook into the current directory and starts JupyterLab
+# on it, so there is no path to know and nothing to symlink.
+"abismal.gui" = "abismal.command_line.gui:main"
 
 [tool.coverage.run]
 source = ["abismal"]
@@ -123,6 +126,13 @@ pythonpath = [
 # scratch directory in a working copy is enough to break `python -m build`.
 # Naming the package makes the build depend only on tracked source.
 include = ["abismal*"]
+
+[tool.setuptools.package-data]
+# The notebook ships inside the package so `abismal.gui` can copy it into
+# whatever directory the user is standing in. At the repo root it was not
+# packaged at all, so `pip install abismal[gui]` installed JupyterLab and the
+# widgets but nothing to open in them.
+"abismal.gui" = ["*.ipynb"]
 
 [tool.setuptools.dynamic]
 version = {file = "abismal/VERSION"}

@@ -15,7 +15,7 @@ interpretation.
 
 | # | Do | Expect |
 |---|---|---|
-| 1 | Run the install cell | No traceback. It installs `abismal[gui]`; without the extra there is no ipywidgets and step 2 cannot run. |
+| 1 | Run the install cell | No traceback. It installs `abismal[gui]`; without the extra there is no ipywidgets and step 2 cannot run. The `abismal.gui` launcher is for local use -- on Colab the notebook is already open and the frontend is Colab's own. |
 | 2 | Run the GUI cell | The form appears, with a **row of group buttons** — not tabs. `inputs` and `dmin` at the top, `out_dir` last in that top section. |
 | 3 | Click three different group buttons | Exactly one panel visible at a time; the active button is highlighted. |
 | 4 | Upload a small mtz to the session, browse to `/content`, add it | The selected-files list updates to name it. |
