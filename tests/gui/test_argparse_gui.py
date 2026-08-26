@@ -152,6 +152,9 @@ class FakeRunner:
 
     instances = []
     attach_result = None
+    # Ordered record across every runner, so a test can assert that the previous one
+    # was put down *before* the step that deletes the files it is polling.
+    events = []
 
     def __init__(self, args, out_dir, has_phenix=False, total_epochs=None,
                  cwd=None):
@@ -162,9 +165,11 @@ class FakeRunner:
         self.cwd = cwd
         self.started = False
         self.resumed = False
+        self.shut_down = False
         self.log = ""
         self._pid = 4242
         FakeRunner.instances.append(self)
+        FakeRunner.events.append(("constructed", self))
 
     @classmethod
     def attach(cls, out_dir, has_phenix=False):
@@ -175,6 +180,10 @@ class FakeRunner:
 
     def resume(self):
         self.resumed = True
+
+    def shutdown(self, timeout=5.0):
+        self.shut_down = True
+        FakeRunner.events.append(("shutdown", self))
 
     def _append_log(self, text):
         self.log += text
@@ -190,6 +199,7 @@ def fake_runner(monkeypatch):
     """argparse_gui imports AbismalRunner *inside* run_abismal, so this reaches it."""
     FakeRunner.instances = []
     FakeRunner.attach_result = None
+    FakeRunner.events = []
     monkeypatch.setattr("abismal.gui.runner.AbismalRunner", FakeRunner)
     return FakeRunner
 
@@ -331,6 +341,117 @@ def test_confirming_deletes_the_old_output_and_launches(tiny_form, fake_runner, 
     assert fake_runner.instances[0].started
 
 
+# ---------------------------------------------------------------------------
+# replacing a runner
+# ---------------------------------------------------------------------------
+
+# Swapping the runner's widget out of the form does not stop the runner behind it: it
+# keeps a poll timer, a phenix watcher thread and -- on Colab -- a browser interval
+# syncing its widgets, all of them reading an out_dir the next run is about to rewrite.
+
+
+def test_relaunching_stops_the_runner_it_replaces(tiny_form, fake_runner, tmp_path):
+    filled(tiny_form, tmp_path)
+    tiny_form.run_button.click()
+    first = fake_runner.instances[0]
+
+    tiny_form.run_button.click()
+
+    assert len(fake_runner.instances) == 2
+    assert first.shut_down
+    assert not fake_runner.instances[1].shut_down
+
+
+def test_reconnecting_stops_the_runner_it_replaces(tiny_form, fake_runner, tmp_path):
+    filled(tiny_form, tmp_path)
+    tiny_form.run_button.click()
+    first = fake_runner.instances[0]
+    fake_runner.attach_result = FakeRunner(args=None, out_dir=str(tmp_path))
+
+    tiny_form.run_button.click()
+
+    assert first.shut_down
+
+
+def test_the_previous_runner_is_stopped_before_its_output_is_deleted(
+    tiny_form, fake_runner, tmp_path, monkeypatch
+):
+    """The ordering is the fix. A poll that overlaps the delete reads a result
+    directory mid-rmtree and hands the 3D viewer files that are gone by the time the
+    browser asks for them, which leaves it loading forever.
+    """
+    import abismal.gui.cleanup as cleanup_module
+
+    filled(tiny_form, tmp_path)
+    tiny_form.run_button.click()
+    first = fake_runner.instances[0]
+
+    real_cleanup = cleanup_module.cleanup_abismal_outputs
+
+    def spy(out_dir):
+        fake_runner.events.append(("cleanup", out_dir))
+        return real_cleanup(out_dir)
+
+    monkeypatch.setattr(cleanup_module, "cleanup_abismal_outputs", spy)
+
+    (tmp_path / "history.csv").write_text("Epoch\n1\n")
+    tiny_form.run_button.click()
+    confirm = tiny_form.widget.children[-1]
+    buttons = [w for w in _iter(confirm) if type(w).__name__ == "Button"]
+    next(b for b in buttons if "overwrite" in b.description.lower()).click()
+
+    assert first.shut_down
+    order = [name for name, _ in fake_runner.events]
+    assert order.index("shutdown") < order.index("cleanup")
+
+
+def test_a_second_run_stops_the_first_runner(tiny_form, fake_runner, tmp_path):
+    """The overwrite dialog is not the only way to get two runners. Running into a
+    directory with nothing in it swaps the widget straight out, and the runner behind
+    it keeps its poll timer, its watcher thread and its Colab interval either way.
+    """
+    filled(tiny_form, tmp_path)
+    tiny_form.run_button.click()
+    first = fake_runner.instances[0]
+
+    tiny_form.run_button.click()
+    second = fake_runner.instances[1]
+
+    assert first.shut_down
+    assert not second.shut_down
+    assert tiny_form._runner is second
+
+
+def test_reattaching_stops_the_previous_runner(tiny_form, fake_runner, tmp_path):
+    """Reconnecting to an orphaned job replaces the displayed runner too, and the one
+    it replaces has to be put down like any other -- it is still polling out_dir.
+    """
+    filled(tiny_form, tmp_path)
+    tiny_form.run_button.click()
+    first = fake_runner.instances[0]
+
+    attached = FakeRunner(args=None, out_dir=str(tmp_path))
+    FakeRunner.attach_result = attached
+    tiny_form.run_button.click()
+
+    assert first.shut_down
+    assert attached.resumed
+    assert tiny_form._runner is attached
+
+
+def test_a_runner_is_never_asked_to_shut_itself_down(tiny_form, fake_runner, tmp_path):
+    """_install_runner guards on identity. Re-installing the same runner -- which the
+    attach path can do -- must not stop the one it is about to display.
+    """
+    filled(tiny_form, tmp_path)
+    tiny_form.run_button.click()
+    runner = fake_runner.instances[0]
+
+    tiny_form._install_runner(runner)
+
+    assert not runner.shut_down
+
+
 def _iter(widget):
     yield widget
     for child in getattr(widget, "children", None) or ():
@@ -405,7 +526,8 @@ def test_path_pickers_know_what_they_are_picking(real_form):
         for a in real_form._all_args
         if type(real_form._all_args[a]).__name__ == "PathSelector"
     }
-    assert modes["out_dir"] == "directory"
+    # out_dir is the one save target: see tests/gui/test_out_dir.py
+    assert modes["out_dir"] == "save"
     assert modes["r_free_mtz"] == "file"
     # --eff-files and --torchref-pdb are comma-separated lists on the CLI.
     assert modes["eff_files"] == "files"
@@ -420,12 +542,13 @@ def test_out_dir_lives_under_the_io_header(real_form):
     assert out_dir_widget in real_form.children["IO"].children
 
 
-def test_out_dir_is_prefilled_with_the_base_directory(real_form):
+def test_out_dir_is_prefilled_below_the_base_directory(real_form):
     """Its CLI default is ".", which in a notebook would put results next to the
-    .ipynb rather than where the user is working."""
+    .ipynb rather than where the user is working. The rest of the row is covered
+    in tests/gui/test_out_dir.py."""
     from abismal.gui.components.file_selector import default_directory
 
-    assert widget_for(real_form, "out_dir").value == default_directory()
+    assert widget_for(real_form, "out_dir").value.startswith(default_directory())
 
 
 def test_required_options_are_promoted_out_of_the_tabs(real_form):

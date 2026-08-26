@@ -79,10 +79,13 @@ Re-check `pip list | grep nvidia` after any TensorFlow or PyTorch bump.
 ## The notebook GUI
 
 `abismal[gui]` installs JupyterLab alongside the widgets, so the notebook is
-runnable straight after the install:
+runnable straight after the install. Put a copy of the notebook next to your
+data and start JupyterLab there:
 
 ```bash
 pip install "abismal[gui]"
+cd /path/to/your/data
+cp /path/to/abismal/abismal_gui.ipynb .   # or ln -s
 jupyter lab abismal_gui.ipynb
 ```
 
@@ -90,10 +93,17 @@ Run the first cell (it re-installs only if `abismal.gui` will not import), then
 the second, which builds the form.
 
 **Start JupyterLab from a directory that contains both your data and your output
-directory.** The file browser is server-side, and the 3D viewer fetches its pdb
-and mtz over a `/files/` URL resolved against the running server's root -- a path
-outside that root leaves the viewer frame empty with no error. A symlinked path
-is handled; an unrelated one is not.
+directory.** That directory -- the one you were standing in when you ran
+`jupyter lab`, not the one the .ipynb sits in -- is where the file browser opens
+and what a relative `out_dir` resolves against.
+
+The 3D viewer is fussier. It fetches its pdb and mtz over a `/files/` URL
+resolved against the server's *root*, and the root is not the launch directory
+when you name a notebook somewhere else: `jupyter lab /path/to/abismal/abismal_gui.ipynb`
+roots the server in the abismal checkout, and results written beside your data
+then leave the viewer frame empty with no error. Copying the notebook into your
+data directory, as above, keeps the two together. A symlinked path is handled;
+an unrelated one is not.
 
 On Colab, upload your files to the session first (the Files pane, or
 `google.colab.files.upload()`) and point the file browser at `/content`. The

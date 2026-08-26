@@ -3,6 +3,7 @@ from abismal.command_line.parser.custom_types import directory, list_of_paths
 import argparse
 from pathlib import Path
 from ipywidgets import widgets
+import time
 from abismal.gui.components.file_selector import (
     PathSelector,
     ReflectionFileSelector,
@@ -19,6 +20,10 @@ def _set_label_widths(widget_list):
     max_chars = max(len(w._label_text) for w in labelable)
     width = f'{max_chars * 8 + 24}px'
     for w in labelable:
+        setter = getattr(w, 'set_label_width', None)
+        if setter is not None:
+            setter(width)
+            continue
         lbl = getattr(w, '_label_widget', None) or w.children[0]
         lbl.layout.width = width
         lbl.layout.min_width = width
@@ -71,7 +76,10 @@ class ArgparseGUIBase:
     path_modes = {
         Path: 'file',
         list_of_paths: 'files',
-        directory: 'directory',
+        # A directory argument in this parser is always somewhere to write, and
+        # the directory you want usually does not exist yet -- so it gets the
+        # save-as row rather than a picker over what happens to be there.
+        directory: 'save',
     }
 
     # Which suffixes each picker offers. Absent means "show every file"; the
@@ -123,6 +131,9 @@ class ArgparseGUIBase:
 
     def __init__(self, parser=None):
         self.parser = parser if parser is not None else abismal_parser
+        # The runner whose widget the form is currently showing, so that the next Run
+        # click can put it down. See _install_runner.
+        self._runner = None
 
     @staticmethod
     def action_to_name(action):
@@ -184,7 +195,7 @@ class ArgparseGUIBase:
                 mode=mode,
                 file_types=self.path_file_types.get(action.dest),
                 tooltip=action.help or "",
-                **self._path_default(action),
+                **self._path_default(action, mode),
             )
         if isinstance(action, argparse._StoreAction):
             if action.choices is not None:
@@ -207,7 +218,18 @@ class ArgparseGUIBase:
         return None
 
     @staticmethod
-    def _path_default(action):
+    def new_run_name():
+        """The name offered for a fresh output directory.
+
+        Timestamped so that re-running does not land on the previous run and
+        raise the overwrite dialog every time. It is fixed when the form is
+        built, so a notebook left open overnight offers yesterday's stamp until
+        the cell is re-run -- still unique against the last run, and editable.
+        """
+        return time.strftime('abismal_%Y-%m-%d_%H%M')
+
+    @classmethod
+    def _path_default(cls, action, mode):
         """Prefill or placeholder text for a path field, from the CLI default.
 
         A relative default -- out_dir's "." -- means "right here", which on the
@@ -218,6 +240,13 @@ class ArgparseGUIBase:
         idea of where "." is.
         """
         default = action.default
+        if mode == 'save':
+            base = Path(default_directory())
+            if isinstance(default, Path) and default.is_absolute():
+                base = default
+            elif isinstance(default, Path):
+                base = (base / default).resolve()
+            return {"value": str(base), "name": cls.new_run_name()}
         if isinstance(default, Path):
             if default.is_absolute():
                 return {"placeholder": str(default)}
@@ -256,10 +285,7 @@ class ArgparseGUIBase:
                 f'[Reconnected to running process PID {runner._pid}]\n'
             )
             runner.resume()
-            self.widget.children = (
-                self.top_section, self.tab, self.run_button,
-                self._run_output, runner.to_widget(),
-            )
+            self._install_runner(runner)
             return
 
         existing = find_abismal_outputs(out_dir)
@@ -279,10 +305,30 @@ class ArgparseGUIBase:
             cwd=default_directory(),
         )
         runner.start()
+        self._install_runner(runner)
+
+    def _install_runner(self, runner):
+        """Show `runner`'s widget in place of whatever ran before it.
+
+        Swapping the widget out is not enough to stop the runner behind it: it keeps a
+        self-rescheduling poll timer, a phenix watcher thread, and on Colab a browser
+        interval that goes on syncing its widgets. So every Run click used to leave
+        another runner polling out_dir forever -- reading a history.csv and a set of
+        per-epoch result directories that the next run is about to delete and rewrite.
+        """
+        previous, self._runner = self._runner, runner
+        if previous is not None and previous is not runner:
+            previous.shutdown()
         self.widget.children = (
             self.top_section, self.tab, self.run_button,
             self._run_output, runner.to_widget(),
         )
+
+    def _stop_runner(self):
+        """Put the current runner down, leaving its subprocess alone."""
+        runner, self._runner = self._runner, None
+        if runner is not None:
+            runner.shutdown()
 
     def _show_overwrite_confirm(self, out_dir, existing, parsed, has_phenix):
         from abismal.gui.cleanup import cleanup_abismal_outputs
@@ -325,6 +371,11 @@ class ArgparseGUIBase:
         )
 
         def _on_overwrite(_):
+            # Before the files go, not after: the previous runner polls out_dir on a
+            # timer, and a poll that overlaps the delete hands the 3D viewer a result
+            # directory that is gone by the time the browser fetches it, which leaves
+            # the viewer stuck on "Loading..." with nothing left to retry.
+            self._stop_runner()
             cleanup_abismal_outputs(out_dir)
             self._launch_runner(parsed, has_phenix)
 
