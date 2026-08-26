@@ -51,11 +51,12 @@ torchref = [
 #
 # jupyterlab is included so that `pip install abismal[gui]` leaves you able to
 # actually open abismal_gui.ipynb; the widgets alone are not runnable. It also
-# brings jupyter_server, which _files_url needs to turn an output path into a
-# /files/ URL for the 3D viewer -- without it that lookup silently finds no
-# server and the viewer's fetches 404. On Colab the frontend is already there
-# and this is redundant, but harmless: it installs alongside rather than
-# replacing Colab's, which is the same trade JupyterLab extensions make.
+# brings jupyter_server, which the form uses to find out which directory jupyter
+# was launched from -- without it, paths resolve against the kernel's cwd, which
+# is wherever the .ipynb sits rather than where the user was working. On Colab
+# the frontend is already there and this is redundant, but harmless: it installs
+# alongside rather than replacing Colab's, which is the same trade JupyterLab
+# extensions make.
 #
 # Not listed, deliberately:
 #   google.colab - present on Colab and nowhere else, and every use is guarded by
