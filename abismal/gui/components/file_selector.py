@@ -1,6 +1,15 @@
+import html
 import os
 from pathlib import Path
 from ipywidgets import widgets
+
+
+def _label(text):
+    """The right-aligned label column shared by every control row."""
+    return widgets.HTML(
+        value=f'<div style="text-align:right;line-height:32px;padding-right:6px">{html.escape(text)}</div>',
+        layout=widgets.Layout(width='120px', min_width='120px'),
+    )
 
 
 def _is_colab():
@@ -9,6 +18,44 @@ def _is_colab():
         return True
     except ImportError:
         return False
+
+
+def default_directory():
+    """Where the file pickers open, and what relative paths resolve against.
+
+    JupyterLab's ``root_dir`` -- the directory ``jupyter lab`` was launched from
+    -- rather than the kernel's cwd, which is wherever the .ipynb happens to sit
+    and is the abismal checkout for anyone who opened the shipped notebook in
+    place. It is also the root :func:`abismal.gui.runner._files_url` resolves
+    against, so a file picked from here is one the 3D viewer can actually fetch.
+
+    Falls back to /content on Colab and to the cwd anywhere else.
+    """
+    try:
+        from jupyter_server.serverapp import list_running_servers
+        roots = [
+            os.path.realpath(info['root_dir'])
+            for info in list_running_servers()
+            if info.get('root_dir')
+        ]
+    except ImportError:
+        roots = []
+
+    if roots:
+        # More than one server can be running. Prefer whichever one this kernel
+        # is actually inside; the deepest such root wins, since nested servers
+        # both match. Otherwise take the first, which is all we can say.
+        cwd = os.path.realpath(os.getcwd())
+        containing = [
+            r for r in roots if cwd == r or cwd.startswith(r + os.sep)
+        ]
+        if containing:
+            return max(containing, key=len)
+        return roots[0]
+
+    if _is_colab() and os.path.isdir('/content'):
+        return '/content'
+    return os.getcwd()
 
 
 class ServerFileSelectorWidget(widgets.VBox):
@@ -20,7 +67,9 @@ class ServerFileSelectorWidget(widgets.VBox):
 
     header_string = "Select Files"
 
-    def __init__(self, initial_directory=".", **kwargs):
+    def __init__(self, initial_directory=None, **kwargs):
+        if initial_directory is None:
+            initial_directory = default_directory()
         self._current_dir = Path(initial_directory).resolve()
         self._selected_files = []
         self._create_widgets()
@@ -192,39 +241,230 @@ class ReflectionFileSelector(ServerFileSelectorWidget):
     file_types = [".mtz", ".expt", ".refl", ".json", ".pickle", ".stream"]
 
     def __init__(self, *args, **kwargs):
-        super().__init__()
+        kwargs.pop('name', None)
+        kwargs.pop('action', None)
+        super().__init__(**kwargs)
 
     def file_filter(self, file_name):
         return any(file_name.endswith(s) for s in self.file_types)
 
 
-class PhenixFileSelector(ServerFileSelectorWidget):
-    header_string = "Configuration (*.eff) file for phenix.refine"
-    file_types = [".eff"]
+class PathSelector(widgets.VBox):
+    """A text field with a Browse button that expands a file browser inline.
 
-    def __init__(self, *args, **kwargs):
-        super().__init__()
+    The two-panel :class:`ServerFileSelectorWidget` is the right shape for
+    ``inputs``, where you accumulate a list across directories, but it is 250px
+    tall and there are seven path-valued arguments in the parser. This is the
+    compact form: one row that looks like every other labelled control, and a
+    browser that appears underneath only while you are using it.
+
+    Typing a path still works -- the field is the value, and browsing is just a
+    way to fill it in -- so nothing that worked before the browser existed
+    stops working.
+
+    mode:
+        ``'file'``      one file; Browse fills the field with its path.
+        ``'files'``     several files, comma-joined, matching the CLI's
+                        comma-separated ``--eff-files``/``--torchref-pdb``.
+        ``'directory'`` no file list; Browse takes the directory you navigate to.
+    """
+
+    def __init__(self, description='', mode='file', file_types=None,
+                 value='', placeholder='', initial_directory=None,
+                 tooltip='', **kwargs):
+        if mode not in ('file', 'files', 'directory'):
+            raise ValueError(f"unknown mode {mode!r}")
+        if initial_directory is None:
+            initial_directory = default_directory()
+        self.mode = mode
+        self.file_types = tuple(file_types) if file_types else ()
+        self._label_text = description
+        self._current_dir = Path(initial_directory).resolve()
+
+        self._label = _label(description)
+        self._input = widgets.Text(
+            value=value,
+            placeholder=placeholder,
+            layout=widgets.Layout(flex='1'),
+        )
+        self._browse_button = widgets.Button(
+            description='Browse',
+            tooltip=tooltip or f'Browse for {description}',
+            layout=widgets.Layout(width='90px'),
+        )
+        self._browse_button.on_click(self._toggle_browser)
+        row = widgets.HBox([self._label, self._input, self._browse_button])
+
+        self._browser = self._build_browser()
+        self._browser.layout.display = 'none'
+        super().__init__([row, self._browser], **kwargs)
+
+    # The label is nested a level deeper than in the plain Text/Dropdown rows,
+    # so hand _set_label_widths the widget directly rather than let it guess.
+    @property
+    def _label_widget(self):
+        return self._label
+
+    def _build_browser(self):
+        self._dir_label = widgets.Label(
+            value=str(self._current_dir), layout=widgets.Layout(flex='1'),
+        )
+        self._up_button = widgets.Button(
+            description='↑ Up', layout=widgets.Layout(width='80px'),
+        )
+        self._up_button.on_click(self._go_up)
+
+        self._dir_list = widgets.Select(
+            options=[], layout=widgets.Layout(width='100%', height='160px'),
+        )
+        self._dir_list.observe(self._on_dir_select, names='value')
+        columns = [widgets.VBox(
+            [widgets.HTML('<b>Directories</b>'), self._dir_list],
+            layout=widgets.Layout(flex='1'),
+        )]
+
+        if self.mode == 'directory':
+            self._file_list = None
+        else:
+            select_cls = (
+                widgets.SelectMultiple if self.mode == 'files' else widgets.Select
+            )
+            hint = (
+                '<b>Files</b> (shift-click or ctrl-click to multi-select)'
+                if self.mode == 'files' else '<b>Files</b>'
+            )
+            self._file_list = select_cls(
+                options=[], layout=widgets.Layout(width='100%', height='160px'),
+            )
+            columns.append(widgets.VBox(
+                [widgets.HTML(hint), self._file_list],
+                layout=widgets.Layout(flex='2'),
+            ))
+
+        self._select_button = widgets.Button(
+            description='Select', button_style='primary', icon='check',
+            layout=widgets.Layout(width='110px'),
+        )
+        self._select_button.on_click(self._on_select)
+        self._cancel_button = widgets.Button(
+            description='Cancel', layout=widgets.Layout(width='110px'),
+        )
+        self._cancel_button.on_click(self._close_browser)
+
+        return widgets.VBox(
+            [
+                widgets.HBox([self._dir_label, self._up_button]),
+                widgets.HBox(columns, layout=widgets.Layout(width='100%')),
+                widgets.HBox([self._select_button, self._cancel_button]),
+            ],
+            layout=widgets.Layout(
+                border='1px solid lightgray', padding='4px',
+                margin='0 0 4px 0', width='100%',
+            ),
+        )
 
     def file_filter(self, file_name):
+        if not self.file_types:
+            return True
         return any(file_name.endswith(s) for s in self.file_types)
+
+    def _refresh(self):
+        try:
+            entries = list(os.scandir(self._current_dir))
+        except OSError:
+            return
+        self._dir_label.value = str(self._current_dir)
+
+        dirs = sorted(
+            [e.name for e in entries if e.is_dir() and not e.name.startswith('.')],
+            key=str.lower,
+        )
+        # Detach while mutating options, or setting them fires the navigation
+        # observer -- the same reason ServerFileSelectorWidget does this.
+        try:
+            self._dir_list.unobserve(self._on_dir_select, names='value')
+        except ValueError:
+            pass
+        self._dir_list.options = dirs
+        self._dir_list.value = None
+        self._dir_list.observe(self._on_dir_select, names='value')
+
+        if self._file_list is not None:
+            files = sorted(
+                [e.name for e in entries
+                 if not e.is_dir() and self.file_filter(e.name)],
+                key=str.lower,
+            )
+            self._file_list.options = tuple(files)
+            self._file_list.value = () if self.mode == 'files' else None
+
+    def _toggle_browser(self, _=None):
+        if self.browser_open:
+            self._close_browser()
+        else:
+            self._open_browser()
+
+    @property
+    def browser_open(self):
+        return self._browser.layout.display != 'none'
+
+    def _open_browser(self):
+        # Reopen where the current value points, so correcting a typo does not
+        # start over from the root.
+        current = self._input.value.split(',')[0].strip()
+        if current:
+            candidate = Path(current).expanduser()
+            if not candidate.is_absolute():
+                candidate = Path(self._current_dir) / candidate
+            if candidate.is_dir():
+                self._current_dir = candidate.resolve()
+            elif candidate.parent.is_dir():
+                self._current_dir = candidate.parent.resolve()
+        self._refresh()
+        self._browser.layout.display = ''
+        self._browse_button.description = 'Close'
+
+    def _close_browser(self, _=None):
+        self._browser.layout.display = 'none'
+        self._browse_button.description = 'Browse'
+
+    def _go_up(self, _):
+        parent = self._current_dir.parent
+        if parent != self._current_dir:
+            self._current_dir = parent
+            self._refresh()
+
+    def _on_dir_select(self, change):
+        name = change['new']
+        if not name:
+            return
+        target = self._current_dir / name
+        if target.is_dir() and os.access(str(target), os.R_OK):
+            self._current_dir = target
+            self._refresh()
+
+    def _on_select(self, _):
+        if self.mode == 'directory':
+            self._input.value = str(self._current_dir)
+        elif self.mode == 'files':
+            chosen = self._file_list.value or ()
+            if not chosen:
+                return
+            self._input.value = ','.join(
+                str(self._current_dir / name) for name in chosen
+            )
+        else:
+            chosen = self._file_list.value
+            if not chosen:
+                return
+            self._input.value = str(self._current_dir / chosen)
+        self._close_browser()
 
     @property
     def value(self):
-        return ",".join(self.get_selected_files())
+        return self._input.value
 
-
-class TorchRefFileSelector(ServerFileSelectorWidget):
-    header_string = "Starting model (*.pdb) for torchref refinement"
-    file_types = [".pdb"]
-
-    def __init__(self, *args, **kwargs):
-        super().__init__()
-
-    def file_filter(self, file_name):
-        return any(file_name.endswith(s) for s in self.file_types)
-
-    @property
-    def value(self):
-        return ",".join(self.get_selected_files())
-
-
+    def set_directory(self, directory):
+        self._current_dir = Path(directory).resolve()
+        if self.browser_open:
+            self._refresh()

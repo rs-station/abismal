@@ -153,11 +153,13 @@ class FakeRunner:
     instances = []
     attach_result = None
 
-    def __init__(self, args, out_dir, has_phenix=False, total_epochs=None):
+    def __init__(self, args, out_dir, has_phenix=False, total_epochs=None,
+                 cwd=None):
         self.args = args
         self.out_dir = out_dir
         self.has_phenix = has_phenix
         self.total_epochs = total_epochs
+        self.cwd = cwd
         self.started = False
         self.resumed = False
         self.log = ""
@@ -211,6 +213,28 @@ def test_run_launches_a_runner_with_the_forms_arguments(tiny_form, fake_runner, 
     assert runner.total_epochs == 12
     # to_args emits option_strings[0], and dmin is declared as ("-d", "--dmin")
     assert "-d" in runner.args and "1.8" in runner.args
+
+
+def test_a_relative_out_dir_is_resolved_before_launching(
+    tiny_form, fake_runner, tmp_path, monkeypatch
+):
+    """The kernel and the child disagree about ".": the child is launched with
+    cwd=default_directory() while the kernel sits wherever the .ipynb does. The
+    runner opens console.log itself, so a relative out_dir would leave it
+    watching a different directory than the one being written to."""
+    monkeypatch.setattr(
+        "abismal.gui.components.argparse_gui.default_directory",
+        lambda: str(tmp_path),
+    )
+    H.set_control(tiny_form, "inputs", "a.mtz")
+    H.set_control(tiny_form, "dmin", "1.8")
+    H.set_control(tiny_form, "out_dir", "results")
+
+    tiny_form.run_button.click()
+
+    runner = fake_runner.instances[0]
+    assert runner.out_dir == str(tmp_path / "results")
+    assert runner.cwd == str(tmp_path)
 
 
 def test_the_runners_widget_is_appended_to_the_form(tiny_form, fake_runner, tmp_path):
@@ -353,15 +377,55 @@ def test_no_skipped_action_leaked_into_the_real_form(real_form):
 
 def test_file_selectors_are_wired_to_the_right_options(real_form):
     by_dest = {a.dest: type(w).__name__ for a, w in real_form._all_args.items()}
+    # `inputs` keeps the accumulating two-panel browser; everything else that
+    # names a file gets the compact picker, chosen by the argument's type.
     assert by_dest["inputs"] == "ReflectionFileSelector"
-    assert by_dest["eff_files"] == "PhenixFileSelector"
-    assert by_dest["torchref_pdb"] == "TorchRefFileSelector"
+    for dest in ("eff_files", "torchref_pdb", "r_free_mtz", "reference_mtz",
+                 "out_dir", "posterior_init_file", "scale_init_file"):
+        assert by_dest[dest] == "PathSelector", dest
 
 
-def test_out_dir_sits_last_in_the_top_section(real_form):
-    """It is deliberately appended after the required arguments."""
+def test_every_path_argument_gets_a_picker(real_form):
+    """The dispatch is on the type, so a new path argument needs nothing else.
+
+    This is the regression guard for the complaint that started it: --r-free-mtz
+    was a bare text box, leaving no way to discover which file to name.
+    """
+    from abismal.gui.components.file_selector import PathSelector, ServerFileSelectorWidget
+
+    for action, widget in real_form._all_args.items():
+        if action.type in ArgparseGUIBase.path_modes:
+            assert isinstance(widget, (PathSelector, ServerFileSelectorWidget)), \
+                f"{action.dest} names a path but rendered as {type(widget).__name__}"
+
+
+def test_path_pickers_know_what_they_are_picking(real_form):
+    modes = {
+        a.dest: real_form._all_args[a].mode
+        for a in real_form._all_args
+        if type(real_form._all_args[a]).__name__ == "PathSelector"
+    }
+    assert modes["out_dir"] == "directory"
+    assert modes["r_free_mtz"] == "file"
+    # --eff-files and --torchref-pdb are comma-separated lists on the CLI.
+    assert modes["eff_files"] == "files"
+    assert modes["torchref_pdb"] == "files"
+
+
+def test_out_dir_lives_under_the_io_header(real_form):
+    """It used to be hoisted next to the required arguments, which read as
+    required. It is neither required nor special: it belongs with the rest of IO."""
     out_dir_widget = widget_for(real_form, "out_dir")
-    assert real_form.top_section.children[-1] is out_dir_widget
+    assert out_dir_widget not in real_form.top_section.children
+    assert out_dir_widget in real_form.children["IO"].children
+
+
+def test_out_dir_is_prefilled_with_the_base_directory(real_form):
+    """Its CLI default is ".", which in a notebook would put results next to the
+    .ipynb rather than where the user is working."""
+    from abismal.gui.components.file_selector import default_directory
+
+    assert widget_for(real_form, "out_dir").value == default_directory()
 
 
 def test_required_options_are_promoted_out_of_the_tabs(real_form):

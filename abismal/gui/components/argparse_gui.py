@@ -1,18 +1,14 @@
 from abismal.command_line.parser import parser as abismal_parser
+from abismal.command_line.parser.custom_types import directory, list_of_paths
 import argparse
+from pathlib import Path
 from ipywidgets import widgets
 from abismal.gui.components.file_selector import (
+    PathSelector,
     ReflectionFileSelector,
-    PhenixFileSelector,
-    TorchRefFileSelector,
+    _label,
+    default_directory,
 )
-
-
-def _label(text):
-    return widgets.HTML(
-        value=f'<div style="text-align:right;line-height:32px;padding-right:6px">{text}</div>',
-        layout=widgets.Layout(width='120px', min_width='120px'),
-    )
 
 
 def _set_label_widths(widget_list):
@@ -23,7 +19,7 @@ def _set_label_widths(widget_list):
     max_chars = max(len(w._label_text) for w in labelable)
     width = f'{max_chars * 8 + 24}px'
     for w in labelable:
-        lbl = w.children[0]
+        lbl = getattr(w, '_label_widget', None) or w.children[0]
         lbl.layout.width = width
         lbl.layout.min_width = width
 
@@ -67,6 +63,27 @@ class Dropdown(widgets.HBox):
 class ArgparseGUIBase:
     custom_widgets = {}
     custom_actions = {}
+
+    # Any argument naming something on disk carries one of these types, and gets
+    # a browsable field instead of a bare text box. Adding a path argument to the
+    # parser is therefore all it takes to get a picker for it -- there is no
+    # second list here to keep in sync.
+    path_modes = {
+        Path: 'file',
+        list_of_paths: 'files',
+        directory: 'directory',
+    }
+
+    # Which suffixes each picker offers. Absent means "show every file"; the
+    # field still accepts anything typed into it either way.
+    path_file_types = {
+        'reference_mtz': ('.mtz',),
+        'r_free_mtz': ('.mtz',),
+        'eff_files': ('.eff',),
+        'torchref_pdb': ('.pdb', '.cif'),
+        'posterior_init_file': ('.keras',),
+        'scale_init_file': ('.keras',),
+    }
     skipped_actions = [
         "help",
         "list_devices",
@@ -160,6 +177,15 @@ class ArgparseGUIBase:
                 button_style="",
                 tooltip=action.help or "",
             ))
+        mode = self.path_modes.get(action.type)
+        if mode is not None:
+            return PathSelector(
+                description=name,
+                mode=mode,
+                file_types=self.path_file_types.get(action.dest),
+                tooltip=action.help or "",
+                **self._path_default(action),
+            )
         if isinstance(action, argparse._StoreAction):
             if action.choices is not None:
                 default = action.default
@@ -180,11 +206,43 @@ class ArgparseGUIBase:
                 )
         return None
 
+    @staticmethod
+    def _path_default(action):
+        """Prefill or placeholder text for a path field, from the CLI default.
+
+        A relative default -- out_dir's "." -- means "right here", which on the
+        command line is the cwd but in the notebook has to be the base directory
+        the pickers use, or output lands next to the .ipynb. Resolve it and put
+        it in the field as a real value, both so it is visible and so the child
+        process is handed an absolute path rather than inheriting the kernel's
+        idea of where "." is.
+        """
+        default = action.default
+        if isinstance(default, Path):
+            if default.is_absolute():
+                return {"placeholder": str(default)}
+            base = Path(default_directory())
+            return {"value": str((base / default).resolve())}
+        if default is not None:
+            return {"placeholder": str(default)}
+        return {}
+
+    @staticmethod
+    def _resolved_out_dir(parsed):
+        """parsed.out_dir as an absolute path.
+
+        The kernel and the child disagree about "." -- the child is launched with
+        cwd=default_directory(), the kernel's cwd is the notebook's directory --
+        and the runner opens console.log itself, so a relative out_dir would have
+        it watching a different directory than the one being written to.
+        """
+        return str((Path(default_directory()) / Path(parsed.out_dir)).resolve())
+
     def run_abismal(self, button=None):
         from abismal.gui.runner import AbismalRunner
         from abismal.gui.cleanup import find_abismal_outputs
         parsed = self.to_parser()
-        out_dir = str(parsed.out_dir)
+        out_dir = self._resolved_out_dir(parsed)
         # "has_phenix" gates the refinement results viewer; either phenix or
         # torchref refinement produces per-epoch pdb+mtz results to display.
         has_phenix = (
@@ -213,11 +271,12 @@ class ArgparseGUIBase:
 
     def _launch_runner(self, parsed, has_phenix):
         from abismal.gui.runner import AbismalRunner
-        out_dir = str(parsed.out_dir)
+        out_dir = self._resolved_out_dir(parsed)
         args = self.to_args()
         runner = AbismalRunner(
             args, out_dir, has_phenix=has_phenix,
             total_epochs=parsed.epochs,
+            cwd=default_directory(),
         )
         runner.start()
         self.widget.children = (
@@ -300,7 +359,6 @@ class ArgparseGUIBase:
                     traceback.print_exc()
         self.run_button.on_click(_on_run_click)
         top_widgets = []
-        out_dir_widget = None
         tab_widgets = {}
         self._all_args = {}
 
@@ -316,18 +374,13 @@ class ArgparseGUIBase:
                 if widget is None:
                     continue
                 self._all_args[action] = widget
-                if action.dest == 'out_dir':
-                    out_dir_widget = widget
-                elif action.required:
+                if action.required:
                     top_widgets.append(widget)
                 else:
                     group_name = group.title
                     if group_name not in tab_widgets:
                         tab_widgets[group_name] = []
                     tab_widgets[group_name].append(widget)
-
-        if out_dir_widget is not None:
-            top_widgets.append(out_dir_widget)
 
         _set_label_widths(top_widgets)
         for group_widgets in tab_widgets.values():
@@ -343,8 +396,9 @@ class ArgparseGUIBase:
 
 
 class ArgparseGUI(ArgparseGUIBase):
+    # `inputs` keeps the tall two-panel browser: it is the one argument where you
+    # accumulate a list across several directories. Every other path argument is
+    # covered by the type dispatch in ArgparseGUIBase.
     custom_widgets = {
         "inputs": ReflectionFileSelector,
-        "eff_files": PhenixFileSelector,
-        "torchref_pdb": TorchRefFileSelector,
     }
