@@ -17,6 +17,41 @@ import matplotlib.pyplot as plt
 from abismal.gui.components.file_selector import _is_colab
 
 
+def _mtime(path):
+    """Modification time, or None if the file went away mid-poll."""
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
+def _base_metrics(df, predicate):
+    """Metric columns matching predicate, with their val_ partners folded in.
+
+    Returns only the base names: `val_loss` is not a metric of its own, it is
+    the validation half of `loss`, and the pair has to share a colour.
+    """
+    return [
+        c for c in df.columns
+        if predicate(c) and not c.startswith('val_') and c != 'Epoch'
+    ]
+
+
+def _plot_metrics(ax, df, metrics):
+    """One Dark2 colour per metric; solid for training, dashed for validation."""
+    import seaborn as sns
+
+    # Ask for at least as many colours as metrics so the pairing survives a run
+    # with more than the eight Dark2 provides -- it wraps, but consistently.
+    palette = sns.color_palette('Dark2', max(len(metrics), 3))
+    for color, base in zip(palette, metrics):
+        ax.plot(df['Epoch'], df[base], color=color, ls='-', label=base)
+        val = f'val_{base}'
+        if val in df.columns:
+            ax.plot(df['Epoch'], df[val], color=color, ls='--', label=val)
+    ax.grid(which='both', axis='both', ls='-.')
+
+
 def _jupyter_server_root_dir(file_path):
     """Return the JupyterLab server root_dir that directly contains file_path,
     or None. Does not follow symlinks under root_dir — see _file_url_path for
@@ -141,16 +176,22 @@ class AbismalRunner:
 
     poll_interval = 10.0  # seconds
 
-    def __init__(self, args, out_dir, has_phenix=False, total_epochs=None):
+    def __init__(self, args, out_dir, has_phenix=False, total_epochs=None,
+                 cwd=None):
         self.args = args
         self.out_dir = str(out_dir)
         self.has_phenix = has_phenix
+        # What the child treats as "." -- the base directory the form resolves
+        # its paths against, not the kernel's cwd, which is wherever the .ipynb
+        # sits. None inherits, which is what a bare AbismalRunner should do.
+        self.cwd = str(cwd) if cwd is not None else None
         self._pid = None
         self._process = None
         self._tailer_thread = None
         self._poll_timer = None
         self._last_pdb = None
         self._last_mtz = None
+        self._peaks_signature = None
 
         self.console_log = os.path.join(self.out_dir, 'console.log')
         self.pid_file = os.path.join(self.out_dir, 'abismal.pid')
@@ -187,6 +228,13 @@ class AbismalRunner:
         )
         self.stop_button.on_click(lambda _: self.stop())
         self.history_widget = widgets.Output()
+        self.peaks_widget = widgets.Output()
+        # Hidden until there is something to show: only anomalous refinement runs
+        # write peaks.csv, and we cannot know that until one appears on disk.
+        self.peaks_label = widgets.HTML(
+            value="<b>Anomalous Peak Heights</b>",
+            layout=widgets.Layout(display='none'),
+        )
         if has_phenix:
             self._viewer_id = str(uuid.uuid4())
             self._viewer_initialized = False
@@ -233,6 +281,7 @@ class AbismalRunner:
             stderr=subprocess.STDOUT,
             start_new_session=True,
             env=env,
+            cwd=self.cwd,
         )
         fout.close()
         self._pid = self._process.pid
@@ -328,6 +377,8 @@ class AbismalRunner:
             progress_row,
             widgets.HTML("<b>Training History</b>"),
             self.history_widget,
+            self.peaks_label,
+            self.peaks_widget,
         ]
         if self.has_phenix:
             sections += [
@@ -452,6 +503,8 @@ class AbismalRunner:
                     (self.progress_label, ['value']),
                     (self.stop_button, ['disabled']),
                     (self.history_widget, ['outputs']),
+                    (self.peaks_label.layout, ['display']),
+                    (self.peaks_widget, ['outputs']),
                 ]
                 if self.has_phenix:
                     widgets_and_traits += [
@@ -576,6 +629,7 @@ class AbismalRunner:
         self._update_history()
         if self.has_phenix:
             self._update_viewer()
+            self._update_peaks()
 
     def _update_history(self):
         history_file = Path(self.out_dir) / "history.csv"
@@ -588,37 +642,124 @@ class AbismalRunner:
         if df.empty:
             return
 
-        loss_cols = [c for c in df.columns if 'loss' in c.lower()]
-        cc_cols = [c for c in df.columns if 'CC' in c]
-        n_plots = bool(loss_cols) + bool(cc_cols)
-        if not n_plots:
+        loss_metrics = _base_metrics(df, lambda c: 'loss' in c.lower())
+        cc_metrics = _base_metrics(df, lambda c: 'CC' in c)
+        panels = [
+            (loss_metrics, 'Loss', 'Loss'),
+            (cc_metrics, 'CC', None),
+        ]
+        panels = [p for p in panels if p[0]]
+        if not panels:
             return
 
         from matplotlib.figure import Figure
-        fig = Figure(figsize=(5 * n_plots, 4))
-        axes = fig.subplots(1, n_plots)
-        if n_plots == 1:
+        fig = Figure(figsize=(5 * len(panels), 4))
+        axes = fig.subplots(1, len(panels))
+        if len(panels) == 1:
             axes = [axes]
-        ax_idx = 0
 
-        if loss_cols:
-            ax = axes[ax_idx]; ax_idx += 1
-            for col in loss_cols:
-                ax.plot(df['Epoch'], df[col], label=col)
+        for ax, (metrics, title, ylabel) in zip(axes, panels):
+            _plot_metrics(ax, df, metrics)
             ax.set_xlabel('Epoch')
-            ax.set_ylabel('Loss')
-            ax.set_title('Loss')
-            ax.legend()
-
-        if cc_cols:
-            ax = axes[ax_idx]; ax_idx += 1
-            for col in cc_cols:
-                ax.plot(df['Epoch'], df[col], label=col)
-            ax.set_xlabel('Epoch')
-            ax.set_title('CC')
+            ax.set_title(title)
+            if ylabel:
+                ax.set_ylabel(ylabel)
             ax.legend()
 
         fig.tight_layout()
+        self._show_figure(self.history_widget, fig)
+
+    def _update_peaks(self):
+        """Plot anomalous peak height against epoch, one line per residue.
+
+        Only anomalous runs with refinement produce peaks.csv -- phenix via
+        AnomalousPeakFinder, torchref via its worker -- so the files being there
+        at all is the signal that this plot applies. Nothing is drawn otherwise,
+        and the section stays hidden.
+        """
+        files = self._peaks_files()
+        if not files:
+            return
+        # Drawing this is not cheap and the poll runs on a timer, so only redraw
+        # when a peaks.csv has actually appeared or changed. Without the guard a
+        # finished run keeps re-rendering the same figure for as long as the
+        # widget is alive.
+        signature = tuple((f, _mtime(f)) for f in files)
+        if signature == self._peaks_signature:
+            return
+
+        peak_data = self._read_peaks(files)
+        if peak_data is None:
+            return
+
+        # Drop peaks seen in only a handful of epochs: they are noise excursions
+        # rather than sites. report.py uses a flat 10-epoch floor, which no run
+        # clears while it is still going, so scale it to what has been seen.
+        n_epochs = peak_data['Epoch'].nunique()
+        min_points = max(1, round(0.5 * n_epochs))
+        counts = peak_data.groupby('Residue')['Epoch'].transform('size')
+        peak_data = peak_data[counts >= min_points]
+        if peak_data.empty:
+            return
+
+        import seaborn as sns
+        from matplotlib.figure import Figure
+
+        fig = Figure(figsize=(7, 4))
+        ax = fig.subplots()
+        sns.lineplot(
+            peak_data, x='Epoch', y='peakz', hue='Residue',
+            palette='Dark2', ax=ax,
+        )
+        sns.move_legend(ax, 'upper left', bbox_to_anchor=(1, 1))
+        ax.set_yscale('log')
+        ax.grid(which='both', axis='both', ls='-.')
+        ax.set_ylabel(r"Anomalous Peak Height ($\sigma$)")
+        fig.tight_layout()
+
+        self._show_figure(self.peaks_widget, fig)
+        self._peaks_signature = signature
+        self._run_on_main_thread(
+            lambda: setattr(self.peaks_label.layout, 'display', '')
+        )
+
+    def _peaks_files(self):
+        """Every peaks.csv under out_dir, from either refinement backend."""
+        files = []
+        for prefix in ("eff", "torchref"):
+            pattern = str(Path(self.out_dir) / f"{prefix}_*_asu_*_epoch_*" / "peaks.csv")
+            files.extend(glob.glob(pattern))
+        return sorted(files)
+
+    def _read_peaks(self, files=None):
+        """Every peaks.csv under out_dir, tagged with its epoch. None if empty."""
+        if files is None:
+            files = self._peaks_files()
+        frames = []
+        for path in files:
+            try:
+                epoch = int(Path(path).parent.name.split('_epoch_')[-1])
+            except ValueError:
+                continue
+            try:
+                df = pd.read_csv(path)
+            except Exception:
+                continue
+            if df.empty or not {'chain', 'seqid', 'residue', 'peakz'} <= set(df.columns):
+                continue
+            df = df[['chain', 'seqid', 'residue', 'peakz']].copy()
+            df['Epoch'] = epoch
+            frames.append(df)
+        if not frames:
+            return None
+        data = pd.concat(frames, ignore_index=True)
+        data['Residue'] = (
+            data['residue'] + '-' + data['seqid'].astype(str) + ':' + data['chain']
+        )
+        return data
+
+    def _show_figure(self, widget, fig):
+        """Render fig into an Output widget's outputs, from any thread."""
         import io, base64
         buf = io.BytesIO()
         fig.savefig(buf, format='png', bbox_inches='tight')
@@ -629,8 +770,9 @@ class AbismalRunner:
             'metadata': {},
         },)
         self._run_on_main_thread(
-            lambda: setattr(self.history_widget, 'outputs', new_outputs)
+            lambda: setattr(widget, 'outputs', new_outputs)
         )
+
 
     def _find_latest_phenix_results(self, asu_id=0):
         # Match both phenix (eff_*) and torchref (torchref_*) result dirs.

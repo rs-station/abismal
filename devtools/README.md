@@ -31,6 +31,7 @@ Each writes into `--out-dir`:
 | --- | --- |
 | `summary.md` | read this first: timings, and the handful of facts worth asserting |
 | `history.png` | the real plot, decoded out of `history_widget.outputs` — **open it** |
+| `peaks.png` | the anomalous peak-height plot, when the run produced `peaks.csv` |
 | `tree.txt` | the whole widget tree, one line per widget, with the traits that matter |
 | `tree.json` | the same, machine-readable |
 | `log.txt` | the streamed log, with the `<pre>` and HTML entities undone |
@@ -52,6 +53,9 @@ pytest tests/gui -p no:xdist -o addopts=""      # ~4 s
 in `pyproject.toml`, so the tests and the snapshot CLI cannot drift.
 
 `tests/gui/replay/abismal` is a stdlib-only stand-in for the abismal console script.
+It grows `history.csv` a row at a time and copies a per-epoch results directory,
+scaling the `peakz` column as it goes, so both plots are exercised while the run
+is still going rather than only once it has finished.
 `AbismalRunner.start()` resolves a bare `abismal` from `PATH` and passes
 `os.environ.copy()` to `Popen`, so putting that directory first on `PATH` substitutes
 the executable and nothing else: the real `Popen` call, `start_new_session`, the stdout

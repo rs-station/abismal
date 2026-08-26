@@ -19,9 +19,10 @@ Behaviour is entirely env-driven so one file covers every scenario:
 
     ABISMAL_REPLAY_CONSOLE     console log to replay to stdout
     ABISMAL_REPLAY_DELAY       seconds between lines (default 0)
-    ABISMAL_REPLAY_OUTDIR      where to write history.csv and per-epoch dirs
+    ABISMAL_REPLAY_OUTDIR      where to write cwd.txt, history.csv and per-epoch dirs
     ABISMAL_REPLAY_HISTORY     history.csv to grow one row per `Epoch N/M` line
     ABISMAL_REPLAY_RESULTS     directory copied to <prefix>_0_asu_0_epoch_<N>/ per epoch
+                               (a peaks.csv in it has its peakz scaled by epoch)
     ABISMAL_REPLAY_PREFIX      that prefix, default 'torchref'
     ABISMAL_REPLAY_EXIT        exit code, default 0
     ABISMAL_REPLAY_IGNORE_SIGTERM  install a SIGTERM handler that ignores it
@@ -42,6 +43,26 @@ def env(name, default=None):
     return os.environ.get(f"ABISMAL_REPLAY_{name}", default)
 
 
+def scale_peaks(path, epoch, total):
+    """Grow peakz with the epoch, so the peak plot has a shape rather than flat
+    lines. Real anomalous peaks climb as the merge improves; a verbatim copy of
+    the template every epoch would test the plot without testing that it tracks
+    anything.
+    """
+    if not path.exists():
+        return
+    fraction = epoch / max(total, 1)
+    lines = path.read_text().splitlines()
+    out = [lines[0]]
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        fields = line.split(",")
+        fields[6] = f"{float(fields[6]) * (0.4 + 0.6 * fraction):.3f}"
+        out.append(",".join(fields))
+    path.write_text("\n".join(out) + "\n")
+
+
 def main():
     if env("IGNORE_SIGTERM"):
         # Proves the stop path escalates: SIGTERM is sent first, then SIGKILL after
@@ -54,6 +75,14 @@ def main():
     history_src = env("HISTORY")
     results_src = env("RESULTS")
     prefix = env("PREFIX", "torchref")
+
+    # Where the child was actually launched. AbismalRunner(cwd=...) is what makes
+    # a relative path mean the same thing to the child as to the picker that
+    # offered it, and there is no other way to observe it from outside.
+    try:
+        (out_dir / "cwd.txt").write_text(os.getcwd() + "\n")
+    except OSError:
+        pass
 
     history_rows = None
     if history_src:
@@ -70,6 +99,7 @@ def main():
             match = EPOCH.match(line)
             if match:
                 epoch = int(match.group(1))
+                total = int(match.group(2))
                 # Row 0 is the header and row 1 is abismal's `Epoch 0` row (the
                 # pre-training callback), so the row for `Epoch N` is at N+1. Indexing
                 # by `epoch` alone would lag the progress bar by one and stop the plot
@@ -81,6 +111,7 @@ def main():
                     target = out_dir / f"{prefix}_0_asu_0_epoch_{epoch}"
                     if not target.exists():
                         shutil.copytree(results_src, target)
+                        scale_peaks(target / "peaks.csv", epoch, total)
             if delay:
                 time.sleep(delay)
 

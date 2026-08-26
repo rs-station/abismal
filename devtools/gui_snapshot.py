@@ -10,7 +10,8 @@
 complete run in a couple of seconds. `runner` reads an existing output directory.
 
 Writes `tree.txt` (the whole widget tree, one line per widget), `tree.json`,
-`history.png` (the real plot, decoded out of the widget), `log.txt`, `argv.txt`, any
+`history.png` and `peaks.png` (the real plots, decoded out of the widgets),
+`log.txt`, `argv.txt`, any
 javascript payloads, and `summary.md` as the index. Reading those replaces asking
 someone to describe what they see on screen.
 """
@@ -105,6 +106,10 @@ def scenario_replay(args):
     }
     pdb_file, mtz_file = runner._find_latest_phenix_results()
     facts["latest epoch dir"] = Path(pdb_file).parent.name if pdb_file else None
+
+    peaks = runner._read_peaks()
+    facts["peak residues"] = None if peaks is None else peaks["Residue"].nunique()
+    facts["peak plot shown"] = runner.peaks_label.layout.display != "none"
 
     extra = {}
     if pdb_file:

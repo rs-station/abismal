@@ -246,3 +246,66 @@ def test_attach_survives_a_missing_console_log(tmp_path, monkeypatch, runner_fac
     runner.shutdown()
 
     assert not crashes, f"tailer thread died: {crashes[0].exc_value!r}"
+
+
+# ---------------------------------------------------------------------------
+# the anomalous peak plot, during a live run
+# ---------------------------------------------------------------------------
+
+def test_the_peak_plot_fills_in_while_the_run_goes(replay):
+    """The template carries a peaks.csv and the stub scales its peakz per epoch,
+    so this exercises the same path a real anomalous refinement takes: files
+    appearing under out_dir one epoch at a time, picked up by the poll."""
+    runner = replay(total_epochs=12)
+    H.wait_for_replay(runner, timeout=30)
+
+    peaks = runner._read_peaks()
+    assert peaks is not None
+    assert peaks["Epoch"].nunique() == 12
+    assert set(peaks["Residue"]) >= {"CYS-30:A", "MET-105:A"}
+
+    # And the peak heights actually climb, so the plot has a shape.
+    first = peaks[peaks["Epoch"] == 1].set_index("Residue")["peakz"]
+    last = peaks[peaks["Epoch"] == 12].set_index("Residue")["peakz"]
+    assert (last > first).all()
+
+    assert runner.peaks_widget.outputs
+    assert runner.peaks_label.layout.display == ""
+
+
+def test_no_peak_plot_without_refinement(replay):
+    """A plain merge writes no per-epoch directories at all."""
+    runner = replay(total_epochs=12, has_phenix=False, results=None)
+    H.wait_for_replay(runner, timeout=30)
+
+    assert runner._read_peaks() is None
+    assert not runner.peaks_widget.outputs
+    assert runner.peaks_label.layout.display == "none"
+
+
+# ---------------------------------------------------------------------------
+# the child's working directory
+# ---------------------------------------------------------------------------
+
+def test_the_child_is_launched_in_the_given_directory(tmp_path, runner_factory):
+    """The form passes default_directory() so that a relative path typed into any
+    field means the same thing to the child as it does to the picker that
+    offered it -- not whatever directory the .ipynb happens to live in."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    runner = runner_factory.adopt(
+        H.start_replay(tmp_path / "run", cwd=elsewhere, total_epochs=2)
+    )
+    H.wait_for_replay(runner, timeout=30)
+
+    assert (tmp_path / "run" / "cwd.txt").read_text().strip() == str(elsewhere)
+
+
+def test_no_cwd_means_inherit(tmp_path, runner_factory):
+    """A bare AbismalRunner must behave as it always did."""
+    runner = runner_factory.adopt(
+        H.start_replay(tmp_path / "run", total_epochs=2)
+    )
+    H.wait_for_replay(runner, timeout=30)
+
+    assert (tmp_path / "run" / "cwd.txt").read_text().strip() == os.getcwd()

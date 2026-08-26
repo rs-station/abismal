@@ -131,6 +131,26 @@ def make_results_template(directory):
     ).infer_mtz_dtypes()
     ds.set_index(["H", "K", "L"], inplace=True)
     ds.write_mtz(str(directory / "refined.mtz"))
+
+    # peaks.csv in rsbooster's peak_report schema, which is what both the phenix
+    # and torchref paths write and what the runner's peak plot reads. Only the
+    # four columns it uses are filled in; the rest are carried for fidelity.
+    header = ("chain,seqid,residue,name,dist,peak,peakz,score,scorez,"
+              "cenx,ceny,cenz,coordx,coordy,coordz")
+    rows = [
+        ("A", 30, "CYS", 17.4),
+        ("A", 80, "CYS", 14.9),
+        ("A", 105, "MET", 15.4),
+        ("A", 6, "CYS", 11.2),
+        ("A", 94, "CYS", 9.8),
+    ]
+    directory.joinpath("peaks.csv").write_text(
+        header + "\n" + "".join(
+            f"{chain},{seqid},{residue},,0.5,0.15,{peakz},0.5,30.0,"
+            f"1.0,2.0,3.0,1.0,2.0,3.0\n"
+            for chain, seqid, residue, peakz in rows
+        )
+    )
     return directory
 
 
@@ -144,19 +164,21 @@ def stub_env(out_dir, *, console=None, history=None, results=None, delay=0.0,
         "ABISMAL_REPLAY_DELAY": str(delay),
         "ABISMAL_REPLAY_EXIT": str(exit_code),
     }
-    if history is not False:
-        env["ABISMAL_REPLAY_HISTORY"] = str(history or REPLAY_DIR / "history.csv")
-    if results:
-        env["ABISMAL_REPLAY_RESULTS"] = str(results)
-    if hang:
-        env["ABISMAL_REPLAY_HANG"] = "1"
-    if ignore_sigterm:
-        env["ABISMAL_REPLAY_IGNORE_SIGTERM"] = "1"
+    # Every optional switch is named either way. start_replay applies this with
+    # os.environ.update, so a key left out would keep whatever the previous
+    # replay in the same process set -- a test that asks for no per-epoch results
+    # would silently get the last test's, which is exactly the bug that hid here.
+    env["ABISMAL_REPLAY_HISTORY"] = (
+        "" if history is False else str(history or REPLAY_DIR / "history.csv")
+    )
+    env["ABISMAL_REPLAY_RESULTS"] = str(results) if results else ""
+    env["ABISMAL_REPLAY_HANG"] = "1" if hang else ""
+    env["ABISMAL_REPLAY_IGNORE_SIGTERM"] = "1" if ignore_sigterm else ""
     return env
 
 
 def start_replay(out_dir, *, has_phenix=True, total_epochs=12, poll_interval=0.05,
-                 args=(), **stub_kwargs):
+                 args=(), cwd=None, **stub_kwargs):
     """Start a replay through the real ``AbismalRunner.start()``.
 
     Puts the stub first on PATH rather than patching Popen, so the launch, the pid
@@ -174,7 +196,7 @@ def start_replay(out_dir, *, has_phenix=True, total_epochs=12, poll_interval=0.0
     AbismalRunner.poll_interval = poll_interval
     runner = AbismalRunner(
         args=list(args), out_dir=str(out_dir),
-        has_phenix=has_phenix, total_epochs=total_epochs,
+        has_phenix=has_phenix, total_epochs=total_epochs, cwd=cwd,
     )
     runner.start()
     return runner
@@ -423,8 +445,13 @@ def write_artifacts(out_dir, *, widget=None, runner=None, gui=None, extra=None):
 
     if runner is not None:
         put("log.txt", log_text(runner))
-        for name, png in extract_pngs(runner.history_widget):
-            put("history.png" if name.startswith("Output") else f"{name}.png", png, mode="wb")
+        for stem, source in (("history", runner.history_widget),
+                             ("peaks", getattr(runner, "peaks_widget", None))):
+            if source is None:
+                continue
+            for name, png in extract_pngs(source):
+                put(f"{stem}.png" if name.startswith("Output") else f"{name}.png",
+                    png, mode="wb")
 
     for name, text in (extra or {}).items():
         put(name, text)
