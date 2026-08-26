@@ -114,11 +114,10 @@ def default_directory():
     .ipynb happens to sit and is the abismal checkout for anyone who opened the
     shipped notebook in place.
 
-    Note this is deliberately *not* the server's ``root_dir``, which is what
-    :func:`abismal.gui.runner._files_url` resolves against: launch jupyter on a
-    notebook outside your data directory and the two differ, at which point the
-    3D viewer cannot fetch results from here. Keeping them together is the
-    launch instruction in the README, not something this can fix.
+    Deliberately not the server's ``root_dir``, which the two differ from whenever
+    jupyter was pointed at a notebook elsewhere. Nothing downstream needs root_dir
+    any more -- the 3D viewer embeds its files rather than fetching them over
+    /files/ -- so out_dir is free to sit wherever the user was working.
 
     Falls back to /content on Colab and to the cwd anywhere else.
     """

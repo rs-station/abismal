@@ -131,6 +131,7 @@ def test_peaks_are_collected_from_both_refinement_backends(runner_factory, tmp_p
 
     assert sorted(peaks["Epoch"]) == [1, 2]
     assert set(peaks["Residue"]) == {"CYS-30:A"}
+    assert set(peaks["AtomType"]) == {"CYS"}
 
 
 def test_the_epoch_comes_from_the_directory_name(runner_factory, tmp_path):
@@ -186,11 +187,11 @@ def test_peaks_seen_in_too_few_epochs_are_dropped(runner_factory, tmp_path):
     assert "GLY-99:A" not in plotted                            # but not plotted
 
 
-def _legend_labels(runner):
-    """Re-draw the peak plot and read the residue names off the legend.
+def _draw_peaks_axis(runner):
+    """Re-draw the peak plot onto a bare axis.
 
-    The widget holds a PNG, so the labels are recovered by rebuilding the figure
-    the same way _update_peaks does rather than by reading pixels.
+    The widget holds a PNG, so figure properties are recovered by rebuilding
+    the figure the same way _update_peaks does rather than by reading pixels.
     """
     import seaborn as sns
     from matplotlib.figure import Figure
@@ -202,8 +203,67 @@ def _legend_labels(runner):
     data = data[counts >= min_points]
 
     ax = Figure().subplots()
-    sns.lineplot(data, x="Epoch", y="peakz", hue="Residue", palette="Dark2", ax=ax)
-    return {text.get_text() for text in ax.get_legend().get_texts()}
+    sns.lineplot(
+        data, x="Epoch", y="peakz", hue="AtomType", style="Residue",
+        palette="Dark2", ax=ax,
+    )
+    return ax
+
+
+def _legend_labels(runner):
+    return {text.get_text() for text in _draw_peaks_axis(runner).get_legend().get_texts()}
+
+
+def _line_with_ydata(ax, ydata):
+    """The plotted (not legend-proxy) line whose y-values match ydata.
+
+    Legend handles duplicate the real lines with their own Line2D objects, but
+    those carry no data of their own, so matching on data picks out the real
+    series regardless of how many proxies share the axis.
+    """
+    expected = tuple(float(v) for v in ydata)
+    for line in ax.get_lines():
+        if tuple(line.get_ydata()) == expected:
+            return line
+    raise AssertionError(f"no plotted line with ydata {ydata}")
+
+
+def test_atom_type_sets_colour_and_residue_sets_linestyle(runner_factory, tmp_path):
+    """Two CYS residues share a colour but get their own linestyle; MET gets its
+    own colour. `name` (the atom name) is empty in every peaks.csv seen in
+    practice, so `residue` -- CYS, MET, ... -- stands in as the atom type."""
+    out_dir = tmp_path / "run"
+    for epoch in (1, 2, 3):
+        write_peaks(out_dir / f"eff_0_asu_0_epoch_{epoch}", [
+            ("A", 30, "CYS", 10.0 + epoch),
+            ("A", 80, "CYS", 20.0 + epoch),
+            ("A", 12, "MET", 30.0 + epoch),
+        ])
+
+    runner = runner_factory(out_dir=str(out_dir), has_phenix=True)
+    ax = _draw_peaks_axis(runner)
+
+    cys_30 = _line_with_ydata(ax, [11.0, 12.0, 13.0])
+    cys_80 = _line_with_ydata(ax, [21.0, 22.0, 23.0])
+    met_12 = _line_with_ydata(ax, [31.0, 32.0, 33.0])
+
+    assert cys_30.get_color() == cys_80.get_color()
+    assert cys_30.get_color() != met_12.get_color()
+    assert cys_30.get_linestyle() != cys_80.get_linestyle()
+
+
+def test_the_peak_axis_is_not_log_scaled(runner_factory, tmp_path):
+    """A log scale used to compress away the early-epoch spread; peak heights
+    are small and linear, so the axis should be too."""
+    out_dir = tmp_path / "run"
+    for epoch in (1, 2, 3):
+        write_peaks(out_dir / f"eff_0_asu_0_epoch_{epoch}",
+                    [("A", 30, "CYS", 10.0 + epoch)])
+
+    runner = runner_factory(out_dir=str(out_dir), has_phenix=True)
+    ax = _draw_peaks_axis(runner)
+
+    assert ax.get_yscale() == "linear"
 
 
 def test_drawing_peaks_reveals_the_section(runner_factory, tmp_path):

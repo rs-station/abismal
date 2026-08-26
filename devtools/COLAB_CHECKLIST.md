@@ -22,6 +22,7 @@ interpretation.
 | 5 | Click Run with `dmin` left empty | argparse usage text appears **in the output area under the button**. This is the failure mode that matters most on Colab: uncaught, the click silently does nothing. |
 | 6 | Fill `dmin`, set `--epochs 2`, click Run | The log starts streaming and the progress bar advances **within about 5 s**. |
 | 7 | Wait one poll interval | The history plot appears below the progress bar. |
+| 7b | On a `--torchref-pdb` run, wait for the first refinement | The 3D viewer shows a model and maps. It used to 404 here because it fetched over `/files/`, which Colab does not serve; the files are embedded in the page now, so this is worth re-checking once. |
 | 8 | Scroll up in the log while it is still running | It stays where you put it rather than yanking you back to the bottom; scrolling back to the bottom re-arms the follow. |
 | 9 | Click Stop | The button disables and the label changes. |
 | 10 | Reload the tab, re-run the GUI cell, click Run | It reconnects to the still-running job rather than starting a second one. |
@@ -32,11 +33,6 @@ interpretation.
   not there yet kills the tailer thread with an unhandled `FileNotFoundError`, silently,
   because nothing joins a daemon thread. Recorded as an xfail in
   `tests/gui/test_runner_replay.py`.
-- **The 3D viewer's files 404 on Colab.** `_files_url` has no Colab branch: with no
-  `jupyter_server` it falls back to `/files/<cwd-relative path>`, which Colab does not
-  serve. So `--torchref-pdb` runs show the viewer frame but no model. Everything the
-  viewer does once the files load is checked by
-  `devtools/browser/check_viewer.py`.
 - **Polling never stops after a refinement run.** `_tail` clears `_monitoring_active`
   only on the no-refinement path, so the browser's `setInterval` keeps running for the
   life of the tab. Harmless but visible in a profiler. Recorded as an xfail in

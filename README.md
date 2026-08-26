@@ -92,18 +92,13 @@ jupyter lab abismal_gui.ipynb
 Run the first cell (it re-installs only if `abismal.gui` will not import), then
 the second, which builds the form.
 
-**Start JupyterLab from a directory that contains both your data and your output
-directory.** That directory -- the one you were standing in when you ran
-`jupyter lab`, not the one the .ipynb sits in -- is where the file browser opens
-and what a relative `out_dir` resolves against.
+**Start JupyterLab from your data directory.** That directory -- the one you were
+standing in when you ran `jupyter lab`, not the one the .ipynb sits in -- is
+where the file browser opens and what a relative `out_dir` resolves against.
 
-The 3D viewer is fussier. It fetches its pdb and mtz over a `/files/` URL
-resolved against the server's *root*, and the root is not the launch directory
-when you name a notebook somewhere else: `jupyter lab /path/to/abismal/abismal_gui.ipynb`
-roots the server in the abismal checkout, and results written beside your data
-then leave the viewer frame empty with no error. Copying the notebook into your
-data directory, as above, keeps the two together. A symlinked path is handled;
-an unrelated one is not.
+`out_dir` may be anywhere you can write, including another filesystem. The 3D
+viewer embeds the model and maps in its own page rather than fetching them from
+the server, so it does not care where the server is rooted.
 
 On Colab, upload your files to the session first (the Files pane, or
 `google.colab.files.upload()`) and point the file browser at `/content`. The

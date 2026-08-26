@@ -152,16 +152,53 @@ def test_html_carries_the_viewer_id_and_map_keys(torchref_files):
         assert key in html
 
 
-def test_urls_override_paths_in_the_document(torchref_files):
-    """The kernel opens *_file; the browser fetches *_url. JupyterLab needs them split
-    because the server root is not the working directory."""
+def test_the_files_travel_inside_the_document(torchref_files):
+    """No URL is involved any more. The only URLs a notebook can offer are /files/
+    ones, which the jupyter server serves solely from under its root_dir -- so
+    results written anywhere else had none, and Colab has no such endpoint at all.
+    """
+    import base64
+
     viewer = GemmiMolViewer(
         pdb_file=str(torchref_files / "refined.pdb"),
         mtz_file=str(torchref_files / "refined.mtz"),
-        pdb_url="/files/somewhere/refined.pdb",
-        mtz_url="/files/somewhere/refined.mtz",
     )
     html = viewer.html
-    assert "/files/somewhere/refined.pdb" in html
-    # map_keys still had to read the real file to know what is in it
-    assert viewer.map_keys == ["FWT", "PHWT", "ANOM", "PANOM"]
+
+    for name in ("refined.pdb", "refined.mtz"):
+        encoded = base64.b64encode((torchref_files / name).read_bytes()).decode()
+        assert encoded in html
+    assert "/files/" not in html.replace("/files/ ", "")   # only the comment remains
+    assert str(torchref_files) not in html                 # nor any kernel-side path
+
+
+def test_the_reload_payload_carries_the_files_too(torchref_files):
+    """Re-embedding would rebuild the iframe and reset the camera, so later epochs
+    arrive by postMessage instead."""
+    viewer = GemmiMolViewer(
+        pdb_file=str(torchref_files / "refined.pdb"),
+        mtz_file=str(torchref_files / "refined.mtz"),
+    )
+
+    payload = viewer.reload_payload
+
+    assert payload["type"] == "reload"
+    assert payload["map_keys"] == ["FWT", "PHWT", "ANOM", "PANOM"]
+    assert payload["pdb_b64"] and payload["mtz_b64"]
+
+
+def test_base64_needs_no_escaping_in_the_document(torchref_files):
+    """It is dropped straight into a javascript string literal."""
+    viewer = GemmiMolViewer(
+        pdb_file=str(torchref_files / "refined.pdb"),
+        mtz_file=str(torchref_files / "refined.mtz"),
+    )
+
+    for encoded in (viewer.pdb_b64, viewer.mtz_b64):
+        assert not (set(encoded) - set(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
+        ))
+
+
+def test_a_viewer_with_no_files_encodes_to_nothing(torchref_files):
+    assert GemmiMolViewer().pdb_b64 == ""

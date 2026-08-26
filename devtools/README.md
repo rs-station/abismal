@@ -79,13 +79,13 @@ python devtools/browser/check_viewer.py       # 3D viewer: renders, and reloads 
 python devtools/browser/check_autoscroll.py   # log box sticky-bottom behaviour
 ```
 
-Both write screenshots. Neither needs Jupyter: `GemmiMolViewer.html` is a standalone
-document, and the autoscroll javascript only looks for a `.abismal-log-scroll` element.
-`check_autoscroll.py` reads that javascript out of `AbismalRunner._log_js_widget` rather
-than copying it, so it cannot drift from what ships.
-
-`check_viewer.py` serves over HTTP rather than `file://` — the viewer fetches the pdb
-and mtz by XHR, and a `file://` origin is opaque, so every fetch would be blocked.
+Both write screenshots, and neither needs Jupyter or a web server.
+`GemmiMolViewer.html` embeds the pdb and mtz as base64 and decodes them to blob URLs
+in the page, so it opens straight from `file://`; it needed an HTTP server back when
+it fetched both files by XHR, since a `file://` origin is opaque and blocked them.
+The autoscroll javascript only looks for a `.abismal-log-scroll` element, and
+`check_autoscroll.py` reads it out of `AbismalRunner._log_js_widget` rather than
+copying it, so it cannot drift from what ships.
 
 The third, Colab's polling loop, cannot be reached from here at all. Its *logic* is
 covered in `tests/gui/test_colab.py` against a fake `google.colab`; what is left is

@@ -8,10 +8,10 @@ gemmi.js load, parse the files and put something on screen. Everything else abou
 viewer -- the column selection, the template substitution, the reload payload -- is
 covered by tests/gui/test_gemmimol.py.
 
-No Jupyter is involved. `GemmiMolViewer.html` is a complete standalone document, so it
-is served straight from a temporary directory. It has to be served over HTTP rather
-than opened as a file:// URL, because the viewer fetches the pdb and mtz with XHR and
-the file:// origin is opaque, so every fetch is blocked.
+No Jupyter and no HTTP server. `GemmiMolViewer.html` embeds the pdb and mtz as base64
+and decodes them to blob URLs in the page, so it is a genuinely standalone document and
+opens straight from file://. It used to need a server because the viewer fetched both
+files by XHR and a file:// origin is opaque, which blocked every fetch.
 
 Local only. Not in pyproject.toml, not in CI, and outside pytest's testpaths so it
 cannot be collected by accident. Needs:
@@ -22,49 +22,16 @@ cannot be collected by accident. Needs:
 from __future__ import annotations
 
 import argparse
-import contextlib
-import functools
-import http.server
 import shutil
-import socket
-import socketserver
 import sys
-import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import gui_harness as H  # noqa: E402
 
 
-@contextlib.contextmanager
-def serve(directory):
-    """A background HTTP server rooted at `directory`, on a free port."""
-    handler = functools.partial(
-        http.server.SimpleHTTPRequestHandler, directory=str(directory)
-    )
-
-    class Quiet(socketserver.TCPServer):
-        allow_reuse_address = True
-
-        def handle_error(self, request, client_address):
-            pass  # a viewer that gives up mid-fetch is not a server error
-
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-
-    server = Quiet(("127.0.0.1", port), handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
 def stage(out_dir, pdb, mtz):
-    """Write viewer.html next to copies of the pdb/mtz, with bare relative URLs."""
+    """Write viewer.html, with the model and maps embedded in it."""
     from abismal.gui.components.gemmimol import GemmiMolViewer
 
     out_dir = Path(out_dir)
@@ -75,12 +42,10 @@ def stage(out_dir, pdb, mtz):
     viewer = GemmiMolViewer(
         pdb_file=str(out_dir / "model.pdb"),
         mtz_file=str(out_dir / "data.mtz"),
-        pdb_url="model.pdb",
-        mtz_url="data.mtz",
         viewer_id="check-viewer",
     )
     (out_dir / "viewer.html").write_text(viewer.html)
-    return viewer.map_keys
+    return viewer
 
 
 def main(argv=None):
@@ -111,11 +76,14 @@ def main(argv=None):
         pdb, mtz = template / "refined.pdb", template / "refined.mtz"
         print(f"  using the generated template model at {template}")
 
-    map_keys = stage(out_dir, pdb, mtz)
+    viewer = stage(out_dir, pdb, mtz)
+    map_keys = viewer.map_keys
+    page_path = out_dir / "viewer.html"
     print(f"  map_keys: {map_keys}")
+    print(f"  document: {page_path.stat().st_size / 1024:.0f} KB with both files in it")
 
     problems = []
-    with serve(out_dir) as base_url, sync_playwright() as pw:
+    with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=not args.headed)
         page = browser.new_page(viewport={"width": 1100, "height": 800})
 
@@ -127,7 +95,7 @@ def main(argv=None):
             lambda r: problems.append(f"failed request: {r.url} ({r.failure})"),
         )
 
-        page.goto(f"{base_url}/viewer.html", timeout=args.timeout * 1000)
+        page.goto(page_path.as_uri(), timeout=args.timeout * 1000)
 
         # Wait on the viewer's own state rather than the hud text. The hud narrates
         # "Loading PDB..." then "Loading MTZ...", but gemmimol leaves it reading
@@ -184,9 +152,7 @@ def main(argv=None):
         }"""
         before = page.evaluate(read_camera)
         page.evaluate(
-            """([pdb, mtz, keys]) => window.postMessage(
-                   {type: 'reload', pdb_file: pdb, mtz_file: mtz, map_keys: keys}, '*')""",
-            ["model.pdb", "data.mtz", map_keys],
+            "(payload) => window.postMessage(payload, '*')", viewer.reload_payload,
         )
         wait_loaded("reloading")
 
@@ -201,6 +167,7 @@ def main(argv=None):
 
     (out_dir / "viewer_console.txt").write_text("\n".join(console) + "\n")
 
+    print(f"  page: {page_path}")
     print(f"  hud: {hud!r}")
     print(f"  model_bags={models}  map_bags={maps}")
     print(f"  screenshots: {out_dir/'viewer.png'}, {out_dir/'viewer_reloaded.png'}")

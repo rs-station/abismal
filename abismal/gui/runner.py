@@ -61,120 +61,6 @@ def _plot_metrics(ax, df, metrics):
     ax.grid(which='both', axis='both', ls='-.')
 
 
-def _jupyter_server_root_dir(file_path):
-    """Return the JupyterLab server root_dir that directly contains file_path,
-    or None. Does not follow symlinks under root_dir — see _file_url_path for
-    the symlink-aware version used to build /files/ URLs.
-    """
-    try:
-        from jupyter_server.serverapp import list_running_servers
-    except ImportError:
-        return None
-    abs_file = os.path.realpath(file_path)
-    matches = []
-    for info in list_running_servers():
-        root = info.get('root_dir')
-        if not root:
-            continue
-        root_abs = os.path.realpath(root)
-        if abs_file == root_abs or abs_file.startswith(root_abs + os.sep):
-            matches.append(root_abs)
-    if not matches:
-        return None
-    return max(matches, key=len)
-
-
-def _resolve_via_symlink(abs_file, root_abs):
-    """If a top-level entry under root_abs is a symlink whose target is
-    abs_file or one of its ancestors, return the URL path that reaches
-    abs_file via that symlink. Otherwise None.
-    """
-    try:
-        entries = os.listdir(root_abs)
-    except OSError:
-        return None
-    for name in entries:
-        link = os.path.join(root_abs, name)
-        if not os.path.islink(link):
-            continue
-        try:
-            target = os.path.realpath(link)
-        except OSError:
-            continue
-        if abs_file == target:
-            return name
-        if abs_file.startswith(target + os.sep):
-            return os.path.join(name, os.path.relpath(abs_file, target))
-    return None
-
-
-def _file_url_path(path):
-    """Return a path usable under /files/<...> in JupyterLab.
-
-    Tries (in order) for each running JupyterLab server:
-      1. Direct containment under server root_dir.
-      2. Containment via a top-level symlink in root_dir (common on shared
-         systems where projects are symlinked from $HOME).
-    Falls back to os.path.relpath when nothing matches.
-    """
-    abs_path = os.path.realpath(path)
-    try:
-        from jupyter_server.serverapp import list_running_servers
-        servers = list(list_running_servers())
-    except ImportError:
-        servers = []
-
-    for info in servers:
-        root = info.get('root_dir')
-        if not root:
-            continue
-        root_abs = os.path.realpath(root)
-        if abs_path == root_abs or abs_path.startswith(root_abs + os.sep):
-            return os.path.relpath(abs_path, root_abs)
-        via_link = _resolve_via_symlink(abs_path, root_abs)
-        if via_link is not None:
-            return via_link
-
-    return os.path.relpath(abs_path)
-
-
-def _files_url(path):
-    """Return a full URL (path-only) for path under /files/, including the
-    JupyterLab server base URL prefix. Behind reverse proxies (OOD), the
-    base URL has a path component (e.g. /node/<host>/<port>/) that an
-    iframe-rooted /files/... fetch would otherwise drop, since the iframe
-    inherits the proxy origin but not the server's base path.
-    """
-    abs_path = os.path.realpath(path)
-    try:
-        from jupyter_server.serverapp import list_running_servers
-        from urllib.parse import urlparse
-        servers = list(list_running_servers())
-    except ImportError:
-        servers = []
-        urlparse = None
-
-    for info in servers:
-        root = info.get('root_dir')
-        if not root:
-            continue
-        root_abs = os.path.realpath(root)
-        if abs_path == root_abs or abs_path.startswith(root_abs + os.sep):
-            rel = os.path.relpath(abs_path, root_abs)
-        else:
-            rel = _resolve_via_symlink(abs_path, root_abs)
-        if rel is None:
-            continue
-        url = info.get('url') or '/'
-        base = urlparse(url).path or '/'
-        if not base.endswith('/'):
-            base += '/'
-        return f"{base}files/{rel}"
-
-    # Fallback: no matching server; assume default base and cwd-relative path.
-    return f"/files/{os.path.relpath(abs_path)}"
-
-
 class AbismalRunner:
     """
     Runs abismal as a detached subprocess with live output widgets.
@@ -681,7 +567,8 @@ class AbismalRunner:
             self._show_figure(self.history_widget, fig)
 
     def _update_peaks(self):
-        """Plot anomalous peak height against epoch, one line per residue.
+        """Plot anomalous peak height against epoch, coloured by atom type and
+        styled by residue.
 
         Only anomalous runs with refinement produce peaks.csv -- phenix via
         AnomalousPeakFinder, torchref via its worker -- so the files being there
@@ -720,11 +607,10 @@ class AbismalRunner:
             fig = Figure(figsize=(7, 4))
             ax = fig.subplots()
             sns.lineplot(
-                peak_data, x='Epoch', y='peakz', hue='Residue',
+                peak_data, x='Epoch', y='peakz', hue='AtomType', style='Residue',
                 palette='Dark2', ax=ax,
             )
             sns.move_legend(ax, 'upper left', bbox_to_anchor=(1, 1))
-            ax.set_yscale('log')
             ax.grid(which='both', axis='both', ls='-.')
             ax.set_ylabel(r"Anomalous Peak Height ($\sigma$)")
             fig.tight_layout()
@@ -768,6 +654,14 @@ class AbismalRunner:
         data['Residue'] = (
             data['residue'] + '-' + data['seqid'].astype(str) + ':' + data['chain']
         )
+        # peaks.csv also carries `name`, the atom name -- but in every run seen
+        # so far (phenix's AnomalousPeakFinder and the torchref worker alike)
+        # it comes out empty, so it implies no element to colour by. The residue
+        # type (CYS, MET, ...) is what actually distinguishes anomalous
+        # scatterers in practice, so that is the atom-type key instead, kept
+        # apart from `Residue` (the specific residue instance) so the plot can
+        # colour by one and style by the other.
+        data['AtomType'] = data['residue']
         return data
 
     def _show_figure(self, widget, fig):
@@ -822,29 +716,24 @@ class AbismalRunner:
 
     def _render_epoch(self, pdb_file, mtz_file):
         try:
-            pdb_rel = _files_url(pdb_file)
-            mtz_rel = _files_url(mtz_file)
-        except ValueError:
-            pdb_rel, mtz_rel = pdb_file, mtz_file
-
-        try:
             from abismal.gui.components.gemmimol import GemmiMolViewer
             viewer = GemmiMolViewer(
                 pdb_file=pdb_file, mtz_file=mtz_file,
-                pdb_url=pdb_rel, mtz_url=mtz_rel,
                 viewer_id=self._viewer_id,
             )
-            map_keys = viewer.map_keys
+            # Reads and encodes both files, so it also settles whether they are
+            # still there and complete.
+            payload = viewer.reload_payload
         except Exception:
-            # File is still being written by Phenix — retry on next poll.
+            # Still being written by phenix, or deleted under us — retry on the
+            # next poll.
             return
 
-        # map_keys only opens the mtz, and both paths were globbed a poll ago, so
-        # neither says the files are still there now. `Overwrite and Run` rmtree's
-        # whole result directories while a poll may be in flight, and the viewer
-        # drops the model it is showing before it fetches the new one: name it a
-        # file that has since gone and it sits on "Loading..." forever. Nothing
-        # would retry either, since _update_viewer skips whatever _last_pdb names.
+        # `Overwrite and Run` rmtree's result directories while a poll may be in
+        # flight. Encoding above reads both files, so one that has vanished raises
+        # there and is retried; this catches a directory emptied between the two
+        # reads. Getting it wrong used to leave the viewer on "Loading..." with
+        # nothing to retry, since _update_viewer skips whatever _last_pdb names.
         if not (os.path.exists(pdb_file) and os.path.exists(mtz_file)):
             return
 
@@ -855,7 +744,8 @@ class AbismalRunner:
         epoch = Path(pdb_file).parent.name.split('_epoch_')[-1]
         self.viewer_label.value = (
             f'<b>Epoch {epoch}</b> &nbsp;|&nbsp; '
-            f'<code>{Path(pdb_rel).name}</code> &nbsp;+&nbsp; <code>{Path(mtz_rel).name}</code>'
+            f'<code>{html.escape(Path(pdb_file).name)}</code> &nbsp;+&nbsp; '
+            f'<code>{html.escape(Path(mtz_file).name)}</code>'
         )
 
         if not self._viewer_initialized:
@@ -874,12 +764,7 @@ class AbismalRunner:
                 f'var t=Array.from(document.querySelectorAll("iframe")).find('
                 f'function(f){{try{{return f.contentWindow.ABISMAL_VIEWER_ID==='
                 f'"{self._viewer_id}";}}catch(e){{return false;}}}});'
-                f'if(t)t.contentWindow.postMessage({{'
-                f'type:"reload",'
-                f'pdb_file:"{pdb_rel}",'
-                f'mtz_file:"{mtz_rel}",'
-                f'map_keys:{json.dumps(map_keys)}'
-                f'}},"*");'
+                f'if(t)t.contentWindow.postMessage({json.dumps(payload)},"*");'
                 f'}})();'
             )
             self._js_widget.outputs = ({

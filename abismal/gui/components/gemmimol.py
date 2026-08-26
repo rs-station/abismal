@@ -1,4 +1,6 @@
+import base64
 import uuid
+from pathlib import Path
 from string import Template
 from IPython.display import display,HTML
 import reciprocalspaceship as rs
@@ -106,6 +108,29 @@ viewer_template = """<!doctype html>
     var V = null;
     window.ABISMAL_VIEWER_ID = '$viewer_id';
 
+    // The pdb and mtz arrive as base64 rather than as URLs. gemmimol fetches
+    // whatever path it is given, and the only paths a notebook can offer are
+    // /files/ ones, which the jupyter server serves solely from under its
+    // root_dir -- so an out_dir anywhere else had no URL at all, and Colab has no
+    // /files/ endpoint whatsoever. A blob URL is same-origin with this frame and
+    // needs no server, so load_model and load_maps_from_mtz work unchanged.
+    var BLOB_URLS = [];
+    function blobUrl(b64) {
+      var binary = atob(b64);
+      var bytes = new Uint8Array(binary.length);
+      for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      var url = URL.createObjectURL(new Blob([bytes]));
+      BLOB_URLS.push(url);
+      return url;
+    }
+
+    function releaseBlobUrls() {
+      // Each epoch mints two more, and a long run would otherwise hold every
+      // epoch's files in memory for the life of the tab.
+      BLOB_URLS.forEach(function(url) { URL.revokeObjectURL(url); });
+      BLOB_URLS = [];
+    }
+
     // Receive reload commands from the parent notebook so the camera is preserved.
     window.addEventListener('message', function(event) {
       if (!event.data || event.data.type !== 'reload' || !V) return;
@@ -120,8 +145,9 @@ viewer_template = """<!doctype html>
         V.map_bags.splice(0, 1);
       }
       document.getElementById('hud').textContent = 'Loading PDB...';
-      V.load_model(msg.pdb_file, {stay: true});
-      loadMtz(msg.mtz_file, msg.map_keys);
+      releaseBlobUrls();
+      V.load_model(blobUrl(msg.pdb_b64), {stay: true});
+      loadMtz(blobUrl(msg.mtz_b64), msg.map_keys);
     });
 
     function loadMtz(mtzPath, mapKeys) {
@@ -141,11 +167,12 @@ viewer_template = """<!doctype html>
         V.config.map_radius = 12;
         V.config.water_style = "cross";
         document.getElementById('hud').textContent = 'Loading PDB...';
-        V.load_model('$pdb_file');
+        V.load_model(blobUrl('$pdb_b64'));
+        var mtzUrl = blobUrl('$mtz_b64');
         if (typeof Gemmi === 'undefined') {
-          setTimeout(function() { loadMtz('$mtz_file', $map_keys); }, 500);
+          setTimeout(function() { loadMtz(mtzUrl, $map_keys); }, 500);
         } else {
-          loadMtz('$mtz_file', $map_keys);
+          loadMtz(mtzUrl, $map_keys);
         }
       } catch(e) {
         document.getElementById('hud').textContent = 'Error: ' + e.message;
@@ -157,16 +184,37 @@ viewer_template = """<!doctype html>
 
 
 class GemmiMolViewer():
-    def __init__(self, pdb_file=None, mtz_file=None, viewer_id=None,
-                 pdb_url=None, mtz_url=None):
-        # pdb_file/mtz_file are paths the kernel will open (rs.read_mtz);
-        # pdb_url/mtz_url are paths the browser will request under /files/.
-        # On JupyterLab where server root_dir != kernel cwd, these differ.
+    """A standalone 3D viewer document with the model and maps embedded in it.
+
+    The files travel as base64 rather than as URLs the browser fetches. The only
+    URLs a notebook can offer are /files/ ones, which the jupyter server serves
+    solely from under its root_dir -- so results written anywhere else had no URL
+    at all, and Colab, which has no /files/ endpoint, never worked. Embedding
+    removes the server from the picture entirely; the page is self-contained.
+
+    The cost is size: roughly 4/3 of the two files, so about 1.5 MB for a typical
+    torchref epoch and up to ~5 MB for one of phenix's larger mtzs.
+    """
+
+    def __init__(self, pdb_file=None, mtz_file=None, viewer_id=None):
         self.pdb_file = pdb_file
         self.mtz_file = mtz_file
-        self.pdb_url = pdb_url if pdb_url is not None else pdb_file
-        self.mtz_url = mtz_url if mtz_url is not None else mtz_file
         self.viewer_id = viewer_id or str(uuid.uuid4())
+
+    @staticmethod
+    def encode(path):
+        """A file as base64, safe to drop straight into a javascript string."""
+        if path is None:
+            return ''
+        return base64.b64encode(Path(path).read_bytes()).decode('ascii')
+
+    @property
+    def pdb_b64(self):
+        return self.encode(self.pdb_file)
+
+    @property
+    def mtz_b64(self):
+        return self.encode(self.mtz_file)
 
     # (amplitude, phase) column pairs, in the order the viewer should stack them.
     # gemmimol's load_maps_from_mtz takes one flat list and reads it pairwise, so the
@@ -205,10 +253,23 @@ class GemmiMolViewer():
     @property
     def template_kwargs(self):
         return {
-            'mtz_file' : self.mtz_url,
-            'pdb_file' : self.pdb_url,
+            'mtz_b64' : self.mtz_b64,
+            'pdb_b64' : self.pdb_b64,
             'map_keys' : self.map_keys,
             'viewer_id': self.viewer_id,
+        }
+
+    @property
+    def reload_payload(self):
+        """What the parent postMessages to update an already-embedded viewer.
+
+        Re-embedding instead would rebuild the iframe and reset the camera.
+        """
+        return {
+            'type': 'reload',
+            'pdb_b64': self.pdb_b64,
+            'mtz_b64': self.mtz_b64,
+            'map_keys': self.map_keys,
         }
 
     @property
