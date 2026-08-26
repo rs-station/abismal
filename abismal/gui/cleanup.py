@@ -18,6 +18,13 @@ _FILE_PATTERNS = (
 _DIR_PATTERNS = (
     'eff_*',
     'diffmaps_*',
+    # runner._find_latest_phenix_results globs `eff_*` and `torchref_*` alike, so a
+    # torchref directory left behind is one the next run's viewer picks up and shows
+    # as if it belonged to the job that just started. Narrower than `eff_*` on
+    # purpose: --torchref-pdb points at the user's own models, so a `torchref_models`
+    # directory beside out_dir is an ordinary thing to have and must not be swept up.
+    # This is the exact shape TorchRefRunner writes.
+    'torchref_*_asu_*_epoch_*',
 )
 
 

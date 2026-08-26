@@ -284,6 +284,37 @@ def test_no_peak_plot_without_refinement(replay):
 
 
 # ---------------------------------------------------------------------------
+# re-running into the same directory
+# ---------------------------------------------------------------------------
+
+def test_overwriting_leaves_no_results_for_the_next_run_to_show(
+    replay, tmp_path, runner_factory
+):
+    """The reported bug, end to end. cleanup_abismal_outputs matched `eff_*` but not
+    `torchref_*`, while _find_latest_phenix_results globs both -- so after `Overwrite
+    and Run` the runner the form built next found the previous job's results and
+    rendered them as its own before the new job had written anything at all.
+    """
+    from abismal.gui.cleanup import cleanup_abismal_outputs, find_abismal_outputs
+
+    runner = replay(total_epochs=12, prefix="torchref")
+    H.wait_for_replay(runner, timeout=30)
+    assert "epoch_12" in (runner._last_pdb or "")
+    runner.shutdown()
+
+    out_dir = str(tmp_path / "run")
+    listed = find_abismal_outputs(out_dir)
+    assert any("torchref_0_asu_0_epoch_12" in p for p in listed), \
+        "the confirmation dialog never warned about these"
+    cleanup_abismal_outputs(out_dir)
+
+    fresh = runner_factory(out_dir=out_dir, has_phenix=True)
+    assert fresh._find_latest_phenix_results() == (None, None)
+    fresh._update_viewer()
+    assert not fresh.viewer_widget.outputs
+
+
+# ---------------------------------------------------------------------------
 # the child's working directory
 # ---------------------------------------------------------------------------
 

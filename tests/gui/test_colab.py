@@ -122,13 +122,11 @@ def test_a_broken_widget_does_not_stop_the_poll(runner_factory, fake_colab):
     assert callback() is True
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="_tail only clears _monitoring_active on the no-refinement path. With "
-           "has_phenix=True it is never cleared, so the Colab poll callback keeps "
-           "returning True and the browser interval runs for the life of the tab.",
-)
 def test_monitoring_stops_after_a_refinement_run(runner_factory, fake_colab, tmp_path):
+    """_tail clears _monitoring_active on the no-refinement path; the branch with
+    refinement has to clear it when its watcher gives up, or the poll callback keeps
+    returning True and the browser interval runs for the life of the tab.
+    """
     runner = runner_factory(has_phenix=True, out_dir=str(tmp_path))
     _, callback = fake_colab[0]
 

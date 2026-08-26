@@ -17,6 +17,15 @@ import matplotlib.pyplot as plt
 from abismal.gui.components.file_selector import _is_colab
 
 
+# Building and saving a figure is not thread-safe, and two threads do it here: the
+# tailer calls _poll directly while _schedule_poll's Timer calls it on its own
+# thread. Matplotlib's unsafe state is global rather than per-figure -- the
+# mathtext parser's pyparsing packrat cache above all -- so one lock covers every
+# runner, not one each. The peak plot's "$\sigma$" label is what made this show
+# up: without mathtext the race is silent and merely wasteful.
+_FIGURE_LOCK = threading.Lock()
+
+
 def _mtime(path):
     """Modification time, or None if the file went away mid-poll."""
     try:
@@ -332,11 +341,11 @@ class AbismalRunner:
 
         Nothing else cancels the poll Timer. `_schedule_poll` re-arms itself on every
         tick and only stops re-arming once `is_running` goes false, so an already-armed
-        timer always survives; and `_tail` clears `_monitoring_active` only on the
-        no-refinement path, so a `has_phenix` runner never clears it at all. The result
-        is that re-clicking Run, or a long-lived kernel, accumulates timer chains that
-        keep polling a finished job -- and on Colab keeps the browser's interval alive
-        for the life of the tab.
+        timer always survives. Clearing `_monitoring_active` is what stops the two
+        things that outlive the child: `_post_training_phenix_watcher`, which otherwise
+        keeps reading out_dir for two minutes after the job ends, and on Colab the
+        browser interval that syncs this runner's widgets. Without this, re-clicking Run
+        accumulates runners that go on polling a directory the next run is overwriting.
 
         This does not terminate the subprocess: `stop()` does that, and an attached job
         is deliberately allowed to outlive the kernel.
@@ -653,21 +662,23 @@ class AbismalRunner:
             return
 
         from matplotlib.figure import Figure
-        fig = Figure(figsize=(5 * len(panels), 4))
-        axes = fig.subplots(1, len(panels))
-        if len(panels) == 1:
-            axes = [axes]
 
-        for ax, (metrics, title, ylabel) in zip(axes, panels):
-            _plot_metrics(ax, df, metrics)
-            ax.set_xlabel('Epoch')
-            ax.set_title(title)
-            if ylabel:
-                ax.set_ylabel(ylabel)
-            ax.legend()
+        with _FIGURE_LOCK:
+            fig = Figure(figsize=(5 * len(panels), 4))
+            axes = fig.subplots(1, len(panels))
+            if len(panels) == 1:
+                axes = [axes]
 
-        fig.tight_layout()
-        self._show_figure(self.history_widget, fig)
+            for ax, (metrics, title, ylabel) in zip(axes, panels):
+                _plot_metrics(ax, df, metrics)
+                ax.set_xlabel('Epoch')
+                ax.set_title(title)
+                if ylabel:
+                    ax.set_ylabel(ylabel)
+                ax.legend()
+
+            fig.tight_layout()
+            self._show_figure(self.history_widget, fig)
 
     def _update_peaks(self):
         """Plot anomalous peak height against epoch, one line per residue.
@@ -705,19 +716,20 @@ class AbismalRunner:
         import seaborn as sns
         from matplotlib.figure import Figure
 
-        fig = Figure(figsize=(7, 4))
-        ax = fig.subplots()
-        sns.lineplot(
-            peak_data, x='Epoch', y='peakz', hue='Residue',
-            palette='Dark2', ax=ax,
-        )
-        sns.move_legend(ax, 'upper left', bbox_to_anchor=(1, 1))
-        ax.set_yscale('log')
-        ax.grid(which='both', axis='both', ls='-.')
-        ax.set_ylabel(r"Anomalous Peak Height ($\sigma$)")
-        fig.tight_layout()
+        with _FIGURE_LOCK:
+            fig = Figure(figsize=(7, 4))
+            ax = fig.subplots()
+            sns.lineplot(
+                peak_data, x='Epoch', y='peakz', hue='Residue',
+                palette='Dark2', ax=ax,
+            )
+            sns.move_legend(ax, 'upper left', bbox_to_anchor=(1, 1))
+            ax.set_yscale('log')
+            ax.grid(which='both', axis='both', ls='-.')
+            ax.set_ylabel(r"Anomalous Peak Height ($\sigma$)")
+            fig.tight_layout()
 
-        self._show_figure(self.peaks_widget, fig)
+            self._show_figure(self.peaks_widget, fig)
         self._peaks_signature = signature
         self._run_on_main_thread(
             lambda: setattr(self.peaks_label.layout, 'display', '')
@@ -827,6 +839,15 @@ class AbismalRunner:
             # File is still being written by Phenix — retry on next poll.
             return
 
+        # map_keys only opens the mtz, and both paths were globbed a poll ago, so
+        # neither says the files are still there now. `Overwrite and Run` rmtree's
+        # whole result directories while a poll may be in flight, and the viewer
+        # drops the model it is showing before it fetches the new one: name it a
+        # file that has since gone and it sits on "Loading..." forever. Nothing
+        # would retry either, since _update_viewer skips whatever _last_pdb names.
+        if not (os.path.exists(pdb_file) and os.path.exists(mtz_file)):
+            return
+
         # Advance cache only on success so a partial write doesn't block retries.
         self._last_pdb = pdb_file
         self._last_mtz = mtz_file
@@ -868,9 +889,15 @@ class AbismalRunner:
             },)
 
     def _post_training_phenix_watcher(self, max_unchanged=12):
-        """Keep polling for Phenix results after training exits (Phenix may still be running)."""
+        """Keep polling for Phenix results after training exits (Phenix may still be running).
+
+        `_monitoring_active` is the loop's other exit: this thread outlives the child by
+        up to `max_unchanged * poll_interval` -- two minutes by default -- and shutdown()
+        has to be able to stop it, or a runner the form has replaced goes on reading an
+        out_dir the next run is about to overwrite.
+        """
         unchanged = 0
-        while unchanged < max_unchanged:
+        while self._monitoring_active and unchanged < max_unchanged:
             time.sleep(self.poll_interval)
             prev = self._last_pdb
             self._update_viewer()
@@ -878,3 +905,7 @@ class AbismalRunner:
                 unchanged += 1
             else:
                 unchanged = 0
+        # Nothing polls after this, so the Colab sync loop has no reason to keep
+        # calling back into the kernel. _tail already does this on the branch with no
+        # refinement; this is the same signal for the branch that has one.
+        self._monitoring_active = False

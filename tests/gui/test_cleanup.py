@@ -78,19 +78,28 @@ def test_cleanup_of_a_clean_directory_is_a_noop(tmp_path):
     assert (tmp_path / "user_notes.txt").exists()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="_DIR_PATTERNS has eff_* and diffmaps_* but not torchref_*, while "
-           "runner._find_latest_phenix_results globs both. A --torchref-pdb run leaves "
-           "directories the overwrite dialog never lists and cleanup never removes, so "
-           "the next run's viewer can pick up the previous run's results.",
-)
 def test_finds_torchref_result_directories(tmp_path):
+    """_find_latest_phenix_results globs eff_* and torchref_* alike, so a torchref
+    directory cleanup leaves behind is one the next run's viewer shows as its own.
+    """
     (tmp_path / "torchref_0_asu_0_epoch_1").mkdir()
     (tmp_path / "torchref_0_asu_0_epoch_1" / "refined.pdb").write_text("x")
 
     found = {os.path.basename(p) for p in find_abismal_outputs(tmp_path)}
     assert "torchref_0_asu_0_epoch_1" in found
+
+
+def test_a_users_own_torchref_directory_is_not_swept_up(tmp_path):
+    """--torchref-pdb points at the user's own models, so a directory named after them
+    beside out_dir is an ordinary thing to have. Hence the torchref pattern is the full
+    `_asu_*_epoch_*` shape rather than the bare prefix `eff_*` gets.
+    """
+    (tmp_path / "torchref_models").mkdir()
+    (tmp_path / "torchref_models" / "start.pdb").write_text("keep me")
+
+    cleanup_abismal_outputs(tmp_path)
+
+    assert (tmp_path / "torchref_models" / "start.pdb").exists()
 
 
 def test_patterns_are_relative_not_globbed_paths():

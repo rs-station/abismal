@@ -184,6 +184,41 @@ def test_no_results_is_a_pair_of_nones(runner_factory, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# handing results to the viewer
+# ---------------------------------------------------------------------------
+
+def test_the_viewer_is_not_pointed_at_a_file_that_has_gone(runner_factory, tmp_path):
+    """`Overwrite and Run` rmtree's result directories while a poll may be in flight,
+    and rmtree unlinks a directory's files one at a time -- so a poll can find the mtz
+    and read it after the pdb beside it has already gone. The viewer drops the model it
+    is showing before fetching the new one, so naming it a missing file leaves it
+    loading forever, and _update_viewer would never retry a path already in _last_pdb.
+    """
+    directory = H.make_results_template(tmp_path / "torchref_0_asu_0_epoch_1")
+    runner = runner_factory(out_dir=str(tmp_path), has_phenix=True)
+    runner._viewer_initialized = True   # past the first render, so a reload is due
+
+    os.remove(directory / "refined.pdb")
+    runner._render_epoch(str(directory / "refined.pdb"), str(directory / "refined.mtz"))
+
+    assert not runner._js_widget.outputs
+    assert runner._last_pdb is None
+
+
+def test_a_result_that_is_still_there_is_rendered(runner_factory, tmp_path):
+    """The other half of the guard: it must not block the ordinary case."""
+    directory = H.make_results_template(tmp_path / "torchref_0_asu_0_epoch_1")
+    runner = runner_factory(out_dir=str(tmp_path), has_phenix=True)
+    runner._viewer_initialized = True
+
+    runner._render_epoch(str(directory / "refined.pdb"), str(directory / "refined.mtz"))
+
+    assert runner._last_pdb == str(directory / "refined.pdb")
+    scripts = [js for _, js in H.extract_scripts(runner._js_widget)]
+    assert scripts and runner._viewer_id in scripts[0]
+
+
+# ---------------------------------------------------------------------------
 # attach
 # ---------------------------------------------------------------------------
 
@@ -313,6 +348,26 @@ def test_shutdown_on_a_runner_that_never_started(runner_factory):
     runner = runner_factory()
     assert runner._poll_timer is None
     runner.shutdown()
+
+
+def test_shutdown_stops_the_post_training_watcher(runner_factory, tmp_path):
+    """The watcher outlives the child by max_unchanged x poll_interval -- two minutes
+    at the shipped settings -- polling out_dir the whole time. Nothing else can stop it,
+    so a runner the form has replaced would keep reading a directory the next run is
+    about to overwrite.
+    """
+    import threading
+
+    runner = runner_factory(out_dir=str(tmp_path), has_phenix=True)
+    watcher = threading.Thread(
+        target=runner._post_training_phenix_watcher, daemon=True
+    )
+    watcher.start()
+
+    runner.shutdown()
+    watcher.join(timeout=5.0)
+
+    assert not watcher.is_alive()
 
 
 def test_shutdown_leaves_the_subprocess_alone(runner_factory, monkeypatch):

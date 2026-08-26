@@ -254,3 +254,46 @@ def test_the_peak_plot_is_not_redrawn_when_nothing_changed(runner_factory, tmp_p
     write_peaks(out_dir / "eff_0_asu_0_epoch_4", [("A", 30, "CYS", 14.0)])
     runner._update_peaks()
     assert runner.peaks_widget.outputs is not first
+
+
+def test_two_threads_can_draw_at_once(runner_factory, tmp_path):
+    """The tailer calls _poll directly while _schedule_poll's Timer calls it on its
+    own thread, so both plots really are drawn concurrently. Matplotlib's unsafe
+    state is global -- the mathtext parser's pyparsing cache above all -- and the
+    peak plot's "$\\sigma$" label goes straight through it, so without a lock this
+    raises out of a daemon thread where nothing is watching.
+    """
+    import threading
+
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
+    (out_dir / "history.csv").write_text(HISTORY)
+    for epoch in range(1, 5):
+        write_peaks(out_dir / f"eff_0_asu_0_epoch_{epoch}",
+                    [("A", 30, "CYS", 10.0 + epoch), ("A", 80, "CYS", 8.0 + epoch)])
+
+    runner = runner_factory(out_dir=str(out_dir), has_phenix=True)
+
+    failures = []
+
+    def draw():
+        for _ in range(6):
+            try:
+                # Clear the guard each time, or only the first pass renders and the
+                # threads never overlap where it matters.
+                runner._peaks_signature = None
+                runner._update_peaks()
+                runner._update_history()
+            except Exception as error:
+                failures.append(error)
+                return
+
+    threads = [threading.Thread(target=draw) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(60)
+
+    assert not any(t.is_alive() for t in threads)
+    assert not failures, failures
+    assert png_of(runner.peaks_widget) is not None
