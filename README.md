@@ -26,14 +26,15 @@ pip install abismal
 
 ## Extras
 
-abismal ships two optional extras. They **compose** -- name both in one set of
-brackets rather than running two installs, so pip resolves everything in a single
-pass:
+abismal ships three optional extras. They **compose** -- name them in one set of
+brackets rather than running separate installs, so pip resolves everything in a
+single pass:
 
 | extra | what it adds |
 | --- | --- |
 | `cuda` | GPU-accelerated TensorFlow for merging (`tensorflow[and-cuda]`) |
 | `torchref` | PyTorch + torchref, for per-epoch refinement (`--torchref-pdb`) |
+| `gui` | JupyterLab and the widget stack behind `abismal_gui.ipynb` |
 
 ```bash
 pip install "abismal[cuda,torchref]"
@@ -74,6 +75,30 @@ each gets exactly what it asked for. Older PyTorch (2.9 and earlier) was also
 built on CUDA 12 and contended with TensorFlow for those pins; it resolved to the
 newer versions and both still worked, but nothing guarantees that in general.
 Re-check `pip list | grep nvidia` after any TensorFlow or PyTorch bump.
+
+## The notebook GUI
+
+`abismal[gui]` installs JupyterLab alongside the widgets, so the notebook is
+runnable straight after the install:
+
+```bash
+pip install "abismal[gui]"
+jupyter lab abismal_gui.ipynb
+```
+
+Run the first cell (it re-installs only if `abismal.gui` will not import), then
+the second, which builds the form.
+
+**Start JupyterLab from a directory that contains both your data and your output
+directory.** The file browser is server-side, and the 3D viewer fetches its pdb
+and mtz over a `/files/` URL resolved against the running server's root -- a path
+outside that root leaves the viewer frame empty with no error. A symlinked path
+is handled; an unrelated one is not.
+
+On Colab, upload your files to the session first (the Files pane, or
+`google.colab.files.upload()`) and point the file browser at `/content`. The
+`gui` extra installs a JupyterLab that Colab will not use; that is redundant but
+harmless.
 
 ## About the version pins
 
