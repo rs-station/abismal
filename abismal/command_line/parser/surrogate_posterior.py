@@ -1,6 +1,7 @@
 title = "Surrogate posteriors"
 description = "Arguments affecting the parameterization and initialization of surrogate posteriors"
 
+from pathlib import Path
 from abismal.scaling.scaling import ImageScaler
 
 args_and_kwargs = (
@@ -138,7 +139,7 @@ args_and_kwargs = (
             "--posterior-init-file",
         ),{
             "help": "A `.keras` model file from which to initialize the intensity or structure factors weights.",
-            "type": str,
+            "type": Path,
             "default": None,
         }
     ),
@@ -148,7 +149,7 @@ args_and_kwargs = (
             "--scale-init-file",
         ),{
             "help": "A `.keras` model file from which to initialize the scale model weights.",
-            "type": str,
+            "type": Path,
             "default": None,
         }
     ),

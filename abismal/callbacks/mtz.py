@@ -9,7 +9,7 @@ class MtzSaver(tfk.callbacks.Callback):
         super().__init__(*args, **kwargs)
         self.reference_mtz = reference_mtz
         if self.reference_mtz is not None:
-            self.reference_mtz = rs.read_mtz(reference_mtz)
+            self.reference_mtz = rs.read_mtz(str(reference_mtz))
         self.output_directory = abspath(output_directory)
 
         if not exists(self.output_directory):

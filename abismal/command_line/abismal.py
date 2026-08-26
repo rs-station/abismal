@@ -48,7 +48,8 @@ def main(args=None):
 
     from abismal.io.manager import DataManager
 
-    log_file = parser.out_dir + "/abismal.log"
+    out_dir = str(parser.out_dir)
+    log_file = out_dir + "/abismal.log"
     logger = logging.getLogger(__name__)
     logging.basicConfig(filename=log_file, level=logging.DEBUG)
     logger.info(f"Starting abismal, version {version}")
@@ -59,7 +60,7 @@ def main(args=None):
     logger.info("Configuring data input")
     dm = DataManager.from_parser(parser)
     train, test = dm.get_train_test_splits()
-    dm_file = parser.out_dir + "/datamanager.yml"
+    dm_file = out_dir + "/datamanager.yml"
     dm.to_file(dm_file)
     logger.info(f"Data manager config written to: {dm_file}")
     if test is not None:
@@ -266,12 +267,12 @@ def main(args=None):
     opt = Optimizer(**optimizer_kwargs)
 
     if parser.separate_friedel_mates:
-        mtz_saver = FriedelMtzSaver(parser.out_dir)
+        mtz_saver = FriedelMtzSaver(out_dir)
     else:
-        mtz_saver = MtzSaver(parser.out_dir, parser.reference_mtz)
+        mtz_saver = MtzSaver(out_dir, parser.reference_mtz)
 
-    history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id, start_time=start_time)
-    weight_saver = WeightSaver(parser.out_dir)
+    history_saver = HistorySaver(out_dir, gpu_id=parser.gpu_id, start_time=start_time)
+    weight_saver = WeightSaver(out_dir)
     freezer = StandardizationFreezer()
 
     callbacks = [
@@ -289,11 +290,11 @@ def main(args=None):
     callbacks.append(EarlyStopping(monitor=monitor, patience=parser.early_stopping_patience, mode=mode))
 
     if parser.eff_files is not None:
-        for i, eff_file in enumerate(parser.eff_files.split(",")):
+        for i, eff_file in enumerate(map(str, parser.eff_files)):
             pfx = f"eff_{i}"
             if parser.anomalous:
                 phenix_runner = AnomalousPeakFinder(
-                    parser.out_dir,
+                    out_dir,
                     eff_file,
                     epoch_stride=parser.phenix_frequency,
                     asu_id=0,
@@ -301,7 +302,7 @@ def main(args=None):
                 )
             elif parser.separate:
                 phenix_runner = DifferenceMap(
-                    parser.out_dir,
+                    out_dir,
                     eff_file,
                     epoch_stride=parser.phenix_frequency,
                     asu_id=0,
@@ -309,7 +310,7 @@ def main(args=None):
                 )
             else:
                 phenix_runner = PhenixRunner(
-                    parser.out_dir,
+                    out_dir,
                     eff_file,
                     epoch_stride=parser.phenix_frequency,
                     asu_id=0,
@@ -318,9 +319,9 @@ def main(args=None):
             callbacks.append(phenix_runner)
 
     if parser.torchref_pdb is not None:
-        for i, pdb_file in enumerate(parser.torchref_pdb.split(",")):
+        for i, pdb_file in enumerate(map(str, parser.torchref_pdb)):
             torchref_runner = TorchRefRunner(
-                parser.out_dir,
+                out_dir,
                 pdb_file,
                 epoch_stride=parser.torchref_frequency,
                 asu_id=0,
@@ -350,14 +351,14 @@ def main(args=None):
 
     if parser.scale_init_file is not None:
         logger.info(f"Initializing the scale model from {parser.scale_init_file}")
-        ref_model = tfk.saving.load_model(parser.scale_init_file)
+        ref_model = tfk.saving.load_model(str(parser.scale_init_file))
         model.scale_model.set_weights(ref_model.scale_model.get_weights())
 
     if parser.posterior_init_file is not None:
         logger.info(
             f"Initializing the surrogate posterior from {parser.posterior_init_file}"
         )
-        ref_model = tfk.saving.load_model(parser.posterior_init_file)
+        ref_model = tfk.saving.load_model(str(parser.posterior_init_file))
         model.surrogate_posterior.set_weights(
             ref_model.surrogate_posterior.get_weights()
         )

@@ -1,6 +1,9 @@
 title = "torchref"
 description = "Arguments for running torchref refinement periodically during optimization."
 
+from pathlib import Path
+from abismal.command_line.parser.custom_types import list_of_paths
+
 
 args_and_kwargs = (
     (
@@ -12,7 +15,7 @@ args_and_kwargs = (
                     "--torchref-frequency epochs (a PyTorch-based alternative "
                     "to phenix.refine that runs on Colab).",
             "default": None,
-            "type": str,
+            "type": list_of_paths,
         }
     ),
 
@@ -36,7 +39,7 @@ args_and_kwargs = (
                     "epoch and Rfree cannot be compared across epochs or "
                     "against phenix. Flags are matched on Miller index.",
             "default": None,
-            "type": str,
+            "type": Path,
         }
     ),
 

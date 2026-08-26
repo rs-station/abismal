@@ -1,6 +1,9 @@
 title = "IO"
 description = "Arguments controlling file inputs and outputs."
 
+from pathlib import Path
+from abismal.command_line.parser.custom_types import directory
+
 
 import os
 def available_cpus():
@@ -18,8 +21,8 @@ args_and_kwargs=(
             "--out-dir",
         ),{
         "help": "The directory in which to output results. The current working directory by default",
-        "default": ".",
-        "type": str,
+        "default": Path("."),
+        "type": directory,
         }
     ),
 
@@ -56,7 +59,7 @@ args_and_kwargs=(
         (
             "--reference-mtz",
         ),{
-            "type": str,
+            "type": Path,
             "default" : None,
             "help": 'A reference mtz file which will be used to determine the reindexing operator.',
         }
