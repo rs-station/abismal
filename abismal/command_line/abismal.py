@@ -282,6 +282,12 @@ def main(args=None):
     }
     from abismal.optimizers.optimizer_dict import optimizer_dict
 
+    # Passed only when set, so every optimizer keeps its own default -- notably
+    # AdamW's 0.004, which an unconditional None would silently turn back into
+    # plain Adam.
+    if parser.weight_decay is not None:
+        optimizer_kwargs['weight_decay'] = parser.weight_decay
+
     if 'tfk' in parser.optimizer:
         optimizer_kwargs.pop('lazy_vars')
     Optimizer = optimizer_dict[parser.optimizer]
