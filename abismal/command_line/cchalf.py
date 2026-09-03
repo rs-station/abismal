@@ -75,7 +75,7 @@ def main(args=None):
             model.compile(opt, run_eagerly=parser.run_eagerly)
 
             callbacks = [
-                MtzSaver(f"half_{half_id+1}", reference_mtz=parser.reference_mtz)
+                MtzSaver(f"half_{half_id+1}", reference_mtz=parser.reference_mtz, dmin=dm.dmin)
             ]
             history = model.fit(
                 x=half, 

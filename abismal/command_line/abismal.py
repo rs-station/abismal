@@ -20,6 +20,7 @@ def main(args=None):
         ReciprocalASU,
         ReciprocalASUCollection,
         ReciprocalASUGraph,
+        merge_dmin,
     )
     from abismal.merging import VariationalMergingModel
     from abismal.callbacks import (
@@ -65,6 +66,24 @@ def main(args=None):
     if test is not None:
         logger.info("There is a test set for validation")
 
+    reindexing_ops = ["x,y,z"]
+    if not parser.disable_index_disambiguation:
+        ops = gemmi.find_twin_laws(dm.cell, dm.spacegroup, 3.0, False)
+        reindexing_ops = reindexing_ops + [op.triplet() for op in ops]
+        logger.info(f"Adding disambiguation operators: {reindexing_ops}")
+
+    # A pseudo-symmetric reindexing operator moves reflections in resolution, so
+    # the outermost ones map past dmin and out of the ASU. Build the ASU to
+    # wherever the operators can reach and truncate back to dmin when saving.
+    # This is a no-op for the identity and for true lattice symmetries.
+    merge_dmin_ = merge_dmin(dm.cell, reindexing_ops, dm.dmin)
+    if merge_dmin_ < dm.dmin:
+        logger.info(
+            f"Reindexing operators reach {merge_dmin_:.4f} A from a dmin of "
+            f"{dm.dmin} A; merging at {merge_dmin_:.4f} A and truncating to "
+            f"{dm.dmin} A on output."
+        )
+
     rasu = []
     anomalous = False if parser.separate_friedel_mates else parser.anomalous
     logger.info(f"Data are anomalous (True/False): {anomalous}")
@@ -74,7 +93,7 @@ def main(args=None):
             ReciprocalASU(
                 dm.cell,
                 dm.spacegroup,
-                dm.dmin,
+                merge_dmin_,
                 anomalous=anomalous,
             )
         )
@@ -85,12 +104,6 @@ def main(args=None):
         parents=parser.parents,
         reindexing_ops=parser.reindexing_ops,
     )
-
-    reindexing_ops = ["x,y,z"]
-    if not parser.disable_index_disambiguation:
-        ops = gemmi.find_twin_laws(dm.cell, dm.spacegroup, 3.0, False)
-        reindexing_ops = reindexing_ops + [op.triplet() for op in ops]
-        logger.info(f"Adding disambiguation operators: {reindexing_ops}")
 
     posterior_kwargs = {}
 
@@ -266,9 +279,9 @@ def main(args=None):
     opt = Optimizer(**optimizer_kwargs)
 
     if parser.separate_friedel_mates:
-        mtz_saver = FriedelMtzSaver(parser.out_dir)
+        mtz_saver = FriedelMtzSaver(parser.out_dir, dmin=dm.dmin)
     else:
-        mtz_saver = MtzSaver(parser.out_dir, parser.reference_mtz)
+        mtz_saver = MtzSaver(parser.out_dir, parser.reference_mtz, dmin=dm.dmin)
 
     history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id, start_time=start_time)
     weight_saver = WeightSaver(parser.out_dir)

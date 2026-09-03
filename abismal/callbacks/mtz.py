@@ -5,15 +5,28 @@ from os import mkdir
 import numpy as np
 
 class MtzSaver(tfk.callbacks.Callback):
-    def __init__(self, output_directory, reference_mtz=None, *args, **kwargs):
+    def __init__(self, output_directory, reference_mtz=None, dmin=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.reference_mtz = reference_mtz
         if self.reference_mtz is not None:
             self.reference_mtz = rs.read_mtz(reference_mtz)
+        self.dmin = dmin
         self.output_directory = abspath(output_directory)
 
         if not exists(self.output_directory):
             mkdir(output_directory)
+
+    def truncate(self, merged):
+        """Cut back to the resolution the user asked for.
+
+        The ASU may extend past dmin to give the reindexing operators somewhere
+        to land. Must run *after* reindexing: in a solution that settled on a
+        pseudo-symmetric operator, it is precisely those extra reflections that
+        carry the outermost shell, and cutting first would throw it away.
+        """
+        if self.dmin is None:
+            return merged
+        return merged[merged.compute_dHKL()['dHKL'] >= self.dmin]
 
     def reindex_dataset(self, merged, anomalous):
         keys = merged.keys()
@@ -61,6 +74,7 @@ class MtzSaver(tfk.callbacks.Callback):
             if self.reference_mtz is not None:
                 anomalous = self.model.surrogate_posterior.rac.reciprocal_asus[asu_id].anomalous
                 data = self.reindex_dataset(data, anomalous)
+            data = self.truncate(data)
             data.write_mtz(f"{self.output_directory}/asu_{asu_id}_epoch_{epoch+1}.mtz")
 
 class FriedelMtzSaver(MtzSaver):
@@ -88,6 +102,7 @@ class FriedelMtzSaver(MtzSaver):
             ds_minus.apply_symop('-x,-y,-z'),
         )).unstack_anomalous()
         data = data[[k for k in self.column_names if k in data]]
+        data = self.truncate(data)
         data.write_mtz(f"{self.output_directory}/asu_0_epoch_{epoch+1}.mtz")
 
 
