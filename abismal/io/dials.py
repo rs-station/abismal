@@ -192,7 +192,8 @@ class StillsLoader(DataLoader):
         SigI = SigI[idx, None]
         bg = bg[idx]
 
-        metadata = [xy, bg, hkl]
+        #metadata = [xy, bg, hkl]
+        metadata = [xy, bg]
         if include_eo:
             metadata.extend([
                 delpsical, dQ,
