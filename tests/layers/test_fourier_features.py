@@ -111,14 +111,21 @@ def test_round_trips_through_keras(points, tmp_path):
     assert layer.trainable_B is False
 
 
-def test_works_on_ragged_through_map_flat_values(points):
+def test_accepts_ragged_input_like_dense_does(points):
+    """It stands in for a Dense on ragged per-image batches, so it must take one."""
     layer = FourierFeatures(16, seed=0)
     splits = tf.constant([0, 100, 300], dtype=tf.int64)
     ragged = tf.RaggedTensor.from_row_splits(tf.convert_to_tensor(points), splits)
-    out = tf.ragged.map_flat_values(layer, ragged)
+
+    out = layer(ragged)
+    assert isinstance(out, tf.RaggedTensor)
     assert out.shape[0] == 2
     assert out.flat_values.shape == (len(points), 32)
     assert np.allclose(out.flat_values.numpy(), layer(points).numpy())
+
+    # and going through map_flat_values explicitly agrees
+    viaflat = tf.ragged.map_flat_values(layer, ragged)
+    assert np.allclose(viaflat.flat_values.numpy(), out.flat_values.numpy())
 
 
 @pytest.mark.parametrize("bad", [0.0, -1.0, [1.0, -2.0]])

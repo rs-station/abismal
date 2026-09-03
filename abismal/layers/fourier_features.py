@@ -15,11 +15,17 @@ class FourierFeatures(tfk.layers.Layer):
     .. math::
         z(x) \cdot z(y) \;\approx\; \exp\!\left(-\frac{\|x-y\|^2}{2\ell^2}\right)
 
-    so any network reading these features is, in effect, restricted to
-    functions that vary no faster than ``length_scale``. That is the point of
-    the layer: the bandwidth becomes a declared property of the function class
-    rather than something enforced by perturbing the inputs, and it applies
-    identically at training and at evaluation time.
+    so the encoding itself carries no structure finer than ``length_scale``,
+    and unlike input noise it is a property of the layer rather than of the
+    training loop -- it is in force at evaluation time too.
+
+    How far that constrains the model depends on what reads the features. A
+    *linear* readout inherits the bound: fitting a target eight times beyond
+    the band at ``length_scale=1`` reaches only r = 0.196. A nonlinear one does
+    not -- a 3-layer MLP on the same features reaches r = 1.000, because
+    products of the cos/sin terms generate sum frequencies. So treat the length
+    scale as a smoothness prior on the input representation, not a bound on the
+    function a deep network can express through it.
 
     ``B`` is a non-trainable weight. It is drawn once at build time and then
     saved and restored with the model -- a redrawn ``B`` would be a different
@@ -32,8 +38,8 @@ class FourierFeatures(tfk.layers.Layer):
 
     Notes
     -----
-    Expects a dense tensor. For ragged input, call through
-    ``tf.ragged.map_flat_values``.
+    Accepts dense or ragged input and returns the same kind, so it can stand in
+    for a ``Dense`` on the ragged per-image batches used throughout abismal.
 
     The length scale is in units of the input's own scale. Metadata reaching
     the scale model has already been standardized per column, so a scalar
@@ -106,6 +112,13 @@ class FourierFeatures(tfk.layers.Layer):
         self.built = True
 
     def call(self, data, **kwargs):
+        # Ragged in, ragged out, as Dense does -- this layer stands in for a
+        # Dense on ragged per-image batches, and matmul has no ragged kernel.
+        if isinstance(data, tf.RaggedTensor):
+            return tf.ragged.map_flat_values(self._encode, data)
+        return self._encode(data)
+
+    def _encode(self, data):
         projected = tf.matmul(tf.cast(data, self.B.dtype), self.B)
         # 1/sqrt(num_frequencies), not sqrt(2/num_frequencies): the cos and sin
         # pair already supplies the factor of two, so this normalization is
