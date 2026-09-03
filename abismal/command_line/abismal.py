@@ -173,6 +173,10 @@ def main(args=None):
             from abismal.surrogate_posterior.intensity.gamma import (
                 GammaPosterior as Posterior,
             )
+        elif parser.posterior_distribution == "lognormal":
+            from abismal.surrogate_posterior.intensity.lognormal import (
+                LogNormalPosterior as Posterior,
+            )
         elif parser.posterior_distribution == "nakagami":
             raise ValueError("Nakagami distributed intensity posteriors are not supported.")
         elif parser.posterior_distribution == "normal":
@@ -202,6 +206,10 @@ def main(args=None):
         elif parser.posterior_distribution == "nakagami":
             from abismal.surrogate_posterior.structure_factor.nakagami import (
                 NakagamiPosterior as Posterior,
+            )
+        elif parser.posterior_distribution == "lognormal":
+            from abismal.surrogate_posterior.structure_factor.lognormal import (
+                LogNormalPosterior as Posterior,
             )
         elif parser.posterior_distribution == "normal":
             if parser.posterior_rank == 1:
