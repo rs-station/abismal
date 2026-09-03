@@ -186,7 +186,20 @@ class VariationalMergingModel(tfk.models.Model):
             _ipred = tf.ragged.map_flat_values(tf.multiply, _ipred, scale)
 
             _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
-            _ll = tf.reduce_mean(_ll, [-1, -2], keepdims=True)
+
+            # See _call_independent: only score what the operator can index.
+            _valid = self.surrogate_posterior.rac.valid(asu_id, _hkl)
+            _ll = tf.ragged.map_flat_values(
+                lambda l, v: l * tf.cast(v, l.dtype), _ll, _valid
+            )
+            _nvalid = tf.reduce_sum(
+                tf.cast(_valid, _ll.dtype), [-1, -2], keepdims=True
+            )
+            _mc = tf.cast(tf.shape(_ll.flat_values)[-1], _ll.dtype)
+            _ll = tf.math.divide_no_nan(
+                tf.reduce_sum(_ll, [-1, -2], keepdims=True), _nvalid * _mc
+            )
+            _ll = tf.where(_nvalid > 0., _ll, tf.constant(-1e30, _ll.dtype))
 
             if ll is None:
                 ipred = _ipred
@@ -269,7 +282,27 @@ class VariationalMergingModel(tfk.models.Model):
             _ipred = tf.ragged.map_flat_values(tf.multiply, _ipred, scale)
 
             _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
-            _ll = tf.reduce_mean(_ll, [-1, -2], keepdims=True)
+
+            # An operator can push a reflection past dmin and out of the ASU,
+            # where the gather silently returns reflection 0 instead. Score the
+            # operators only on what they can actually index, so a miss cannot
+            # earn one of them a spurious likelihood; an operator that indexes
+            # nothing in an image loses outright.
+            _valid = self.surrogate_posterior.rac.valid(asu_id, _hkl)
+            _ll = tf.ragged.map_flat_values(
+                lambda l, v: l * tf.cast(v, l.dtype), _ll, _valid
+            )
+            _kl_div = tf.ragged.map_flat_values(
+                lambda k, v: k * tf.cast(v, k.dtype), _kl_div, _valid
+            )
+            _nvalid = tf.reduce_sum(
+                tf.cast(_valid, _ll.dtype), [-1, -2], keepdims=True
+            )
+            _mc = tf.cast(tf.shape(_ll.flat_values)[-1], _ll.dtype)
+            _ll = tf.math.divide_no_nan(
+                tf.reduce_sum(_ll, [-1, -2], keepdims=True), _nvalid * _mc
+            )
+            _ll = tf.where(_nvalid > 0., _ll, tf.constant(-1e30, _ll.dtype))
 
             if ll is None:
                 ipred = _ipred

@@ -86,6 +86,32 @@ class ReciprocalASUCollection(tfk.layers.Layer):
         safe = tf.maximum(idx, 0)
         return tf.gather(tensor, safe)
 
+    def _valid(self, asu_id, H):
+        return (self._miller_ids(asu_id, H) >= 0)[..., None]
+
+    def valid(self, asu_id, H):
+        """Which of these miller indices does the collection actually contain?
+
+        `_gather` has nothing to return for an index outside the ASU, so it
+        falls back on index 0. That is a silent lie -- the reflection gets the
+        posterior of whatever happens to sit first in the ASU -- and callers
+        need to be able to drop those rather than score them. A reindexing
+        operator that moves reflections in resolution is the way it happens in
+        practice: the outermost images land past dmin.
+
+        Parameters
+        ----------
+        asu_id : tf.Tensor
+            A potentially ragged tensor of asu ids
+        H : tf.Tensor
+            A potentially ragged tensor of miller indices
+
+        Returns
+        -------
+        Boolean tensor shaped like `asu_id`.
+        """
+        return tf.ragged.map_flat_values(self._valid, asu_id, H)
+
     def gather(self, tensor, asu_id, H):
         """
         Parameters
