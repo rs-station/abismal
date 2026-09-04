@@ -76,13 +76,6 @@ class DataManager:
         self.mtz_metadata = mtz_metadata
         self.shuffle_buffer_size = shuffle_buffer_size
         self.batch_size = batch_size
-        # 0 means "one pass over the data per epoch", which is what `None` has
-        # always meant internally: `repeat_train` keys off `is None` to decide
-        # whether to repeat the dataset, and Keras infers the step count from
-        # the data. Normalizing here rather than in the parser keeps the two
-        # spellings equivalent for anyone constructing a DataManager directly
-        # or reloading one from a datamanager.yml written before the default
-        # changed.
         if steps_per_epoch == 0:
             steps_per_epoch = None
         self.steps_per_epoch = steps_per_epoch
