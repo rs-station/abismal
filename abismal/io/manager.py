@@ -76,6 +76,8 @@ class DataManager:
         self.mtz_metadata = mtz_metadata
         self.shuffle_buffer_size = shuffle_buffer_size
         self.batch_size = batch_size
+        if steps_per_epoch == 0:
+            steps_per_epoch = None
         self.steps_per_epoch = steps_per_epoch
         self.validation_steps = validation_steps
         self.epochs = epochs
