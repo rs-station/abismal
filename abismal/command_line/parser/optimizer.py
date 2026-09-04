@@ -99,8 +99,8 @@ args_and_kwargs=(
         (
             "--optimizer",
         ),{
-            "help": "Choose the optimizer to use.",
-            "default" : 'adabelief', 
+            "help": "Choose the optimizer to use. The default is adam.",
+            "default" : 'adam', 
             "type" : str.lower,
             "choices": optimizer_dict.keys(),
         }
