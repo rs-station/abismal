@@ -558,3 +558,97 @@ def test_a_refiner_without_structure_factors_is_survivable(worker, refined_mtz):
     assert np.allclose(_column(path, "F-model"), fmodel_before)
     assert _column(path, "PANOM").min() >= -180.0
     assert panom_before.min() < -180.0
+
+
+# --------------------------------------------------------------------------
+# cell handling: the merged data are stamped with the model cell
+# --------------------------------------------------------------------------
+
+def _mtz(tmp_path, name, cell, spacegroup="P 21 21 21", column="F", flag=False):
+    """A tiny merged-style MTZ on a handful of Miller indices."""
+    import reciprocalspaceship as rs
+
+    h = np.array([[1, 2, 3], [2, 4, 6], [3, 6, 9], [4, 8, 12], [1, 1, 1]])
+    ds = rs.DataSet(
+        {
+            "H": rs.DataSeries(h[:, 0], dtype="H"),
+            "K": rs.DataSeries(h[:, 1], dtype="H"),
+            "L": rs.DataSeries(h[:, 2], dtype="H"),
+        },
+        cell=gemmi.UnitCell(*cell),
+        spacegroup=gemmi.SpaceGroup(spacegroup),
+        merged=True,
+    ).set_index(["H", "K", "L"])
+    if flag:
+        ds["R-free-flags"] = rs.DataSeries([0, 1, 1, 1, 1], index=ds.index, dtype="MTZInt")
+    else:
+        ds[column] = rs.DataSeries(np.arange(len(ds), dtype="float32") + 1.0,
+                                   index=ds.index, dtype="F")
+        ds["SIG" + column] = rs.DataSeries(np.ones(len(ds), "float32"),
+                                           index=ds.index, dtype="Q")
+    path = tmp_path / name
+    ds.write_mtz(str(path))
+    return str(path)
+
+
+@pytest.mark.parametrize("pct", [0.0, 1.0, 5.0, 20.0])
+def test_r_free_join_survives_a_disagreeing_cell(worker, tmp_path, pct):
+    """Flags match on Miller index, so cell agreement is not a precondition.
+
+    rs.DataSet.join rejects operands whose cells differ by more than 0.5% in any
+    parameter. A merged MTZ carrying a nominal cell from a stream can easily sit
+    outside that, and refusing the join there is a false negative.
+    """
+    import reciprocalspaceship as rs
+
+    ref = (30.0, 40.0, 50.0, 90.0, 90.0, 90.0)
+    off = (30.0 * (1 + pct / 100.0),) + ref[1:]
+    flags = _mtz(tmp_path, f"flags{pct}.mtz", ref, flag=True)
+    ds = rs.read_mtz(_mtz(tmp_path, f"data{pct}.mtz", off))
+
+    out = worker.join_r_free_flags(ds, flags)
+    assert "R-free-flags" in out.columns
+    # every reflection is present in both files, so all of them match
+    assert np.isfinite(out["R-free-flags"].to_numpy("float64")).all()
+
+
+def test_r_free_join_still_rejects_a_spacegroup_mismatch(worker, tmp_path):
+    """The half of the isomorphism check that does bear on matching hkl."""
+    import reciprocalspaceship as rs
+
+    cell = (30.0, 40.0, 50.0, 90.0, 90.0, 90.0)
+    flags = _mtz(tmp_path, "sg_flags.mtz", cell, flag=True)
+    ds = rs.read_mtz(_mtz(tmp_path, "sg_data.mtz", cell))
+    ds.spacegroup = gemmi.SpaceGroup("P 1")
+
+    with pytest.raises(ValueError, match="spacegroup"):
+        worker.join_r_free_flags(ds, flags)
+
+
+def test_prepare_data_stamps_the_model_cell(worker, tmp_path):
+    """The written input_data.mtz carries the model's cell, not the merge's.
+
+    Regression test for ordering: stamping the cell after the R-free join left
+    the join to compare the merge cell against the flag file's, which fails on
+    serial data whose nominal cell drifts from the model.
+    """
+    import reciprocalspaceship as rs
+
+    model_cell = (30.0, 40.0, 50.0, 90.0, 90.0, 90.0)
+    merged_cell = (33.0, 40.0, 47.0, 90.0, 90.0, 90.0)  # ~10% and ~6% off
+
+    st = gemmi.Structure()
+    st.cell = gemmi.UnitCell(*model_cell)
+    st.spacegroup_hm = "P 21 21 21"
+    pdb = tmp_path / "model.pdb"
+    st.write_pdb(str(pdb))
+
+    data = _mtz(tmp_path, "merged.mtz", merged_cell)
+    flags = _mtz(tmp_path, "rfree.mtz", model_cell, flag=True)
+
+    out_path, _anomalous = worker.prepare_data(
+        data, str(pdb), str(tmp_path), r_free_mtz=flags
+    )
+    written = rs.read_mtz(out_path)
+    assert written.cell.parameters == pytest.approx(model_cell, abs=1e-3)
+    assert "R-free-flags" in written.columns
