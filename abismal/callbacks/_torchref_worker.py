@@ -618,7 +618,21 @@ def join_r_free_flags(ds, r_free_mtz, r_free_value=None):
     ).astype("int32")
     flags = flags[[R_FREE_FLAG_NAMES[0]]].astype({R_FREE_FLAG_NAMES[0]: "MTZInt"})
 
-    out = ds.join(flags, how="left")
+    # Match on Miller index only. rs.DataSet.join otherwise refuses operands
+    # whose cells differ by more than 0.5% in any parameter, and the flag file's
+    # cell is its own -- typically the one the R-free set was generated with,
+    # which need not agree with the model to within that. Cell agreement is not
+    # a precondition for matching hkl, so the check is dropped; the half of it
+    # that does matter, the spacegroup, is kept explicitly below, and a join
+    # that lands on the wrong ASU still trips the `matched == 0` guard.
+    if ds.spacegroup is not None and flags.spacegroup is not None:
+        if ds.spacegroup.xhm() != flags.spacegroup.xhm():
+            raise ValueError(
+                f"{r_free_mtz} is in spacegroup {flags.spacegroup.xhm()!r} but "
+                f"the merged data are in {ds.spacegroup.xhm()!r}; R-free flags "
+                "cannot be matched across spacegroups."
+            )
+    out = ds.join(flags, how="left", check_isomorphous=False)
     joined = out[R_FREE_FLAG_NAMES[0]].to_numpy("float64")
     matched = int(np.isfinite(joined).sum())
     if matched == 0:
@@ -691,10 +705,17 @@ def prepare_data(mtz_path, pdb_path, out_dir, r_free_mtz=None,
             flush=True,
         )
 
+    # Stamp the model cell on before anything else touches the data. The merged
+    # MTZ carries whatever nominal cell the merge ran with -- for serial data
+    # that is a per-run average which can sit a percent or more from the model's
+    # -- and refinement, scaling, the output PDB and the map MTZ all have to
+    # share one cell anyway. Doing it here rather than after the R-free join
+    # also keeps the join off the difference: rs.DataSet.join rejects operands
+    # whose cells disagree by more than 0.5% in any parameter.
+    ds.cell = gemmi.read_structure(str(pdb_path)).cell
+
     if r_free_mtz is not None:
         ds = join_r_free_flags(ds, r_free_mtz, r_free_value=r_free_value)
-
-    ds.cell = gemmi.read_structure(str(pdb_path)).cell
 
     # Named to end in 'data.mtz' so the GUI result-viewer's exclusion glob skips
     # it and only picks up the refined output mtz.
