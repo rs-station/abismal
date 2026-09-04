@@ -403,7 +403,11 @@ def main(args=None):
     history = model.fit(
         x=train,
         epochs=parser.epochs,
-        steps_per_epoch=parser.steps_per_epoch,
+        # dm, not parser: the manager normalizes --steps-per-epoch 0 to None,
+        # and it is what decided whether the dataset was repeated. Passing the
+        # raw 0 through would give Keras a zero-length epoch over an
+        # unrepeated dataset. cchalf.py already reads it from the manager.
+        steps_per_epoch=dm.steps_per_epoch,
         validation_steps=parser.validation_steps,
         callbacks=callbacks,
         validation_data=test,

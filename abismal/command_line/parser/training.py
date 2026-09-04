@@ -17,8 +17,12 @@ args_and_kwargs = (
         (
             "--steps-per-epoch",
         ),{
-            "help": "Optional set the number of gradient steps in an epoch dictating how often output will be saved.",
-            "default": None,
+            "help": "The number of gradient steps in an epoch, which dictates how often output is "
+                    "saved and how often the per-epoch callbacks run. The dataset is repeated as "
+                    "needed to fill an epoch, so this is independent of how much data there is. "
+                    "The default is 1000. Pass 0 for one pass over the data per epoch, which makes "
+                    "epoch length scale with dataset size.",
+            "default": 1000,
             "type": int,
         }
     ),
