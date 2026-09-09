@@ -314,8 +314,17 @@ class ReflectionFileSelector(ServerFileSelectorWidget):
 
     def __init__(self, *args, **kwargs):
         kwargs.pop('name', None)
-        kwargs.pop('action', None)
+        action = kwargs.pop('action', None)
+        if action is None and args:
+            action = args[0]
         super().__init__(**kwargs)
+        # Carry the argument's help like every other control does. This one is
+        # built from the action directly rather than through action_to_widget,
+        # so it is the one place a tooltip has to be attached by hand.
+        help_text = getattr(action, 'help', None)
+        if help_text:
+            self.tooltip = help_text
+            self.header_label.tooltip = help_text
 
     def file_filter(self, file_name):
         return any(file_name.endswith(s) for s in self.file_types)
@@ -364,9 +373,14 @@ class PathSelector(widgets.VBox):
         self._current_dir = Path(initial_directory).resolve()
 
         self._label = _label(description)
+        # The help goes on the field as well as the Browse button. The field is
+        # where the value lives and where every other argument's tooltip sits,
+        # so hovering it is what a reader tries first; with the help only on the
+        # button, a path argument looked like it had no help at all.
         self._input = widgets.Text(
             value=value,
             placeholder=placeholder,
+            tooltip=tooltip,
             layout=widgets.Layout(flex='1'),
         )
         self._browse_button = widgets.Button(
@@ -385,6 +399,7 @@ class PathSelector(widgets.VBox):
             self._name_input = widgets.Text(
                 value=name,
                 placeholder='new directory name',
+                tooltip=tooltip,
                 layout=widgets.Layout(flex='1'),
             )
             separator = widgets.HTML(

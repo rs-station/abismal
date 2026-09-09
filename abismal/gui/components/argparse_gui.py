@@ -207,6 +207,7 @@ class ArgparseGUIBase:
                     value=default,
                     description=name,
                     disabled=False,
+                    tooltip=action.help or "",
                 )
             else:
                 placeholder = str(action.default) if action.default is not None else ""

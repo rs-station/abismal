@@ -575,3 +575,63 @@ def test_no_widget_class_colab_cannot_render(real_form):
                  "AppLayout", "GridspecLayout", "TwoByTwoLayout"}
     seen = {type(w).__name__ for w in _iter(real_form.widget)}
     assert not seen & forbidden, sorted(seen & forbidden)
+
+
+# ---------------------------------------------------------------------------
+# tooltips
+# ---------------------------------------------------------------------------
+
+def _tooltips(widget):
+    """Every tooltip reachable on a control row, wrapper or not."""
+    found = []
+    stack = [widget]
+    while stack:
+        w = stack.pop()
+        tip = getattr(w, "tooltip", None)
+        if tip:
+            found.append(tip)
+        stack.extend(getattr(w, "children", ()) or ())
+    return found
+
+
+def test_every_argument_carries_its_help_as_a_tooltip():
+    """Regression: dropdowns and path selectors used to show no help.
+
+    The Dropdown branch never passed `tooltip` at all, and PathSelector put the
+    help only on its Browse button, so hovering the field -- where every other
+    argument's tooltip sits -- showed nothing.
+    """
+    form = ArgparseGUI()
+    form.to_widget()
+
+    missing = []
+    for action, widget in form._all_args.items():
+        if not action.help:
+            continue
+        if action.help not in _tooltips(widget):
+            missing.append((action.dest, type(widget).__name__))
+
+    assert not missing, f"widgets with no help tooltip: {missing}"
+
+
+def test_a_dropdown_carries_its_help():
+    """A dropdown's tooltip tracks its action's help, empty help included."""
+    parser = argparse.ArgumentParser(prog="t", add_help=False)
+    parser.add_argument("--with-help", choices=("a", "b"), default="a",
+                        help="pick one")
+    parser.add_argument("--no-help", choices=("a", "b"), default="a")
+    form = ArgparseGUIBase(parser=parser)
+    form.to_widget()
+
+    assert widget_for(form, "with_help")._dropdown.tooltip == "pick one"
+    assert widget_for(form, "no_help")._dropdown.tooltip == ""
+
+
+def test_a_path_selector_puts_its_help_on_the_field_not_only_the_button():
+    """The field is the value; the button is a convenience."""
+    from abismal.gui.components.file_selector import PathSelector
+
+    sel = PathSelector(description="out-dir", mode="save", tooltip="where output goes")
+    assert sel._input.tooltip == "where output goes"
+    assert sel._name_input.tooltip == "where output goes"
+    assert sel._browse_button.tooltip == "where output goes"
