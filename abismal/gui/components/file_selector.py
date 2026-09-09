@@ -321,9 +321,15 @@ class ReflectionFileSelector(ServerFileSelectorWidget):
         # Carry the argument's help like every other control does. This one is
         # built from the action directly rather than through action_to_widget,
         # so it is the one place a tooltip has to be attached by hand.
+        #
+        # On the header, not on self: Box/VBox/HBox carry a `tooltip` trait but
+        # no `description`, and the frontend's updateTooltip reads
+        # `description.length` whenever a tooltip is set. Setting one on a
+        # container therefore throws "Cannot read properties of undefined
+        # (reading 'length')" and the whole view fails to render. Python-side
+        # the assignment looks perfectly fine, which is what makes it a trap.
         help_text = getattr(action, 'help', None)
         if help_text:
-            self.tooltip = help_text
             self.header_label.tooltip = help_text
 
     def file_filter(self, file_name):

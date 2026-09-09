@@ -627,6 +627,30 @@ def test_a_dropdown_carries_its_help():
     assert widget_for(form, "no_help")._dropdown.tooltip == ""
 
 
+def test_no_tooltip_sits_on_a_container_widget():
+    """A tooltip on a Box/VBox/HBox breaks the frontend.
+
+    Those carry a `tooltip` trait but no `description`, and ipywidgets'
+    updateTooltip reads `description.length` whenever a tooltip is set -- so the
+    view dies with "Cannot read properties of undefined (reading 'length')" and
+    nothing renders. Python-side the assignment is accepted silently, so only a
+    check like this catches it.
+    """
+    form = ArgparseGUI()
+    form.to_widget()
+
+    offenders = []
+    stack = list(form._all_args.values())
+    while stack:
+        w = stack.pop()
+        traits = type(w).class_trait_names()
+        if getattr(w, "tooltip", None) and "description" not in traits:
+            offenders.append(type(w).__name__)
+        stack.extend(getattr(w, "children", ()) or ())
+
+    assert not offenders, f"tooltip set on description-less widgets: {offenders}"
+
+
 def test_a_path_selector_puts_its_help_on_the_field_not_only_the_button():
     """The field is the value; the button is a convenience."""
     from abismal.gui.components.file_selector import PathSelector
