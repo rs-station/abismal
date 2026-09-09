@@ -62,10 +62,16 @@ class MTZLoader(DataLoader):
         self.batch_key = batch_key
         self.intensity_key = intensity_key
         self.sigma_key = sigma_key
+        self.provided_metadata_keys = [
+            'dHKL',
+            'Hobs',
+            'Lobs',
+            'Kobs',
+        ]
 
     def get_dataset(self):
         ds = rs.read_mtz(self.mtz_file)
-        missing = [k for k in self.metadata_keys if k not in ds]
+        missing = [k for k in self.metadata_keys if k not in ds and k not in self.provided_metadata_keys]
         if missing and self.explicit_metadata_keys:
             raise ValueError(
                 f"{self.mtz_file}: requested metadata column(s) "
