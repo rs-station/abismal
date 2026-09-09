@@ -270,7 +270,7 @@ class VariationalMergingModel(tfk.models.Model):
             p = self.prior(_inputs, flat=False)
             z = q.sample(mc_samples)
             _kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
- 
+
             _kl_div = tf.RaggedTensor.from_row_splits(_kl_div[...,None], iobs.row_splits, validate=False)
             _ipred = tf.RaggedTensor.from_row_splits(tf.transpose(z), iobs.row_splits, validate=False)
 

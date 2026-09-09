@@ -233,7 +233,6 @@ def main(args=None):
         kl_weight=parser.scale_kl_weight,
         epsilon=parser.epsilon,
         ff_epsilon=parser.ff_epsilon,
-        num_image_samples=parser.sample_reflections_per_image,
         prior_name=parser.scale_prior_distribution,
         posterior_name=parser.scale_posterior_distribution,
         bijector_name=parser.scale_posterior_bijector,
