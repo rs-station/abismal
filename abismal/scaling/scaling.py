@@ -188,7 +188,6 @@ class ImageScaler(tfk.models.Model):
             kl_weight=1.,
             epsilon=1e-12,
             ff_epsilon=None,
-            num_image_samples=None,
             share_weights=True,
             prior_name='exponential',
             posterior_name='foldednormal',
@@ -224,9 +223,6 @@ class ImageScaler(tfk.models.Model):
         ff_epsilon : float (optional)
             Epsilon used by the feed forward layers' `pre_activation`, when that is a
             normalizer. Defaults to None, in which case it falls back to `epsilon`.
-        num_image_samples : int (optional)
-            The number of reflections to sample in order to create the image representation vectors. 
-            No subsampling will be done if this is set to None which is the default. 
         share_weights : bool (optional)
             Whether or not share neural network weights between the image model and the scale model. 
             The default is True. 
@@ -254,7 +250,6 @@ class ImageScaler(tfk.models.Model):
         """
         super().__init__(**kwargs)
         self.kl_weight = kl_weight
-        self.num_image_samples = num_image_samples
         self.mlp_width = mlp_width
         self.mlp_depth = mlp_depth
         self.epsilon = epsilon
@@ -284,7 +279,6 @@ class ImageScaler(tfk.models.Model):
         kernel_initializer = tfk.initializers.VarianceScaling(scale=mlp_depth**-1.0, mode='fan_avg', seed=random_seed) #FixUp init for early layers
         if optimize_prior_scale:
             self.output_prior = tfk.layers.Dense(2, kernel_initializer=kernel_initializer, use_bias=output_bias)
-            self.input_prior = tfk.layers.Dense(self.mlp_width, kernel_initializer=kernel_initializer, use_bias=input_bias)
 
         self.input_image = tfk.layers.Dense(
                 mlp_width, kernel_initializer=kernel_initializer, use_bias=input_bias)
@@ -334,7 +328,6 @@ class ImageScaler(tfk.models.Model):
             'ff_epsilon' : self.ff_epsilon,
             'activation' : self.activation,
             'kl_weight' : self.kl_weight,
-            'num_image_samples' : self.num_image_samples,
             'share_weights' : self.share_weights,
             'prior_name' : self.prior_name,
             'posterior_name' : self.posterior_name,
@@ -394,7 +387,6 @@ class ImageScaler(tfk.models.Model):
 
         self.input_scale.build(metadata)
         if self.optimize_prior_scale:
-            self.input_prior.build(metadata)
             self.output_prior.build(metadata[:-1] + [self.mlp_width])
         self.image_network.build(metadata[:-1] + [self.mlp_width])
         if not self.share_weights:
@@ -404,21 +396,17 @@ class ImageScaler(tfk.models.Model):
         self.built = True
 
     def pool(self, image):
-        if self.num_image_samples is None:
-            #return tf.math.reduce_mean(image, axis=-2, keepdims=True)
-            # Leave-one-out mean over each image. This is done on flat_values and
-            # gathered back per reflection rather than by broadcasting a dense
-            # per-image tensor against the ragged one: ragged/dense broadcasting
-            # emits `RaggedRange`, which has no XLA kernel (breaks --jit-compile).
-            row_ids = image.value_rowids()
-            num = tf.gather(
-                tf.math.reduce_sum(image, axis=-2), row_ids
-            ) - image.flat_values
-            den = tf.cast(image.row_lengths(), 'float32') - 1.
-            den = tf.maximum(den, 1.)
-            out = image.with_flat_values(num / tf.gather(den, row_ids)[:, None])
-        else:
-            out = tf.math.reduce_mean(image, axis=-2, keepdims=True)
+        # Leave-one-out mean over each image. This is done on flat_values and
+        # gathered back per reflection rather than by broadcasting a dense
+        # per-image tensor against the ragged one: ragged/dense broadcasting
+        # emits `RaggedRange`, which has no XLA kernel (breaks --jit-compile).
+        row_ids = image.value_rowids()
+        num = tf.gather(
+            tf.math.reduce_sum(image, axis=-2), row_ids
+        ) - image.flat_values
+        den = tf.cast(image.row_lengths(), 'float32') - 1.
+        den = tf.maximum(den, 1.)
+        out = image.with_flat_values(num / tf.gather(den, row_ids)[:, None])
         return out
 
     def call(self, inputs, mc_samples=32, training=None, **kwargs):
@@ -453,10 +441,6 @@ class ImageScaler(tfk.models.Model):
 
         scale = metadata
 
-        if self.num_image_samples is not None:
-            #Subsample reflections per image 
-            image = ImageScaler.sample_refls(image, self.num_image_samples)
-
         unpooled_image = self.input_image(image)
         image = tf.ragged.map_flat_values(self.image_network, unpooled_image)
         image = self.pool(image)
@@ -474,9 +458,7 @@ class ImageScaler(tfk.models.Model):
 
         if not self.posterior_name.lower() == 'delta' and self.kl_weight > 0.:
             if self.optimize_prior_scale:
-                p_latent = tf.ragged.map_flat_values(self.input_prior, metadata)
-                p_latent = tf.ragged.map_flat_values(self.scale_network, p_latent)
-                p_params = tf.ragged.map_flat_values(self.output_prior, p_latent) * tf.ones_like(iobs)
+                p_params = tf.ragged.map_flat_values(self.output_prior, image)
                 m,s = tf.unstack(p_params.flat_values, axis=-1)
                 p = self.prior_dict[self.prior_name](m, s, self.bijector_function)
                 p_mean = p.mean()
