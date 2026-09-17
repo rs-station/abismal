@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 from ipywidgets import widgets
 
+from abismal.gui.components._compat import set_tooltip
+
 
 def _label(text):
     """The right-aligned label column shared by every control row."""
@@ -119,14 +121,18 @@ def default_directory():
     any more -- the 3D viewer embeds its files rather than fetching them over
     /files/ -- so out_dir is free to sit wherever the user was working.
 
-    Falls back to /content on Colab and to the cwd anywhere else.
+    On Colab this is /content, and that check comes first. Colab sets
+    JPY_PARENT_PID, so the launch-directory lookup below does not fail there --
+    it *succeeds*, and returns the cwd of a supervisor process the user has
+    never seen. A wrong answer that looks like a right one, arriving before the
+    fallback that would have been correct. Off Colab, the cwd.
     """
+    if _is_colab() and os.path.isdir('/content'):
+        return '/content'
+
     launched_from = _jupyter_launch_directory()
     if launched_from:
         return launched_from
-
-    if _is_colab() and os.path.isdir('/content'):
-        return '/content'
     return os.getcwd()
 
 
@@ -330,7 +336,7 @@ class ReflectionFileSelector(ServerFileSelectorWidget):
         # the assignment looks perfectly fine, which is what makes it a trap.
         help_text = getattr(action, 'help', None)
         if help_text:
-            self.header_label.tooltip = help_text
+            set_tooltip(self.header_label, help_text)
 
     def file_filter(self, file_name):
         return any(file_name.endswith(s) for s in self.file_types)
@@ -383,12 +389,11 @@ class PathSelector(widgets.VBox):
         # where the value lives and where every other argument's tooltip sits,
         # so hovering it is what a reader tries first; with the help only on the
         # button, a path argument looked like it had no help at all.
-        self._input = widgets.Text(
+        self._input = set_tooltip(widgets.Text(
             value=value,
             placeholder=placeholder,
-            tooltip=tooltip,
             layout=widgets.Layout(flex='1'),
-        )
+        ), tooltip)
         self._browse_button = widgets.Button(
             description='Browse',
             tooltip=tooltip or f'Browse for {description}',
@@ -402,12 +407,11 @@ class PathSelector(widgets.VBox):
         self._name_input = None
         self._status = None
         if mode == 'save':
-            self._name_input = widgets.Text(
+            self._name_input = set_tooltip(widgets.Text(
                 value=name,
                 placeholder='new directory name',
-                tooltip=tooltip,
                 layout=widgets.Layout(flex='1'),
-            )
+            ), tooltip)
             separator = widgets.HTML(
                 value='<div style="line-height:32px;padding:0 6px">/</div>',
                 layout=widgets.Layout(width='16px'),

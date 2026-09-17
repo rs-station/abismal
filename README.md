@@ -82,13 +82,35 @@ The notebook ships inside the package, and `abismal.gui` puts a copy in
 whatever directory you are standing in and opens it:
 
 ```bash
-pip install "abismal[gui]"
+pip install "abismal[gui,lab]"
 cd /path/to/your/data
 abismal.gui
 ```
 
-Run the first cell (it re-installs only if `abismal.gui` will not import), then
-the second, which builds the form.
+`gui` is the widget stack the notebook needs on any frontend; `lab` adds
+JupyterLab to run it locally. On Colab, where the frontend is already there,
+`gui` alone is enough.
+
+The notebook is one cell: it installs abismal if it is not already there, then
+
+```python
+from abismal.gui import launch
+
+launch()
+```
+
+`launch()` builds the form and returns it for the notebook to display. It also
+checks that the code running is the code you think it is -- a module loaded at a
+different version than is installed cannot be swapped without a restart, and it
+says so rather than rendering nothing.
+
+On Colab, `launch(example_data=True)` additionally fetches a lysozyme SSAD
+dataset and its reference model, and adds torchref where torch is already
+present, so there is something to merge and refine straight away. It is off by
+default: bring your own data and nothing is downloaded.
+
+`ArgparseGUI().to_widget()` still builds the form alone, for anyone who wants it
+without the setup around it.
 
 That directory is where the file pickers open and what a relative `out_dir`
 resolves against, so **run it from your data**. The copy is yours: a second

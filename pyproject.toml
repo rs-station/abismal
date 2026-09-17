@@ -10,12 +10,23 @@ authors=[
 description = "Stochastic merging for diffraction data."
 readme = "README.md"
 dynamic = ["version"]
-requires-python = ">= 3.9,<3.13"
+# Colab moved to 3.13; the old <3.13 ceiling excluded the runtime this GUI targets.
+requires-python = ">= 3.9,<3.14"
 dependencies = [
     "reciprocalspaceship>=0.9.16",
     "tqdm",
     "tensorflow-probability[tf]==0.25",
-    "tensorflow==2.18.0",
+    # A range, not a pin. `==2.18.0` made abismal uninstallable on Google Colab:
+    # TF 2.18 caps ml-dtypes below 0.5, Colab's preinstalled jax requires 0.5 or
+    # newer, and TF 2.18's lite/python/util.py imports jax unconditionally -- so
+    # `import tensorflow` raised ValueError before any of our code ran. Invisible
+    # anywhere jax is absent, which is every developer environment here.
+    #
+    # Verified against the official Colab image on 2.20: the test suite passes,
+    # a merge runs end to end, and torch/torchref import alongside TF in one
+    # process without the segfault seen elsewhere. 2.19 falls in the range and is
+    # untested.
+    "tensorflow>=2.18,<2.21",
     "matplotlib",
     "seaborn",
     "rs-booster",
@@ -23,7 +34,18 @@ dependencies = [
     # that requires numpy>=2.1. Left unpinned, `pip install abismal` resolves
     # scikit-image to a release that drags numpy above tensorflow's ceiling and
     # breaks the install.
-    "scikit-image<0.25",
+    #
+    # Marked, not absolute: scikit-image 0.24 has no cp313 wheel, so on Python 3.13
+    # this pin sent pip to a 22.7 MB source tarball that fails to build its own
+    # metadata -- five minutes to a dead end, which is how it presented on Colab.
+    # The ceiling cannot bind on 3.13 anyway, since TF 2.18 has no cp313 wheel for
+    # a resolution to land on, so the marker costs nothing where it is dropped.
+    # Two entries, not one marked entry: a marker that fails drops the requirement
+    # altogether rather than relaxing it, and abismal needs skimage either way --
+    # _torchref_worker imports peak_local_max lazily, so losing it would not fail
+    # the install or the import, only a torchref run, halfway through.
+    "scikit-image<0.25; python_version < '3.13'",
+    "scikit-image; python_version >= '3.13'",
     "ray",
 ]
 
@@ -36,7 +58,7 @@ dev = [
     "pytest-xdist",
 ]
 cuda = [
-    "tensorflow[and-cuda]==2.18.0",
+    "tensorflow[and-cuda]>=2.18,<2.21",
 ]
 # Per-epoch refinement via --torchref-pdb. Optional because it pulls torch, which
 # is large and irrelevant to a plain merging run. Installing it puts torchref in
@@ -49,25 +71,42 @@ torchref = [
 # widget stack the merging code never touches, and a headless CLI or cluster run
 # has no use for it.
 #
-# jupyterlab is included so that `pip install abismal[gui]` leaves you able to
-# actually open abismal_gui.ipynb; the widgets alone are not runnable. It also
-# brings jupyter_server, which the form uses to find out which directory jupyter
-# was launched from -- without it, paths resolve against the kernel's cwd, which
-# is wherever the .ipynb sits rather than where the user was working. On Colab
-# the frontend is already there and this is redundant, but harmless: it installs
-# alongside rather than replacing Colab's, which is the same trade JupyterLab
-# extensions make.
+# The widgets only. JupyterLab is a separate extra -- see [lab] below -- because
+# this is what a notebook needs *anywhere*, and on Colab the frontend is already
+# there. Measured in the official Colab image, jupyterlab drags in six more
+# packages (jupyterlab, jupyterlab_server, jupyter-lsp, json5, async-lru,
+# jupyter_builder) that a live Colab kernel has no use for.
 #
 # Not listed, deliberately:
 #   google.colab - present on Colab and nowhere else, and every use is guarded by
 #                  try/except, so declaring it would make the extra uninstallable
 #                  off Colab.
 #   matplotlib, pandas, reciprocalspaceship - already required by abismal itself.
+#   solara - its only importer is components/file_browser.py, which is dead code
+#            (see the coverage omit below). Dropping it takes a large dependency
+#            off every install, and Colab installs into a live kernel where every
+#            package that need not change is one that cannot break it. Revive this
+#            alongside file_browser.py if that ever comes back.
 gui = [
-    "ipywidgets>=8",
-    "jupyterlab>=4",
-    "solara",
+    # 7 as well as 8, because Colab ships 7.7.1 and its widget manager cannot
+    # render what 8 emits: the opt-in CDN manager is pinned to an ipywidgets-8
+    # alpha lacking HTMLStyleModel and TextStyleModel, so every Text and HTML
+    # widget fails to create a model and the form renders as an empty cell.
+    # components/_compat.py papers over the one API difference we rely on.
+    "ipywidgets>=7.7,<9",
     "ipython",
+]
+# JupyterLab, for running the notebook locally via the `abismal.gui` launcher.
+#
+# It also brings jupyter_server, which the form consults to find the directory
+# jupyter was launched from. Without it that lookup falls back to JPY_PARENT_PID
+# and /proc, which covers the ordinary case, so [gui] alone still resolves paths
+# sensibly -- it just has one fewer source to ask.
+#
+# `abismal.gui` exits with instructions when it cannot find a jupyter to launch,
+# so installing only [gui] fails loudly rather than strangely.
+lab = [
+    "jupyterlab>=4",
 ]
 
 [project.urls]

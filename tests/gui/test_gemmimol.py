@@ -185,6 +185,9 @@ def test_the_reload_payload_carries_the_files_too(torchref_files):
     assert payload["type"] == "reload"
     assert payload["map_keys"] == ["FWT", "PHWT", "ANOM", "PANOM"]
     assert payload["pdb_b64"] and payload["mtz_b64"]
+    # The parent broadcasts to every iframe, so the id has to ride along for the
+    # viewer to tell its own reload from another viewer's.
+    assert payload["viewer_id"] == viewer.viewer_id
 
 
 def test_base64_needs_no_escaping_in_the_document(torchref_files):
@@ -202,3 +205,42 @@ def test_base64_needs_no_escaping_in_the_document(torchref_files):
 
 def test_a_viewer_with_no_files_encodes_to_nothing(torchref_files):
     assert GemmiMolViewer().pdb_b64 == ""
+
+
+def test_the_viewer_is_sealed_in_an_iframe(torchref_files):
+    """Regression: the viewer's CSS escaped and took the notebook with it.
+
+    Its stylesheet opens `* { margin: 0 ... }` and puts `background-color:
+    black; height: 600px; overflow: hidden` on html and body -- right for a page
+    the viewer owns, ruinous anywhere else. Jupyter's `isolated: True` metadata
+    is meant to keep it in its own frame; JupyterLab honours that and Colab does
+    not, so on Colab the rules applied to the notebook and everything below the
+    viewer went black and got clipped. Reproduced in a browser: the unsealed
+    document sets overflow:hidden on its host, the sealed one does not.
+
+    srcdoc makes the isolation structural rather than a request, so it does not
+    depend on a frontend choosing to cooperate.
+    """
+    viewer = GemmiMolViewer(
+        pdb_file=str(torchref_files / "refined.pdb"),
+        mtz_file=str(torchref_files / "refined.mtz"),
+    )
+    sealed = viewer.iframe_html
+
+    assert sealed.startswith("<iframe "), sealed[:40]
+    assert "srcdoc=" in sealed
+    # Nothing the host page could interpret as its own markup or styling.
+    for raw in ("<!doctype html>", "<style>", "<html", "<body"):
+        assert raw not in sealed, f"{raw!r} reached the host page unescaped"
+    assert "&lt;!doctype html&gt;" in sealed, "the document should be escaped, not dropped"
+
+
+def test_the_runner_renders_the_sealed_viewer(torchref_files):
+    """The isolation is worthless if the runner still emits the bare document."""
+    from pathlib import Path
+
+    import abismal.gui.runner as runner_module
+
+    source = Path(runner_module.__file__).read_text()
+    assert "viewer.iframe_html" in source
+    assert "'text/html': viewer.html" not in source

@@ -1,4 +1,5 @@
 import base64
+import html
 import uuid
 from pathlib import Path
 from string import Template
@@ -135,6 +136,8 @@ viewer_template = """<!doctype html>
     window.addEventListener('message', function(event) {
       if (!event.data || event.data.type !== 'reload' || !V) return;
       var msg = event.data;
+      // The message is broadcast to every iframe, so ignore other viewers'.
+      if (msg.viewer_id && msg.viewer_id !== window.ABISMAL_VIEWER_ID) return;
       // Dispose existing models and maps before loading the new epoch.
       while (V.model_bags.length > 0) {
         V.clear_model_objects(V.model_bags[0]);
@@ -267,6 +270,11 @@ class GemmiMolViewer():
         """
         return {
             'type': 'reload',
+            # The parent broadcasts to every iframe and lets each viewer decide,
+            # because picking the right frame from the parent means reading a
+            # property off its contentWindow, which is a cross-origin read that
+            # Colab's sandboxed outputs refuse.
+            'viewer_id': self.viewer_id,
             'pdb_b64': self.pdb_b64,
             'mtz_b64': self.mtz_b64,
             'map_keys': self.map_keys,
@@ -274,7 +282,30 @@ class GemmiMolViewer():
 
     @property
     def html(self):
+        """The viewer as a standalone document, for file:// or an iframe."""
         return Template(viewer_template).substitute(self.template_kwargs)
+
+    @property
+    def iframe_html(self):
+        """The same document, sealed inside an iframe.
+
+        The stylesheet opens with `* { margin: 0 ... }` and puts
+        `background-color: black; height: 600px; overflow: hidden` on html and
+        body, which is correct for a viewer that owns its page and ruinous
+        anywhere else. Jupyter's `isolated: True` metadata is supposed to keep
+        it in its own frame, and JupyterLab honours that -- Colab does not. The
+        rules landed on the notebook itself: everything below the viewer went
+        black and got clipped at 600px, which reads as the GUI disappearing.
+
+        srcdoc makes the isolation structural instead of a request, so it holds
+        in every frontend rather than the ones that cooperate.
+        """
+        document = html.escape(self.html, quote=True)
+        return (
+            f'<iframe srcdoc="{document}" '
+            'style="width:100%;height:600px;border:0;display:block" '
+            'sandbox="allow-scripts allow-same-origin"></iframe>'
+        )
 
     def display(self):
         return display(HTML(self.html, metadata={'isolated' : True}))

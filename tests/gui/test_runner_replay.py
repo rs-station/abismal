@@ -57,9 +57,17 @@ def test_a_complete_run(replay):
     H.wait_for_replay(runner, timeout=30)
 
     log = H.log_text(runner)
-    assert "oneDNN custom operations are on" in log      # first line of the fixture
-    assert "Epoch 12/12" in log                          # last epoch
+    # The panel is filtered, so the fixture's first line -- TensorFlow's oneDNN
+    # banner -- is deliberately absent. "Epoch 1/12" is the earliest thing a user
+    # is meant to see, and it standing first is what says the tail started at the
+    # top of the file rather than wherever it happened to attach.
+    assert "Epoch 1/12" in log
+    assert "Epoch 12/12" in log
     assert log.index("Epoch 1/12") < log.index("Epoch 12/12")
+    assert "oneDNN custom operations are on" not in log
+
+    # Filtered for display only: the file keeps every line.
+    assert "oneDNN custom operations are on" in Path(runner.console_log).read_text()
 
     assert runner.progress_widget.max == 12
     assert runner.progress_widget.value == 12
@@ -155,6 +163,14 @@ def test_the_first_epoch_renders_an_iframe_and_later_ones_reload_it(replay):
     assert "postMessage" in scripts[0]
     assert runner._viewer_id in scripts[0]
 
+    # The frame must not be chosen by reading a property off its contentWindow.
+    # That is a cross-origin read, and on Colab -- where every output is sandboxed
+    # onto its own origin -- it throws for every frame. The old per-frame catch
+    # turned each SecurityError into "not this one", so nothing was ever messaged
+    # and the viewer stayed on the first epoch for the whole run, silently.
+    # postMessage across origins is fine; the property read was not.
+    assert "contentWindow.ABISMAL_VIEWER_ID" not in scripts[0], scripts[0]
+
 
 # ---------------------------------------------------------------------------
 # how a run ends
@@ -225,12 +241,6 @@ def test_attach_reconnects_to_a_job_this_process_did_not_start(replay, tmp_path)
     wait_until(lambda: not original.is_running, timeout=15)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="_tail opens console.log with no existence guard, so attaching to a job "
-           "whose log is not there yet kills the tailer daemon thread with an "
-           "unhandled FileNotFoundError -- silently, since nothing joins it.",
-)
 def test_attach_survives_a_missing_console_log(tmp_path, monkeypatch, runner_factory):
     """The thread dying is itself the bug, so this has to watch for the exception.
 

@@ -345,6 +345,24 @@ def main(args=None):
             callbacks.append(phenix_runner)
 
     if parser.torchref_pdb is not None:
+        # The worker imports torchref in a detached subprocess whose stderr is a
+        # file nobody reads, so a missing install does not stop anything -- it
+        # produces a run that trains to completion and silently refines nothing.
+        # Checked here, while there is still someone watching the terminal.
+        #
+        # find_spec rather than an import: torchref pulls torch, and torch in the
+        # same interpreter as some TensorFlow versions segfaults. Asking whether
+        # it could be imported is the whole question, so ask only that.
+        from importlib.util import find_spec
+
+        if find_spec("torchref") is None:
+            raise SystemExit(
+                "--torchref-pdb was given but the torchref package is not "
+                "installed, so every refinement would fail in a subprocess whose "
+                "output you would never see.\n"
+                "    pip install 'abismal[torchref]'"
+            )
+
         for i, pdb_file in enumerate(map(str, parser.torchref_pdb)):
             torchref_runner = TorchRefRunner(
                 out_dir,

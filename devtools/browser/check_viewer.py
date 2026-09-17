@@ -150,11 +150,35 @@ def main(argv=None):
                 return Array.from(p);
             } catch (e) { return null; }
         }"""
+        # The parent broadcasts to every iframe and lets each viewer decide, because
+        # choosing the frame from the parent meant reading a property off its
+        # contentWindow -- a cross-origin read, which on Colab throws for every
+        # frame and silently messaged nobody. So a viewer must ignore ids that are
+        # not its own, or a second viewer would reload on this one's epoch.
+        page.evaluate(
+            """() => {
+                window.__reloads = 0;
+                const orig = V.load_model.bind(V);
+                V.load_model = function() {
+                    window.__reloads++;
+                    return orig.apply(V, arguments);
+                };
+            }"""
+        )
+        stray = dict(viewer.reload_payload, viewer_id="a-different-viewer")
+        page.evaluate("(payload) => window.postMessage(payload, '*')", stray)
+        page.wait_for_timeout(500)
+        if page.evaluate("() => window.__reloads") != 0:
+            problems.append("the viewer reloaded on another viewer's broadcast")
+
         before = page.evaluate(read_camera)
         page.evaluate(
             "(payload) => window.postMessage(payload, '*')", viewer.reload_payload,
         )
         wait_loaded("reloading")
+
+        if page.evaluate("() => window.__reloads") < 1:
+            problems.append("the viewer ignored a broadcast carrying its own id")
 
         after = page.evaluate(read_camera)
         if page.evaluate("() => (window.V && V.model_bags || []).length") < 1:
