@@ -18,4 +18,10 @@ coverage.xml
 # for the next person.
 !tests/gui/replay/*.log
 build/
+
+# Debug artifacts from the Colab container loop (devtools/colab_container.py probe
+# and devtools/gui_snapshot.py). Machine-generated, regenerated on demand, and the
+# probe output in particular is a snapshot of whatever Colab shipped that day --
+# useful to diff against the previous one locally, not to carry in the history.
+devtools/artifacts/
 dist/

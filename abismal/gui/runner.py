@@ -14,6 +14,7 @@ from IPython.display import clear_output, display
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from abismal.gui._log_filter import is_noise
 from abismal.gui.components.file_selector import _is_colab
 
 
@@ -404,6 +405,11 @@ class AbismalRunner:
         fn()
 
     def _append_log(self, line):
+        # Filtered here rather than at capture: console.log on disk keeps every
+        # line, including the ones this hides, so nothing is lost -- the panel
+        # just does not open on a dozen lines about cuFFT registration.
+        if is_noise(line):
+            return
         self._log_text += line
         html_val = self._render_log_html()
         self._run_on_main_thread(
@@ -527,6 +533,17 @@ class AbismalRunner:
     def _tail(self):
         """Stream console.log into log_widget and drive the progress bar."""
         epoch_re = re.compile(r'Epoch (\d+)/(\d+)')
+
+        # Attaching to a running job can beat the child to creating its log, so
+        # the file legitimately may not exist yet. Opening it unguarded killed
+        # this thread with a FileNotFoundError nobody saw -- it is a daemon and
+        # nothing joins it -- leaving a runner that looked attached but never
+        # showed a line or moved the progress bar.
+        while not os.path.exists(self.console_log):
+            if not self.is_running:
+                return
+            time.sleep(0.5)
+
         with open(self.console_log, 'r') as f:
             while True:
                 line = f.readline()
@@ -804,19 +821,28 @@ class AbismalRunner:
             # First render: create the iframe; subsequent renders will postMessage it.
             self.viewer_widget.outputs = ({
                 'output_type': 'display_data',
-                'data': {'text/html': viewer.html},
+                'data': {'text/html': viewer.iframe_html},
                 'metadata': {'text/html': {'isolated': True}},
             },)
             self._viewer_initialized = True
         else:
-            # Find the iframe by its ABISMAL_VIEWER_ID and ask it to reload in-place,
-            # preserving camera orientation.
+            # Ask the viewer to reload in place, preserving camera orientation.
+            #
+            # Broadcast to every iframe and let the viewers filter on the id in
+            # the payload. Selecting the frame here instead means reading
+            # f.contentWindow.ABISMAL_VIEWER_ID, and reading a property off
+            # another origin's window throws -- which on Colab, where outputs are
+            # sandboxed onto their own origin, is every frame. The old code
+            # caught that per frame and returned false, so the search quietly
+            # found nothing and the viewer sat on epoch 1 for the whole run.
+            #
+            # postMessage itself is fine cross-origin; it is designed for it.
             js = (
                 f'/*{time.time()}*/(function(){{'
-                f'var t=Array.from(document.querySelectorAll("iframe")).find('
-                f'function(f){{try{{return f.contentWindow.ABISMAL_VIEWER_ID==='
-                f'"{self._viewer_id}";}}catch(e){{return false;}}}});'
-                f'if(t)t.contentWindow.postMessage({json.dumps(payload)},"*");'
+                f'var m={json.dumps(payload)};'
+                f'var f=document.querySelectorAll("iframe");'
+                f'for(var i=0;i<f.length;i++){{'
+                f'try{{f[i].contentWindow.postMessage(m,"*");}}catch(e){{}}}}'
                 f'}})();'
             )
             self._js_widget.outputs = ({
