@@ -196,7 +196,10 @@ def test_no_jupyter_says_how_to_get_one(tmp_path, monkeypatch, fake_exec):
     monkeypatch.setattr(sys, "executable", str(tmp_path / "nowhere" / "python"))
     monkeypatch.setattr("shutil.which", lambda name: None)
 
-    with pytest.raises(SystemExit, match=r'abismal\[gui\]'):
+    # [gui,lab], not [gui]: JupyterLab moved to its own extra so that Colab --
+    # which already has a frontend -- does not install one into a live kernel.
+    # Someone running the launcher locally needs both.
+    with pytest.raises(SystemExit, match=r'abismal\[gui,lab\]'):
         main([])
 
     assert not fake_exec

@@ -4,8 +4,12 @@
 
 Copies the packaged notebook into the current directory if it is not already
 there, then starts JupyterLab on it. The point is that there is nothing to
-locate: the notebook ships inside the package, so `pip install abismal[gui]`
+locate: the notebook ships inside the package, so `pip install abismal[gui,lab]`
 followed by `cd` to your data and `abismal.gui` is the whole story.
+
+The notebook itself is one cell calling `abismal.gui.launch()`; everything it
+used to spell out inline lives in `abismal/gui/_launch.py`, where it can be
+tested.
 
 Copying rather than opening the packaged file in place is deliberate. Opening it
 where it is installed would root the server in site-packages, put that in the
@@ -102,8 +106,10 @@ def main(argv=None):
     jupyter = find_jupyter()
     if jupyter is None:
         raise SystemExit(
-            "could not find a jupyter to launch. Install the gui extra:\n"
-            '  pip install "abismal[gui]"'
+            "could not find a jupyter to launch. JupyterLab lives in its own\n"
+            "extra, because the notebook needs only the widgets on a frontend\n"
+            "that already has one, such as Colab:\n"
+            '  pip install "abismal[gui,lab]"'
         )
 
     # Launched from the current directory on purpose: that is what the form
