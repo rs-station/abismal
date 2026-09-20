@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 from ipywidgets import widgets
 import time
+from abismal.gui.components._compat import set_tooltip
 from abismal.gui.components.file_selector import (
     PathSelector,
     ReflectionFileSelector,
@@ -44,8 +45,16 @@ class _ToggleRow(widgets.HBox):
 class Text(widgets.HBox):
     def __init__(self, **kwargs):
         description = kwargs.pop("description", "")
+        # Applied to the input, never to this HBox: a container has no
+        # description, and ipywidgets 8's tooltip view reads description.length,
+        # so a tooltip on a Box takes the frontend down. set_tooltip also picks
+        # the trait name the installed ipywidgets uses -- 7 spells it
+        # description_tooltip, and passing `tooltip` there drops it silently.
+        tooltip = kwargs.pop("tooltip", "")
         self._label_text = description
-        self._input = widgets.Text(layout=widgets.Layout(flex='1'), **kwargs)
+        self._input = set_tooltip(
+            widgets.Text(layout=widgets.Layout(flex='1'), **kwargs), tooltip
+        )
         super().__init__([_label(description), self._input])
 
     @property
@@ -56,8 +65,11 @@ class Text(widgets.HBox):
 class Dropdown(widgets.HBox):
     def __init__(self, **kwargs):
         description = kwargs.pop("description", "")
+        tooltip = kwargs.pop("tooltip", "")  # see Text, above
         self._label_text = description
-        self._dropdown = widgets.Dropdown(layout=widgets.Layout(flex='1'), **kwargs)
+        self._dropdown = set_tooltip(
+            widgets.Dropdown(layout=widgets.Layout(flex='1'), **kwargs), tooltip
+        )
         super().__init__([_label(description), self._dropdown])
 
     @property
@@ -173,21 +185,19 @@ class ArgparseGUIBase:
         if name in self.custom_widgets:
             return self.custom_widgets[name](action, name=name)
         if isinstance(action, argparse._StoreTrueAction):
-            return _ToggleRow(widgets.ToggleButton(
+            return _ToggleRow(set_tooltip(widgets.ToggleButton(
                 value=False,
                 description=name,
                 disabled=False,
                 button_style="",
-                tooltip=action.help or "",
-            ))
+            ), action.help or ""))
         if isinstance(action, argparse._StoreFalseAction):
-            return _ToggleRow(widgets.ToggleButton(
+            return _ToggleRow(set_tooltip(widgets.ToggleButton(
                 value=True,
                 description=name,
                 disabled=False,
                 button_style="",
-                tooltip=action.help or "",
-            ))
+            ), action.help or ""))
         mode = self.path_modes.get(action.type)
         if mode is not None:
             return PathSelector(
@@ -391,7 +401,7 @@ class ArgparseGUIBase:
     def to_widget(self):
         self.run_button = widgets.Button(
             description="Run Abismal",
-            tooltip="Run Abismal merging",
+            tooltip="Run Abismal merging",  # Button has `tooltip` in both majors
         )
         # Capture exceptions from the click handler — on Colab they otherwise
         # go nowhere and the click silently does nothing.

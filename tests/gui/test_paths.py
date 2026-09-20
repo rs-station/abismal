@@ -11,10 +11,25 @@ from pathlib import Path
 
 import pytest
 
+import abismal.gui.components.file_selector as file_selector
 from abismal.gui.components.file_selector import (
     PathSelector,
     default_directory,
 )
+
+
+@pytest.fixture(autouse=True)
+def not_on_colab(monkeypatch):
+    """Everything here exercises the launch-directory logic, which is off-Colab only.
+
+    default_directory() short-circuits to /content as soon as google.colab
+    imports, so on Colab -- or inside the Colab runtime container the debug loop
+    runs against, which ships google.colab -- every assertion below would be
+    measured against /content instead of the tree the test built. Pinning it
+    keeps these tests about the thing they name. The /content branch has its own
+    tests in test_colab.py.
+    """
+    monkeypatch.setattr(file_selector, "_is_colab", lambda: False)
 
 
 @pytest.fixture
