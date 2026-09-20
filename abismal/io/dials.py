@@ -14,6 +14,15 @@ class StillsLoader(DataLoader):
             super().__init__(6)
         else:
             super().__init__(3)
+        # Activates a configured prefix if there is one, and raises with the
+        # install instructions if there is not. Here as well as in the data
+        # manager because the loader is usable on its own -- constructing it
+        # directly otherwise fails on the deferred import below, several lines
+        # from anything that explains why.
+        from abismal.io._dials_check import require_dials
+
+        require_dials(list(expt_files) + list(refl_files))
+
         from dxtbx.model.experiment_list import ExperimentListFactory  #defer defer defer defer
         self.expt_files = expt_files
         self.refl_files = refl_files
@@ -133,6 +142,12 @@ class StillsLoader(DataLoader):
         """
         Convert dials monochromatic stills files to ragged tensors.
         """
+        # Also here: dials_to_ragged is a staticmethod, and ray runs it in
+        # worker processes that never went through __init__.
+        from abismal.io._dials_check import require_dials
+
+        require_dials([expt_file, refl_file])
+
         from dials.array_family import flex
         from dxtbx.model.experiment_list import ExperimentListFactory 
         table = flex.reflection_table().from_file(refl_file)

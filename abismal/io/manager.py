@@ -189,6 +189,15 @@ class DataManager:
                     data = data.concatenate(_data)
 
         elif all([_is_dials_file(f) for f in self.inputs]):
+            # Checked before the loader, not inside it. dxtbx is imported several
+            # frames down and after the manager has started work, so a missing
+            # DIALS stack otherwise surfaces as a bare ModuleNotFoundError with
+            # no hint that the fix is a conda install, or that only these file
+            # types need one.
+            from abismal.io._dials_check import require_dials
+
+            require_dials([f for f in self.inputs if _is_dials_file(f)])
+
             from abismal.io import StillsLoader
             expt_files = [f for f in self.inputs if _is_expt_file(f)]
             refl_files = [f for f in self.inputs if _is_refl_file(f)]
