@@ -1,6 +1,20 @@
 #!/usr/bin/env python
 """Publish a debug build of the GUI notebook and print the Colab URL for it.
 
+For iterating on work that is not committed yet. The committed notebooks are
+served straight off their own branch --
+
+    https://colab.research.google.com/github/rs-station/abismal/blob/gui/abismal/gui/abismal_gui.ipynb
+    https://colab.research.google.com/github/rs-station/abismal/blob/gui/devtools/colab_minimal.ipynb
+
+-- and those are what a user opens, so those are what should normally be
+tested: a deployed copy is rewritten (pinned to a commit, diagnostics cell
+appended) and therefore is not quite the notebook that ships.
+
+What this adds is a build from the *working tree*, without committing: useful
+when a fix needs a Colab tab before it deserves a commit, and it keeps a
+debugging session from putting thirty commits on a real branch.
+
 Colab opens a notebook straight out of a public GitHub repo:
 
     https://colab.research.google.com/github/<owner>/<repo>/blob/<ref>/<path>.ipynb
