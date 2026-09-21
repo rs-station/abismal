@@ -596,3 +596,23 @@ def test_the_notebook_installs_from_git_not_a_pypi_extra():
     """
     src = _install_cell_source()
     assert "git+" in src, src
+
+
+def test_the_notebook_asks_colab_for_a_gpu():
+    """abismal trains a model, so the default runtime should have one.
+
+    Colab reads `accelerator` from the notebook's own metadata when it opens
+    it -- there is no URL parameter for this. Verified against notebooks in
+    tensorflow/docs, which carry the same key.
+
+    A request, not a guarantee: a free-tier session without quota gets a CPU
+    runtime anyway, silently. It also only applies to a fresh runtime, so an
+    already-connected CPU one has to be deleted first.
+    """
+    import json
+    import abismal.gui
+
+    nb = json.loads(
+        (Path(abismal.gui.__file__).parent / "abismal_gui.ipynb").read_text()
+    )
+    assert nb["metadata"].get("accelerator") == "GPU"
