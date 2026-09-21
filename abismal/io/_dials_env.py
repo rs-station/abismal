@@ -6,6 +6,12 @@ from conda-forge. That does not require conda: micromamba is a standalone
 static binary, so a prefix can be created without touching the interpreter that
 will use it.
 
+A fallback, not the primary way to install abismal. Somewhere a package manager
+can solve the whole environment at once -- a fresh conda or micromamba env with
+abismal, TensorFlow and dials together -- that is simpler and has fewer moving
+parts. This exists for the case that does not cover: an interpreter that already
+has a working abismal and needs .expt/.refl support without being rebuilt.
+
 The prefix is then *appended* to sys.path, never prepended. PYTHONPATH and
 prepending put the conda tree ahead of everything, which is not what we want:
 the prefix carries its own numpy, ml_dtypes, h5py and scipy, and shadowing the
@@ -27,6 +33,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Linux x86-64 only, deliberately. micromamba is published for osx-64,
+# osx-arm64 and linux-aarch64 as well, but the mechanism this module relies on
+# is not portable: the workload runs in a subprocess that inherits
+# LD_LIBRARY_PATH, and macOS uses DYLD_LIBRARY_PATH, which SIP strips on exec.
+# Claiming those platforms without testing them would be worse than refusing.
 MICROMAMBA_URL = "https://micro.mamba.pm/api/micromamba/linux-64/latest"
 
 # Keeps torchref installable; see the module docstring.
@@ -94,6 +105,7 @@ def activate(prefix=None):
     # this it fails hunting for /usr/share/cctbx.
     os.environ.setdefault("LIBTBX_BUILD", str(Path(prefix) / "share" / "cctbx"))
 
+    _warn_on_numpy_skew(prefix)
     _preload_runtime(prefix)
 
     # For anything this process launches. The linker reads LD_LIBRARY_PATH when
@@ -144,11 +156,41 @@ def _preload_runtime(prefix):
             pass
 
 
+def _warn_on_numpy_skew(prefix):
+    """Say so if the host's numpy is older than the one dxtbx was built against.
+
+    numpy's C ABI is forward- but not backward-compatible: an extension built
+    against 2.3 runs on 2.4, and crashes on 2.0. The prefix's numpy is whatever
+    the capped solve chose, so a host below it is the one direction that breaks
+    -- and it breaks as a segfault in the middle of parsing, not as an import
+    error, which is worth a sentence of warning before it happens.
+    """
+    built_against = prefix_numpy_version(prefix)
+    if not built_against:
+        return
+    try:
+        from packaging.version import Version
+
+        import numpy
+
+        if Version(numpy.__version__) < Version(built_against):
+            print(
+                f"warning: dxtbx here was built against numpy {built_against} "
+                f"but this interpreter has {numpy.__version__}. numpy's ABI is "
+                "not backward compatible, so the readers may crash rather than "
+                "fail to import."
+            )
+    except Exception:
+        pass
+
+
 def prefix_numpy_version(prefix):
     """The numpy the prefix was built against, read from its own metadata."""
     site_packages, _ = _site_packages(prefix)
     for entry in site_packages.glob("numpy-*.dist-info"):
-        return entry.name.split("-")[1]
+        # Not split("-")[1]: the suffix is itself hyphenated, so that returns
+        # "2.3.5.dist" and every comparison against it raises.
+        return entry.name[len("numpy-"):-len(".dist-info")]
     return None
 
 
@@ -181,6 +223,14 @@ def install(prefix=None, workdir="/tmp/abismal-micromamba", quiet=False):
     Returns the prefix, or None if it could not be built. Several GB and
     several minutes; the caller decides whether that is wanted.
     """
+    if not sys.platform.startswith("linux"):
+        print(
+            f"a dials prefix can only be built on Linux, not {sys.platform}.\n"
+            "Install dxtbx and dials into your environment instead:\n"
+            "    conda install -c conda-forge dxtbx dials"
+        )
+        return None
+
     prefix = Path(prefix or DEFAULT_PREFIX or "./dials-env")
 
     if activate(prefix):

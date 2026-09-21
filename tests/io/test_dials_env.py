@@ -161,3 +161,39 @@ def test_children_inherit_the_library_path(tmp_path, monkeypatch):
     entries = env.os.environ["LD_LIBRARY_PATH"].split(":")
     assert str(tmp_path / "lib") in entries
     assert "/pre-existing" in entries, "an existing search path was discarded"
+
+
+def test_a_prefix_is_not_built_off_linux(monkeypatch, capsys):
+    """The mechanism is not portable, and claiming it would be worse than refusing.
+
+    The workload runs in a subprocess that inherits LD_LIBRARY_PATH; macOS uses
+    DYLD_LIBRARY_PATH and SIP strips it on exec, so the path that actually
+    carries the merge would not survive.
+    """
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(env, "_micromamba",
+                        lambda *a, **k: pytest.fail("micromamba was fetched"))
+
+    assert env.install(prefix="/tmp/nope", quiet=True) is None
+    assert "conda install" in capsys.readouterr().out
+
+
+def test_an_older_host_numpy_is_called_out(tmp_path, monkeypatch, capsys):
+    """numpy's ABI is forward- but not backward-compatible.
+
+    An extension built against 2.3 crashes on 2.0, and it crashes mid-parse
+    rather than failing to import -- worth a sentence before it happens.
+    """
+    site_packages, dynload = env._site_packages(tmp_path)
+    site_packages.mkdir(parents=True)
+    dynload.mkdir(parents=True)
+    (site_packages / "numpy-2.3.5.dist-info").mkdir()
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(env, "_preload_runtime", lambda prefix: None)
+
+    import numpy
+    monkeypatch.setattr(numpy, "__version__", "2.0.2")
+
+    env.activate(tmp_path)
+    out = capsys.readouterr().out
+    assert "2.3.5" in out and "2.0.2" in out
