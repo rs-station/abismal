@@ -56,6 +56,9 @@ dev = [
     "pytest", 
     "pytest-cov",
     "pytest-xdist",
+    # A hang here is not hypothetical: a stuck worker once ran for 46 hours,
+    # holding the GPU and 264 GB of ray spill, because nothing stopped it.
+    "pytest-timeout",
 ]
 cuda = [
     "tensorflow[and-cuda]>=2.18,<2.21",
@@ -161,7 +164,10 @@ exclude_also = [
 # No --cov-config: coverage finds [tool.coverage.*] in this file on its own. It used to
 # name .coveragerc, which did not exist -- .gitignore's `.coverage*` had been swallowing
 # it, so anyone who wrote one had git ignore it silently.
-addopts = "-n auto --cov=abismal --cov-report xml"
+# timeout: a test that stops making progress fails instead of running until
+# someone notices. Ten minutes is far above the slowest real test here
+# (test_cli, a couple of minutes) and far below "nobody is watching".
+addopts = "-n auto --cov=abismal --cov-report xml --timeout=600"
 testpaths = [
     "tests",
 ]
