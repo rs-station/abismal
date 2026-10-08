@@ -1,149 +1,49 @@
 import numpy as np
+import torch
 from reciprocalspaceship.utils import hkl_to_asu,is_absent
 from reciprocalspaceship.decorators import spacegroupify,cellify
-import tensorflow as tf
-import tf_keras as tfk
 import gemmi
 from abismal.symmetry.op import Op
+from abismal import serialization
 
-@tfk.saving.register_keras_serializable(package="abismal")
-class ReciprocalASUCollection(tfk.layers.Layer):
-    def __init__(self, *reciprocal_asus, **kwargs):
-        super().__init__(**kwargs)
-        self.reciprocal_asus = reciprocal_asus
-        asu_ids,dHKL,centric,epsilon = [],[],[],[]
-        Hunique = []
-        self.asu_size = 0
-        self.hmax = 0
-        for asu_id, rasu in enumerate(reciprocal_asus):
-            dHKL.append(rasu.dHKL)
-            centric.append(rasu.centric)
-            epsilon.append(rasu.epsilon)
-            self.asu_size = self.asu_size + rasu.asu_size
-            self.hmax = np.maximum(self.hmax, rasu.hmax)
-            asu_ids.append(tf.ones(rasu.asu_size, dtype='int32') * asu_id)
-            Hunique.append(rasu.Hunique)
 
-        self.centric = tf.concat(centric, axis=-1)
-        self.epsilon = tf.concat(epsilon, axis=-1)
-        self.dHKL = tf.concat(dHKL, axis=-1)
-        self.asu_id = tf.concat(asu_ids, axis=-1)
-        self.Hunique = tf.concat(Hunique, axis=-2)
+def _flat_miller_index(asu_id, H, hmax):
+    """
+    Position of (asu_id, h, k, l) in the flattened, per-asu miller id grid.
 
-        h,k,l = self.hmax
-        self.miller_id = -np.ones((len(self), 2*h+1, 2*k+1, 2*l+1), dtype=np.int32)
-        self.grid_size = tf.convert_to_tensor((2*h+1, 2*k+1, 2*l+1), dtype=tf.int32)
-        offset = 0
-        for asu_id, rasu in enumerate(reciprocal_asus):
-            h,k,l = rasu.Hall.T
-            self.miller_id[asu_id *np.ones_like(h),h,k,l] = rasu.miller_id[h,k,l] + offset
-            offset = offset + rasu.asu_size
-        self.built = True
+    Any reflection with a component past `hmax` is mapped to (0, 0, 0) first,
+    which is never in an ASU, so it reads back as id -1. Negative indices wrap
+    to the top of the grid the way numpy would index them.
+    """
+    h, k, l = (int(i) for i in hmax)
+    shape = (2*h + 1, 2*k + 1, 2*l + 1)
+    if isinstance(H, np.ndarray):
+        H = H.astype(np.int64)
+        out_of_range = (np.abs(H) > np.array(hmax)).any(-1, keepdims=True)
+        H = np.where(out_of_range, 0, H)
+        H = np.where(H >= 0, H, H + np.array(shape))
+        asu_id = np.asarray(asu_id, dtype=np.int64)
+    else:
+        H = H.long()
+        bound = H.new_tensor(hmax)
+        out_of_range = (H.abs() > bound).any(-1, keepdim=True)
+        H = torch.where(out_of_range, 0, H)
+        H = torch.where(H >= 0, H, H + H.new_tensor(shape))
+        asu_id = asu_id.long()
+    a = asu_id[..., 0]
+    return ((a * shape[0] + H[..., 0]) * shape[1] + H[..., 1]) * shape[2] + H[..., 2]
 
-    def get_config(self):
-        config = super().get_config()
-        config.update(
-            {f'rasu_{i}' : tfk.saving.serialize_keras_object(v) for i,v in enumerate(self.reciprocal_asus)}
-        )
-        return config
 
-    @classmethod
-    def from_config(cls, config):
-        rasus = []
-        keys = config.keys()
-        rasus = [tfk.saving.deserialize_keras_object(v) for k,v in config.items() if k.startswith('rasu_')]
-        config = {k:v for k,v in config.items() if not k.startswith('rasu_')}
-        return cls(*rasus, **config)
-
-    def _ensure_in_range(self, H):
-        """ Cast any out of bounds indices to [0,0,0] """
-        idx = tf.reduce_any(tf.abs(H) > self.hmax, axis=-1, keepdims=True)
-        out = tf.where(
-            idx,
-            tf.zeros_like(H),
-            H
-        )
-        return out
-
-    def _wrap_negative_millers(self, H):
-        """ Wrap negative miller indices to positive for gather """
-        return tf.where(H >= 0, H, H + self.grid_size[...,:])
-
-    def _sanitize_millers(self, H):
-        H = self._ensure_in_range(H)
-        H = self._wrap_negative_millers(H)
-        return H
-
-    def _miller_ids(self, asu_id, H):
-        H = tf.cast(H, 'int32')
-        asu_id = tf.cast(asu_id, 'int32')
-        hplus = self._sanitize_millers(H)
-        ahkl = tf.concat((asu_id, hplus), axis=-1)
-        return tf.gather_nd(self.miller_id, ahkl)
-
-    def _gather(self, tensor, asu_id, H):
-        idx = self._miller_ids(asu_id, H)
-        safe = tf.maximum(idx, 0)
-        return tf.gather(tensor, safe)
-
-    def _valid(self, asu_id, H):
-        return (self._miller_ids(asu_id, H) >= 0)[..., None]
-
-    def valid(self, asu_id, H):
-        """Which of these miller indices does the collection actually contain?
-
-        `_gather` has nothing to return for an index outside the ASU, so it
-        falls back on index 0. That is a silent lie -- the reflection gets the
-        posterior of whatever happens to sit first in the ASU -- and callers
-        need to be able to drop those rather than score them. A reindexing
-        operator that moves reflections in resolution is the way it happens in
-        practice: the outermost images land past dmin.
-
-        Parameters
-        ----------
-        asu_id : tf.Tensor
-            A potentially ragged tensor of asu ids
-        H : tf.Tensor
-            A potentially ragged tensor of miller indices
-
-        Returns
-        -------
-        Boolean tensor shaped like `asu_id`.
-        """
-        return tf.ragged.map_flat_values(self._valid, asu_id, H)
-
-    def gather(self, tensor, asu_id, H):
-        """
-        Parameters
-        ----------
-        tensor : tf.Tensor 
-            A tensor in the length of self.asu_size
-        asu_id : tf.Tensor
-            A potentially ragged tensor of asu ids
-        H : tf.Tensor
-            A potentially ragged tensor of miller indices
-        """
-        return tf.ragged.map_flat_values(self._gather, tensor, asu_id, H)
-
-    def __iter__(self):
-        return self.reciprocal_asus.__iter__()
-
-    def __next__(self):
-        return self.reciprocal_asus.__next__()
-
-    def __len__(self):
-        return len(self.reciprocal_asus)
-
-@tfk.saving.register_keras_serializable(package="abismal")
-class ReciprocalASU(tfk.layers.Layer):
+@serialization.register
+class ReciprocalASU(serialization.Serializable):
     @cellify
     @spacegroupify
-    def __init__(self, cell, spacegroup, dmin, anomalous=True, **kwargs):
+    def __init__(self, cell, spacegroup, dmin, anomalous=True):
         """
-        Base Layer that remaps observed miller indices to the reciprocal asu.
-        This class enables indexing of per reflection variables from tf.
-        All the attributes are in the length of the number of non-redudant 
-        miller indices.
+        Enumerates the non-redundant miller indices of one reciprocal asymmetric
+        unit and maps observed miller indices onto them. Everything here is
+        numpy; `ReciprocalASUCollection` moves what the model needs onto the
+        device.
 
         Attributes
         ----------
@@ -154,7 +54,10 @@ class ReciprocalASU(tfk.layers.Layer):
         centric : np.ndarray(bool)
             Indicator for centric vs acentric reflections
         epsilon : np.ndarray(np.float32)
-            Reflection multiplicity. 
+            Reflection multiplicity.
+        miller_id : np.ndarray(np.int32)
+            A (2h+1, 2k+1, 2l+1) grid holding the index into Hunique of every
+            miller index, or -1 for those that are not in the data set.
 
         Parameters
         ----------
@@ -167,7 +70,6 @@ class ReciprocalASU(tfk.layers.Layer):
         anomalous : bool
             If true, treat Friedel mates as non-redudant
         """
-        super().__init__(**kwargs)
         self.anomalous = anomalous
         self._cell = cell.parameters
         self._spacegroup = spacegroup.xhm()
@@ -184,6 +86,7 @@ class ReciprocalASU(tfk.layers.Layer):
             Hasu = friedel_sign*Hasu
 
         self.Hunique,inv = np.unique(Hasu, axis=0, return_inverse=True)
+        inv = inv.reshape(-1)
         self.asu_size = len(self.Hunique)
 
         #This 3d grid contains the unique miller id for each reflection
@@ -197,17 +100,14 @@ class ReciprocalASU(tfk.layers.Layer):
         self.dHKL = cell.calculate_d_array(self.Hunique).astype(np.float32)
         self.epsilon = go.epsilon_factor_array(self.Hunique).astype(np.float32)
         self.centric = go.centric_flag_array(self.Hunique).astype(bool)
-        self.built = True #This object is not lazy
 
     def get_config(self):
-        config = super().get_config()
-        config.update({
-            'cell' : self.cell.parameters,
+        return {
+            'cell' : list(self.cell.parameters),
             'spacegroup' : self.spacegroup.xhm(),
             'dmin' : self.dmin,
             'anomalous' : self.anomalous,
-        })
-        return config
+        }
 
     @property
     def spacegroup(self):
@@ -219,12 +119,11 @@ class ReciprocalASU(tfk.layers.Layer):
 
     def get_reciprocal_cell(self):
         """ Generate the full reciprocal cell respecting systematic absences """
-        go = self.spacegroup.operations()
         self.hmax = np.array(self.cell.get_hkl_limits(self.dmin))
 
         h,k,l = self.hmax
 
-        self.grid_size = tf.convert_to_tensor((2*h+1, 2*k+1, 2*l+1), dtype=tf.int32)
+        self.grid_size = np.array((2*h+1, 2*k+1, 2*l+1), dtype=np.int32)
         H = np.mgrid[-h:h+1:1,-k:k+1:1,-l:l+1:1].reshape((3, -1)).T
 
         #Apply resolution cutoff and remove absences
@@ -237,90 +136,178 @@ class ReciprocalASU(tfk.layers.Layer):
 
         return H
 
-    def _ensure_in_range(self, H):
-        """ Cast any out of bounds indices to [0,0,0] """
-        idx = tf.reduce_any(tf.abs(H) > self.hmax, axis=-1, keepdims=True)
-        out = tf.where(
-            idx,
-            tf.zeros_like(H),
-            H
-        )
-        return out
-
-    def _wrap_negative_millers(self, H):
-        """ Wrap negative miller indices to positive for gather """
-        return tf.where(H >= 0, H, H + self.grid_size[...,:])
-
-    def _sanitize_millers(self, H):
-        H = self._ensure_in_range(H)
-        H = self._wrap_negative_millers(H)
-        return H
-
-    def _miller_ids(self, H):
-        H = tf.cast(H, 'int32')
-        hplus = self._sanitize_millers(H)
-        return tf.gather_nd(self.miller_id, hplus)
+    def miller_ids(self, H):
+        """Index into Hunique of each miller index in `H`, -1 if absent."""
+        idx = _flat_miller_index(np.zeros(H.shape[:-1] + (1,), dtype=np.int64), np.asarray(H), self.hmax)
+        return self.miller_id.reshape(-1)[idx]
 
     def gather(self, tensor, H):
         """
         Parameters
         ----------
-        tensor : tf.Tensor 
-            A tensor in the length of self.asu_size
-        H : tf.Tensor
-            A potentially ragged tensor of miller indices
+        tensor : np.ndarray
+            An array in the length of self.asu_size
+        H : np.ndarray
+            Miller indices, shape (..., 3)
         """
-        idx = self._miller_ids(H)
-        safe = tf.maximum(idx, 0)
-        return tf.gather(tensor, safe)
+        idx = self.miller_ids(H)
+        safe = np.maximum(idx, 0)
+        return np.asarray(tensor)[safe]
 
-@tfk.saving.register_keras_serializable(package="abismal")
+
+@serialization.register
+class ReciprocalASUCollection(torch.nn.Module, serialization.Serializable):
+    def __init__(self, *reciprocal_asus):
+        """
+        Several reciprocal ASUs concatenated into one flat index space, which is
+        how the surrogate posterior lays out its parameters.
+
+        The lookup tables are non-persistent buffers: they follow the module to
+        the device but stay out of the state_dict, because they are rebuilt
+        exactly from the config.
+        """
+        super().__init__()
+        self.reciprocal_asus = reciprocal_asus
+        asu_ids,dHKL,centric,epsilon = [],[],[],[]
+        Hunique = []
+        self.asu_size = 0
+        hmax = np.zeros(3, dtype=int)
+        for asu_id, rasu in enumerate(reciprocal_asus):
+            dHKL.append(rasu.dHKL)
+            centric.append(rasu.centric)
+            epsilon.append(rasu.epsilon)
+            self.asu_size = self.asu_size + rasu.asu_size
+            hmax = np.maximum(hmax, rasu.hmax)
+            asu_ids.append(np.full(rasu.asu_size, asu_id, dtype=np.int64))
+            Hunique.append(rasu.Hunique)
+        self.hmax = tuple(int(i) for i in hmax)
+
+        self._buffer('centric', np.concatenate(centric, axis=-1))
+        self._buffer('epsilon', np.concatenate(epsilon, axis=-1))
+        self._buffer('dHKL', np.concatenate(dHKL, axis=-1))
+        self._buffer('asu_id', np.concatenate(asu_ids, axis=-1))
+        self._buffer('Hunique', np.concatenate(Hunique, axis=-2).astype(np.int64))
+
+        h,k,l = self.hmax
+        miller_id = -np.ones((len(self), 2*h+1, 2*k+1, 2*l+1), dtype=np.int64)
+        offset = 0
+        for asu_id, rasu in enumerate(reciprocal_asus):
+            h,k,l = rasu.Hall.T
+            miller_id[asu_id *np.ones_like(h),h,k,l] = rasu.miller_id[h,k,l] + offset
+            offset = offset + rasu.asu_size
+        self._buffer('miller_id', miller_id.reshape(-1))
+
+    def _buffer(self, name, value):
+        self.register_buffer(name, torch.as_tensor(value), persistent=False)
+
+    def get_config(self):
+        return {
+            'reciprocal_asus' : [serialization.serialize(v) for v in self.reciprocal_asus],
+        }
+
+    @classmethod
+    def from_config(cls, config):
+        rasus = [serialization.deserialize(v) for v in config.pop('reciprocal_asus')]
+        return cls(*rasus, **config)
+
+    def _miller_ids(self, asu_id, H):
+        """
+        Flat index into the collection of each (asu_id, H), or -1 when that
+        reflection is not in the collection.
+
+        Parameters
+        ----------
+        asu_id : torch.Tensor
+            Integer asu ids, shape (..., 1)
+        H : torch.Tensor
+            Miller indices, shape (..., 3)
+
+        Returns
+        -------
+        Integer tensor of shape (...,)
+        """
+        return self.miller_id[_flat_miller_index(asu_id, H, self.hmax)]
+
+    def _gather(self, tensor, asu_id, H):
+        idx = self._miller_ids(asu_id, H)
+        safe = idx.clamp_min(0)
+        return tensor[safe]
+
+    def valid(self, asu_id, H):
+        """Which of these miller indices does the collection actually contain?
+
+        `gather` has nothing to return for an index outside the ASU, so it
+        falls back on index 0. That is a silent lie -- the reflection gets the
+        posterior of whatever happens to sit first in the ASU -- and callers
+        need to be able to drop those rather than score them. A reindexing
+        operator that moves reflections in resolution is the way it happens in
+        practice: the outermost images land past dmin.
+
+        Parameters
+        ----------
+        asu_id : torch.Tensor
+            Integer asu ids, shape (..., 1)
+        H : torch.Tensor
+            Miller indices, shape (..., 3)
+
+        Returns
+        -------
+        Boolean tensor shaped like `asu_id`.
+        """
+        return (self._miller_ids(asu_id, H) >= 0)[..., None]
+
+    def gather(self, tensor, asu_id, H):
+        """
+        Parameters
+        ----------
+        tensor : torch.Tensor
+            A tensor in the length of self.asu_size (leading dimension)
+        asu_id : torch.Tensor
+            Integer asu ids, shape (..., 1)
+        H : torch.Tensor
+            Miller indices, shape (..., 3)
+
+        Returns
+        -------
+        `tensor` gathered to shape (..., *tensor.shape[1:])
+        """
+        return self._gather(tensor, asu_id, H)
+
+    def __iter__(self):
+        return self.reciprocal_asus.__iter__()
+
+    def __len__(self):
+        return len(self.reciprocal_asus)
+
+
+@serialization.register
 class ReciprocalASUGraph(ReciprocalASUCollection):
-    def __init__(self, *reciprocal_asus, parents=None, reindexing_ops=None, **kwargs):
-        super().__init__(*reciprocal_asus, **kwargs)
+    def __init__(self, *reciprocal_asus, parents=None, reindexing_ops=None):
+        super().__init__(*reciprocal_asus)
         if parents is None:
-            parents = tf.range(len(reciprocal_asus))
-        self.parents = parents
+            parents = list(range(len(reciprocal_asus)))
+        self.parents = [int(i) for i in parents]
         self.reindexing_ops = reindexing_ops
-        self.parent_asu_id = tf.gather(parents, self.asu_id)
+
+        parent_asu_id = torch.as_tensor(self.parents)[self.asu_id]
         Hpa = []
-        is_root = []
         for i,rasu in enumerate(self.reciprocal_asus):
             op = 'x,y,z'
             if reindexing_ops is not None:
                 op = reindexing_ops[i]
-            op = Op(op)
-            Hpa.append(op(rasu.Hunique))
+            Hpa.append(Op(op)(rasu.Hunique.astype(np.int64)))
+        Hpa = torch.as_tensor(np.concatenate(Hpa, axis=0))
 
-        Hpa = tf.concat(Hpa, axis=0)
-        self.parent_hkl = Hpa
-        self.is_root = self.parent_asu_id == self.asu_id
-        self.parent_miller_id = self._miller_ids(self.parent_asu_id[:,None], self.parent_hkl)
-        self.has_parent = (self.parent_miller_id >= 0) & (~self.is_root)
-
-    @classmethod
-    def from_lists(
-        cls,
-        cells,
-        spacegroups,
-        dmins,
-        anomalous,
-        parents=None,
-        reindexing_ops=None,
-    ):
-        rasu = []
-        for i, (cell, sg, dmin, anom) in enumerate(zip(cells, spacegroups, dmins, anomalous)):
-            rasu.append(
-                ReciprocalASUCollection(cell, sg, dmin, anom)
-            )
-        return cls(rasu, parents, reindexing_ops)
+        self._buffer('parent_asu_id', parent_asu_id)
+        self._buffer('parent_hkl', Hpa)
+        self._buffer('is_root', parent_asu_id == self.asu_id)
+        self._buffer('parent_miller_id', self._miller_ids(parent_asu_id[:,None], Hpa))
+        self._buffer('has_parent', (self.parent_miller_id >= 0) & (~self.is_root))
 
     def get_config(self):
         config = super().get_config()
         config.update({
-            'parents' : [int(i) for i in self.parents],
+            'parents' : list(self.parents),
             'reindexing_ops' : self.reindexing_ops,
         })
         return config
-
-

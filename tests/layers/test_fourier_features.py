@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
-import tensorflow as tf
-import tf_keras as tfk
+import torch
 
 from abismal.layers import FourierFeatures
 
@@ -69,12 +68,12 @@ def test_output_width_is_two_per_frequency_and_excludes_the_raw_input(points):
 def test_B_is_not_trainable_by_default(points):
     layer = FourierFeatures(16, seed=0)
     layer(points)
-    assert len(layer.trainable_weights) == 0
-    assert len(layer.non_trainable_weights) == 1
+    assert len(list(layer.parameters())) == 0
+    assert len(list(layer.buffers())) == 1
 
     trainable = FourierFeatures(16, seed=0, trainable_B=True)
     trainable(points)
-    assert len(trainable.trainable_weights) == 1
+    assert len(list(trainable.parameters())) == 1
 
 
 def test_encoding_is_fixed_across_calls(points):
@@ -91,41 +90,33 @@ def test_seed_controls_the_draw(points):
     assert not np.array_equal(a, c)
 
 
-def test_round_trips_through_keras(points, tmp_path):
+def test_round_trips_through_saving(points, tmp_path):
     """B has to survive saving: a redrawn one is a different function."""
-    model = tfk.Sequential([
-        tfk.layers.InputLayer(input_shape=(points.shape[-1],)),
-        FourierFeatures(64, length_scale=0.5, seed=3),
-        tfk.layers.Dense(4),
-    ])
-    before = model(points).numpy()
+    from abismal import serialization
+    layer = FourierFeatures(64, length_scale=0.5, seed=3)
+    before = layer(points)
 
-    path = str(tmp_path / "ff.keras")
-    model.save(path)
-    reloaded = tfk.saving.load_model(path)
+    path = tmp_path / "ff.pt"
+    torch.save(layer.state_dict(), path)
+    # A different seed, so only the saved B can reproduce the output
+    config = serialization.serialize(layer)
+    config["config"]["seed"] = 99
+    reloaded = serialization.deserialize(config)
+    reloaded.load_state_dict(torch.load(path))
 
-    assert np.allclose(before, reloaded(points).numpy(), atol=1e-6)
-    layer = reloaded.layers[0]
-    assert layer.length_scale == 0.5
-    assert layer.num_frequencies == 64
-    assert layer.trainable_B is False
+    assert torch.allclose(before, reloaded(points), atol=1e-6)
+    assert reloaded.length_scale == 0.5
+    assert reloaded.num_frequencies == 64
+    assert reloaded.trainable_B is False
 
 
-def test_accepts_ragged_input_like_dense_does(points):
-    """It stands in for a Dense on ragged per-image batches, so it must take one."""
+def test_acts_on_the_last_axis(points):
+    """It stands in for a Linear on flat per-reflection batches, so any leading shape works."""
     layer = FourierFeatures(16, seed=0)
-    splits = tf.constant([0, 100, 300], dtype=tf.int64)
-    ragged = tf.RaggedTensor.from_row_splits(tf.convert_to_tensor(points), splits)
-
-    out = layer(ragged)
-    assert isinstance(out, tf.RaggedTensor)
-    assert out.shape[0] == 2
-    assert out.flat_values.shape == (len(points), 32)
-    assert np.allclose(out.flat_values.numpy(), layer(points).numpy())
-
-    # and going through map_flat_values explicitly agrees
-    viaflat = tf.ragged.map_flat_values(layer, ragged)
-    assert np.allclose(viaflat.flat_values.numpy(), out.flat_values.numpy())
+    stacked = np.stack([points, points])
+    out = layer(stacked)
+    assert out.shape == (2, len(points), 32)
+    assert np.allclose(out[0].numpy(), layer(points).numpy())
 
 
 @pytest.mark.parametrize("bad", [0.0, -1.0, [1.0, -2.0]])

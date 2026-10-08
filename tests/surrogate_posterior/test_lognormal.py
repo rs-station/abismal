@@ -1,8 +1,7 @@
 import gemmi
 import numpy as np
 import pytest
-import tensorflow as tf
-import tf_keras as tfk
+import torch
 
 from abismal.symmetry import ReciprocalASU, ReciprocalASUCollection
 from abismal.surrogate_posterior.intensity.lognormal import (
@@ -37,8 +36,8 @@ def test_init_matches_the_requested_moments(rac, moments, Posterior):
     """loc_init/scale_init are moments, not the log normal's own parameters."""
     mean, stddev = moments
     q = Posterior(rac, loc_init=mean, scale_init=stddev).flat_distribution()
-    assert np.allclose(q.mean().numpy(), mean, rtol=1e-5)
-    assert np.allclose(q.stddev().numpy(), stddev, rtol=1e-5)
+    assert np.allclose(q.mean.detach().numpy(), mean, rtol=1e-5)
+    assert np.allclose(q.stddev.detach().numpy(), stddev, rtol=1e-5)
 
 
 @pytest.mark.parametrize(
@@ -48,36 +47,38 @@ def test_init_matches_the_requested_moments(rac, moments, Posterior):
 def test_default_init_is_well_conditioned(rac, Posterior):
     q = Posterior(rac).flat_distribution()
     for p in (q.loc, q.scale):
-        assert np.all(np.isfinite(p.numpy()))
+        assert np.all(np.isfinite(p.detach().numpy()))
     # The unconstrained scale sits near log(0.01), not down at log(epsilon),
     # where gradients would be dead.
-    assert np.all(q.scale.numpy() > 1e-4)
+    assert np.all(q.scale.detach().numpy() > 1e-4)
 
 
 def test_structure_factor_isigi_is_exact(rac, moments):
     """F log normal implies F**2 log normal, so I moments are closed form."""
     mean, stddev = moments
     q = StructureFactorLogNormalPosterior(rac, loc_init=mean, scale_init=stddev)
-    I, SIGI = (x.numpy() for x in q.get_flat_isigi())
+    I, SIGI = (x.detach().numpy() for x in q.get_flat_isigi())
 
-    z = q.flat_distribution().sample(200000, seed=0) ** 2
+    torch.manual_seed(0)
+    z = q.flat_distribution().sample((200000,)) ** 2
     # Fourth moments of a log normal converge slowly, so compare only where the
     # tail is mild enough for the Monte Carlo estimate to be trustworthy.
     keep = (stddev / mean) < 0.5
     assert keep.sum() > 10
-    assert np.allclose(I[keep], tf.reduce_mean(z, 0).numpy()[keep], rtol=0.05)
-    assert np.allclose(SIGI[keep], tf.math.reduce_std(z, 0).numpy()[keep], rtol=0.10)
+    assert np.allclose(I[keep], z.mean(0).numpy()[keep], rtol=0.05)
+    assert np.allclose(SIGI[keep], z.std(0).numpy()[keep], rtol=0.10)
 
 
 def test_intensity_fsigf_is_exact(rac, moments):
     """The square root of a log normal is log normal, so F moments are too."""
     mean, stddev = moments
     q = IntensityLogNormalPosterior(rac, loc_init=mean, scale_init=stddev)
-    F, SIGF = (x.numpy() for x in q.get_flat_fsigf())
+    F, SIGF = (x.detach().numpy() for x in q.get_flat_fsigf())
 
-    z = tf.sqrt(q.flat_distribution().sample(200000, seed=0))
-    assert np.allclose(F, tf.reduce_mean(z, 0).numpy(), rtol=0.02)
-    assert np.allclose(SIGF, tf.math.reduce_std(z, 0).numpy(), rtol=0.05)
+    torch.manual_seed(0)
+    z = torch.sqrt(q.flat_distribution().sample((200000,)))
+    assert np.allclose(F, z.mean(0).numpy(), rtol=0.02)
+    assert np.allclose(SIGF, z.std(0).numpy(), rtol=0.05)
 
 
 def test_squaring_beats_the_inherited_approximation(rac, moments):
@@ -91,8 +92,8 @@ def test_squaring_beats_the_inherited_approximation(rac, moments):
     q = StructureFactorLogNormalPosterior(rac, loc_init=mean, scale_init=stddev)
     _, exact = q.get_flat_isigi()
     F, SIGF = q.get_flat_fsigf()
-    propagated = np.abs(2.0 * F.numpy() * SIGF.numpy())
-    assert not np.allclose(exact.numpy(), propagated, rtol=0.01)
+    propagated = np.abs(2.0 * F.detach().numpy() * SIGF.detach().numpy())
+    assert not np.allclose(exact.detach().numpy(), propagated, rtol=0.01)
 
 
 @pytest.mark.parametrize(
@@ -100,34 +101,36 @@ def test_squaring_beats_the_inherited_approximation(rac, moments):
     [StructureFactorLogNormalPosterior, IntensityLogNormalPosterior],
 )
 def test_both_parameters_are_trainable(rac, Posterior):
-    """The lazy optimizer keys off trainable_variables, so both must be there."""
+    """The lazy optimizer group is built from parameters(), so both must be there."""
     q = Posterior(rac)
-    assert len(q.trainable_variables) == 2
+    params = list(q.parameters())
+    assert len(params) == 2
 
-    with tf.GradientTape() as tape:
-        loss = tf.reduce_sum(q.flat_distribution().log_prob(tf.ones(rac.asu_size)))
-    grads = tape.gradient(loss, q.trainable_variables)
+    loss = q.flat_distribution().log_prob(torch.ones(rac.asu_size)).sum()
+    grads = torch.autograd.grad(loss, params)
     assert all(g is not None for g in grads)
-    assert all(bool(tf.reduce_all(tf.math.is_finite(g))) for g in grads)
+    assert all(bool(torch.isfinite(g).all()) for g in grads)
 
 
 @pytest.mark.parametrize(
     "Posterior",
     [StructureFactorLogNormalPosterior, IntensityLogNormalPosterior],
 )
-def test_round_trips_through_keras(rac, moments, Posterior, tmp_path):
+def test_round_trips_through_saving(rac, moments, Posterior, tmp_path):
+    from abismal import serialization
     mean, stddev = moments
     q = Posterior(rac, loc_init=mean, scale_init=stddev)
 
-    path = str(tmp_path / "posterior.keras")
-    q.save(path)
-    reloaded = tfk.saving.load_model(path)
+    path = tmp_path / "posterior.pt"
+    torch.save(q.state_dict(), path)
+    reloaded = serialization.deserialize(serialization.serialize(q))
+    reloaded.load_state_dict(torch.load(path))
 
     assert type(reloaded) is Posterior
     assert reloaded.rac.asu_size == rac.asu_size
     before, after = q.flat_distribution(), reloaded.flat_distribution()
-    assert np.array_equal(before.loc.numpy(), after.loc.numpy())
-    assert np.array_equal(before.scale.numpy(), after.scale.numpy())
+    assert torch.equal(before.loc, after.loc)
+    assert torch.equal(before.scale, after.scale)
 
 
 def test_gather_selects_the_right_reflections(rac, moments):
@@ -136,11 +139,11 @@ def test_gather_selects_the_right_reflections(rac, moments):
     q = StructureFactorLogNormalPosterior(rac, loc_init=mean, scale_init=stddev)
 
     H = rac.reciprocal_asus[0].Hunique[:16]
-    asu_id = tf.zeros((len(H), 1), dtype="int32")
-    gathered = q.distribution(asu_id, tf.convert_to_tensor(H))
+    asu_id = torch.zeros((len(H), 1), dtype=torch.int32)
+    gathered = q.distribution(asu_id, torch.as_tensor(H))
     flat = q.flat_distribution()
 
-    assert np.allclose(gathered.mean().numpy(), flat.mean().numpy()[: len(H)])
+    assert np.allclose(gathered.mean.detach().numpy(), flat.mean.detach().numpy()[: len(H)])
 
 
 def test_registered_as_a_cli_choice():

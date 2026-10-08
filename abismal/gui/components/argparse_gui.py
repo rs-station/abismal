@@ -101,8 +101,8 @@ class ArgparseGUIBase:
         'r_free_mtz': ('.mtz',),
         'eff_files': ('.eff',),
         'torchref_pdb': ('.pdb', '.cif'),
-        'posterior_init_file': ('.keras',),
-        'scale_init_file': ('.keras',),
+        'posterior_init_file': ('.pt',),
+        'scale_init_file': ('.pt',),
     }
     skipped_actions = [
         "help",
@@ -110,7 +110,7 @@ class ArgparseGUIBase:
         "run_eagerly",
         "debug",
         "embed",
-        "keras_verbosity",
+        "verbosity",
     ]
 
     def _make_group_container(self, named_children):

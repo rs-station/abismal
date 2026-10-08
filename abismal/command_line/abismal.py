@@ -3,18 +3,18 @@
 def main(args=None):
     from time import time
     start_time = time()
-    from abismal.ragged import quiet
     from abismal.command_line.parser import parser
 
     parser = parser.parse_args(args)
 
-    from abismal.io.tf_settings import set_log_level, set_gpu
+    import torch
+    from abismal.device import select_device, configure
 
-    set_log_level(parser.tf_log_level)
-    set_gpu(parser.gpu_id)
+    device = select_device(parser.gpu_id, parser.device)
+    configure(device)
+    if parser.seed is not None:
+        torch.manual_seed(parser.seed)
 
-    import tensorflow as tf
-    import tf_keras as tfk
     from abismal import __version__ as version
     from abismal.symmetry import (
         ReciprocalASU,
@@ -34,9 +34,9 @@ def main(args=None):
         StandardizationFreezer,
         DifferenceMap,
     )
-    from abismal.io import set_gpu
     from abismal.scaling import ImageScaler
-    from tf_keras.callbacks import EarlyStopping
+    from abismal.training import Trainer, EarlyStopping, parameter_groups, piecewise_constant
+    from abismal.saving import load_model
     import gemmi
     import logging
     from os.path import exists
@@ -58,6 +58,7 @@ def main(args=None):
     logger.info("Running with the following options... ")
     logger.info(msg)
 
+    logger.info(f"Training on {device}")
     logger.info("Configuring data input")
     dm = DataManager.from_parser(parser)
     train, test = dm.get_train_test_splits()
@@ -130,20 +131,20 @@ def main(args=None):
                 prior = WilsonPrior.with_empirical_sigma(rac, train, standardize=standardize_inputs)
             else:
                 prior = WilsonPrior(rac)
-        loc_init = prior.flat_distribution().mean()
+        loc_init = prior.flat_distribution().mean
         #scale_init = parser.init_scale * loc_init
-        scale_init = prior.flat_distribution().stddev()
+        scale_init = prior.flat_distribution().stddev
         scale_init = parser.init_scale * scale_init
     elif parser.prior_distribution == 'auto_wilson':
         from abismal.prior.structure_factor.wilson import AutoWilsonPrior
         prior = AutoWilsonPrior(rac)
-        loc_init = prior.flat_distribution().mean()
+        loc_init = prior.flat_distribution().mean
         scale_init = parser.init_scale * loc_init
     elif parser.prior_distribution == "normal":
         from abismal.prior.normal import NormalPrior
 
         prior = NormalPrior(rac)
-        loc_init = tf.ones_like(prior.flat_distribution().mean())
+        loc_init = torch.ones_like(prior.flat_distribution().mean)
         scale_init = parser.init_scale * loc_init
         if parser.posterior_rank > 1:
             from abismal.prior.normal import MultivariateNormalPrior
@@ -152,7 +153,7 @@ def main(args=None):
     elif parser.prior_distribution == "halfnormal":
         from abismal.prior.normal import HalfNormalPrior
         prior = HalfNormalPrior(rac)
-        loc_init = tf.ones_like(prior.flat_distribution().mean())
+        loc_init = torch.ones_like(prior.flat_distribution().mean)
         scale_init = parser.init_scale * loc_init
 
     posterior_kwargs.update({
@@ -226,6 +227,7 @@ def main(args=None):
     surrogate_posterior = Posterior(**posterior_kwargs)
 
     scale_model = ImageScaler(
+        metadata_length=train.metadata_length,
         mlp_width=parser.d_model,
         mlp_depth=parser.layers,
         hidden_units=parser.d_model * 2,
@@ -262,22 +264,22 @@ def main(args=None):
     )
 
     if parser.learning_rate_final is not None:
-        from tf_keras.optimizers.schedules import PiecewiseConstantDecay
-        boundaries = [parser.burnin]
-        values = [parser.learning_rate, parser.learning_rate_final]
-        learning_rate = PiecewiseConstantDecay(boundaries, values)
+        # The TF version built this schedule and then handed the optimizer the
+        # constant rate anyway, so --learning-rate-final did nothing.
+        learning_rate = piecewise_constant(
+            parser.burnin, parser.learning_rate, parser.learning_rate_final
+        )
     else:
         learning_rate = parser.learning_rate
 
     optimizer_kwargs = {
-        "learning_rate": parser.learning_rate,
+        "learning_rate": learning_rate,
         "beta_1": parser.beta_1,
         "beta_2": parser.beta_2,
         "epsilon": parser.adam_epsilon,
         "clipnorm": parser.clipnorm,
         "clipvalue": parser.clip,
         "global_clipnorm": parser.global_clipnorm,
-        "lazy_vars" : [v._unique_id for v in surrogate_posterior.trainable_variables],
     }
     from abismal.optimizers.optimizer_dict import optimizer_dict
 
@@ -287,10 +289,7 @@ def main(args=None):
     if parser.weight_decay is not None:
         optimizer_kwargs['weight_decay'] = parser.weight_decay
 
-    if 'tfk' in parser.optimizer:
-        optimizer_kwargs.pop('lazy_vars')
     Optimizer = optimizer_dict[parser.optimizer]
-    opt = Optimizer(**optimizer_kwargs)
 
     if parser.separate_friedel_mates:
         mtz_saver = FriedelMtzSaver(out_dir, dmin=dm.dmin)
@@ -313,7 +312,8 @@ def main(args=None):
         mode = 'max'
     if 'KL' in monitor:
         mode = 'max'
-    callbacks.append(EarlyStopping(monitor=monitor, patience=parser.early_stopping_patience, mode=mode))
+    early_stopping = EarlyStopping(monitor=monitor, patience=parser.early_stopping_patience, mode=mode)
+    callbacks.append(early_stopping)
 
     if parser.eff_files is not None:
         for i, eff_file in enumerate(map(str, parser.eff_files)):
@@ -383,40 +383,45 @@ def main(args=None):
             )
             callbacks.append(torchref_runner)
 
-    need_to_build = False
-    need_to_build |= parser.debug
-    need_to_build |= parser.scale_init_file is not None
-    need_to_build |= parser.posterior_init_file is not None
-    if need_to_build:
-        logger.info(f"Initializing weights")
-        for x, y in train:
-            model(x)
-            break
-
     if parser.scale_init_file is not None:
         logger.info(f"Initializing the scale model from {parser.scale_init_file}")
-        ref_model = tfk.saving.load_model(str(parser.scale_init_file))
-        model.scale_model.set_weights(ref_model.scale_model.get_weights())
+        ref_model = load_model(str(parser.scale_init_file))
+        model.scale_model.load_state_dict(ref_model.scale_model.state_dict())
 
     if parser.posterior_init_file is not None:
         logger.info(
             f"Initializing the surrogate posterior from {parser.posterior_init_file}"
         )
-        ref_model = tfk.saving.load_model(str(parser.posterior_init_file))
-        model.surrogate_posterior.set_weights(
-            ref_model.surrogate_posterior.get_weights()
+        ref_model = load_model(str(parser.posterior_init_file))
+        model.surrogate_posterior.load_state_dict(
+            ref_model.surrogate_posterior.state_dict()
         )
 
     if parser.freeze_scales:
         logger.info("Freezing the scale model")
-        model.scale_model.trainable = False
+        model.scale_model.requires_grad_(False)
 
     if parser.freeze_posterior:
         logger.info("Freezing the surrogate posterior")
-        model.surrogate_posterior.trainable = False
+        model.surrogate_posterior.requires_grad_(False)
 
-    logger.info("Compiling model")
-    model.compile(opt, run_eagerly=parser.run_eagerly, jit_compile=parser.jit_compile)
+    model.to(device)
+    opt = Optimizer(parameter_groups(model), **optimizer_kwargs)
+
+    step_fn = None
+    if parser.compile:
+        logger.info("Compiling model")
+        step_fn = torch.compile(model, dynamic=True)
+
+    trainer = Trainer(
+        model,
+        opt,
+        device=device,
+        callbacks=callbacks,
+        verbose=parser.verbosity,
+        step_fn=step_fn,
+    )
+
     if parser.embed:
         logger.info("Embed selected, entering interactive, IPython shell.")
         from IPython import embed
@@ -424,14 +429,12 @@ def main(args=None):
 
 
     logger.info("Starting training...")
-    history = model.fit(
-        x=train,
+    history = trainer.fit(
+        train,
         epochs=parser.epochs,
         steps_per_epoch=dm.steps_per_epoch,
-        validation_steps=parser.validation_steps,
-        callbacks=callbacks,
         validation_data=test,
-        verbose=parser.keras_verbosity,
+        validation_steps=parser.validation_steps,
     )
 
     logger.info("Finished training.")

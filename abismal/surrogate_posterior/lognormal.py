@@ -1,7 +1,6 @@
-import tensorflow as tf
-from tensorflow_probability import distributions as tfd
-from tensorflow_probability import util as tfu
-from tensorflow_probability import bijectors as tfb
+import torch
+from torch import distributions as td
+from abismal.surrogate_posterior.surrogate_posterior import PositiveParameter
 
 
 class LogNormalPosteriorBase(object):
@@ -41,12 +40,12 @@ class LogNormalPosteriorBase(object):
         super().__init__(rac, epsilon=epsilon, **kwargs)
 
         if loc_init is None:
-            loc_init = tf.ones(rac.asu_size)
+            loc_init = torch.ones(rac.asu_size)
         if scale_init is None:
             scale_init = 0.01 * loc_init
 
-        loc_init = tf.convert_to_tensor(loc_init)
-        scale_init = tf.convert_to_tensor(scale_init, dtype=loc_init.dtype)
+        loc_init = torch.as_tensor(loc_init, dtype=torch.float32)
+        scale_init = torch.as_tensor(scale_init, dtype=loc_init.dtype)
 
         # Moment matching. For mean m and variance s**2,
         #   scale**2 = log(1 + s**2 / m**2)
@@ -54,32 +53,22 @@ class LogNormalPosteriorBase(object):
         # Both moments are floored first: a zero mean would send loc to -inf,
         # and a zero standard deviation would send the unconstrained scale
         # variable there instead.
-        mean = tf.maximum(loc_init, epsilon)
-        stddev = tf.maximum(scale_init, epsilon)
-        scale_sq = tf.math.log1p(tf.math.square(stddev / mean))
+        mean = loc_init.clamp_min(epsilon)
+        stddev = scale_init.clamp_min(epsilon)
+        scale_sq = torch.log1p(torch.square(stddev / mean))
 
         # loc is the mean of a normal, so it is unconstrained and is stored
         # directly rather than through a bijector.
-        self.loc = tf.Variable(
-            tf.math.log(mean) - 0.5 * scale_sq,
-            name="loc",
-        )
-        self.scale = tfu.TransformedVariable(
-            tf.math.sqrt(scale_sq),
-            tfb.Chain([
-                tfb.Shift(epsilon),
-                tfb.Exp(),
-            ]),
-        )
-        self.built = True
+        self.loc = torch.nn.Parameter(torch.log(mean) - 0.5 * scale_sq)
+        self.scale = PositiveParameter(torch.sqrt(scale_sq), shift=epsilon)
 
     def _distribution(self, loc, scale):
-        return tfd.LogNormal(loc, scale)
+        return td.LogNormal(loc, scale)
 
     def distribution(self, asu_id, hkl):
         loc = self.rac.gather(self.loc, asu_id, hkl)
-        scale = self.rac.gather(self.scale, asu_id, hkl)
+        scale = self.scale.gather(self.rac, asu_id, hkl)
         return self._distribution(loc, scale)
 
     def flat_distribution(self):
-        return self._distribution(self.loc, self.scale)
+        return self._distribution(self.loc, self.scale())

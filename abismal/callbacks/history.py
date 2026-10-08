@@ -1,4 +1,4 @@
-import tf_keras as tfk
+from abismal.callbacks.base import Callback
 import pandas as pd
 from os.path import exists, abspath
 from os import mkdir
@@ -8,9 +8,8 @@ from shutil import which
 
 
 
-class HistorySaver(tfk.callbacks.Callback):
+class HistorySaver(Callback):
     def __init__(self, output_directory, gpu_id=None, start_time=None,  *args, **kwargs):
-        super().__init__(*args, **kwargs)
         self.gpu_id=0
         self.output_directory = abspath(output_directory)
         self.start = start_time
@@ -24,14 +23,14 @@ class HistorySaver(tfk.callbacks.Callback):
     def on_epoch_begin(self, epoch, logs=None):
         self.save_history(epoch)
 
-    def on_train_end(self, epoch, logs=None):
+    def on_train_end(self, logs=None):
         epoch = self.records[-1]['Epoch'] + 1
         self.save_history(epoch)
 
     def save_history(self, epoch):
         out_file = f"{self.output_directory}/history.csv"
 
-        record = {k:v[-1] for k,v in self.model.history.history.items()}
+        record = {k:v[-1] for k,v in self.trainer.history.items()}
         record['Epoch'] = epoch
         record['Time (s)'] = time() - self.start
 

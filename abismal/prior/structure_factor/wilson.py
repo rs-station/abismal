@@ -1,6 +1,7 @@
-import tensorflow as tf
+import math
+import torch
+from abismal import serialization
 from abismal.distributions import FoldedNormal,Nakagami,Rice
-import tf_keras as tfk
 from abismal.prior.base import PriorBase
 from abismal.prior.wilson import WilsonPriorBase,AutoWilsonPriorBase
 
@@ -17,12 +18,8 @@ def acentric_wilson(epsilon, sigma=1.):
 
 def wilson_distribution(centric, epsilon, sigma=1.):
     """Single Nakagami distribution covering both centric and acentric Wilson priors."""
-    omega = tf.convert_to_tensor(epsilon * sigma)
-    m = tf.where(
-        centric,
-        tf.constant(0.5, dtype=omega.dtype),
-        tf.constant(1.0, dtype=omega.dtype),
-    )
+    omega = torch.as_tensor(epsilon * sigma)
+    m = torch.where(centric, 0.5, 1.0).to(omega.dtype)
     return Nakagami(m, omega)
 
 
@@ -36,16 +33,18 @@ class WilsonDistribution:
     def __init__(self, centric, epsilon, sigma=1.):
         self._dist = wilson_distribution(centric, epsilon, sigma)
 
+    @property
     def mean(self):
-        return self._dist.mean()
+        return self._dist.mean
 
+    @property
     def stddev(self):
-        return self._dist.stddev()
+        return self._dist.stddev
 
     def log_prob(self, z):
         return self._dist.log_prob(z)
 
-@tfk.saving.register_keras_serializable(package="abismal")
+@serialization.register
 class WilsonPrior(WilsonPriorBase):
     """Wilson's priors on structure factor amplitudes."""
 
@@ -58,9 +57,8 @@ class WilsonPrior(WilsonPriorBase):
         else:
             centric = self.rac.gather(self.rac.centric, asu_id, hkl)
             epsilon = self.rac.gather(self.rac.epsilon, asu_id, hkl)
-            if len(tf.shape(sigma)) > 0:
-                sigma = self.rac.gather(sigma, asu_id, hkl)
-        # Return a real tfd.Distribution (Nakagami) so that KL against a
+            sigma = self.rac.gather(sigma, asu_id, hkl)
+        # Return a real torch Distribution (Nakagami) so that KL against a
         # Nakagami posterior dispatches to the registered analytical form.
         p = wilson_distribution(centric, epsilon, sigma)
         return p
@@ -71,6 +69,7 @@ class WilsonPrior(WilsonPriorBase):
     def distribution(self, asu_id, hkl):
         return self._distribution(asu_id, hkl)
 
+@serialization.register
 class AutoWilsonPrior(WilsonPrior, AutoWilsonPriorBase):
     """Wilson prior with learnable scale and b-factor"""
 
@@ -83,17 +82,19 @@ class MultiWilsonDistribution:
         self.multiplicity = multiplicity
         self.sigma = sigma
 
+    @property
     def mean(self):
         """ 
         This is purely for initialization purposes and is not to be trusted.
         """ 
-        loc = tf.where(
+        loc = torch.where(
             self.centric,
-            centric_wilson(self.multiplicity, self.sigma).mean(),
-            acentric_wilson(self.multiplicity, self.sigma).mean(),
+            centric_wilson(self.multiplicity, self.sigma).mean,
+            acentric_wilson(self.multiplicity, self.sigma).mean,
         )
         return loc
 
+    @property
     def stddev(self):
         """Marginal standard deviation of the single-Wilson (root) distribution.
 
@@ -101,16 +102,16 @@ class MultiWilsonDistribution:
         double-Wilson coupling, so for a child node this is the prior width
         before conditioning on the parent, not the conditional width.
         """
-        return tf.where(
+        return torch.where(
             self.centric,
-            centric_wilson(self.multiplicity, self.sigma).stddev(),
-            acentric_wilson(self.multiplicity, self.sigma).stddev(),
+            centric_wilson(self.multiplicity, self.sigma).stddev,
+            acentric_wilson(self.multiplicity, self.sigma).stddev,
         )
 
     def log_prob(self, z, z_pa=None):
         if z_pa is None:
             z_h = z
-            z_pa = tf.gather(z, self.parent_id, axis=-1)
+            z_pa = z[..., self.parent_id.clamp_min(0)]
         else:
             z_h, z_pa = z[...,0],z[...,1]
 
@@ -123,24 +124,26 @@ class MultiWilsonDistribution:
         # was missing here while the root branch above passes it, so child nodes
         # got a prior width off by sqrt(Sigma). Invisible at the default
         # sigma=1.0 and wrong for empirical_wilson / AutoWilsonPrior.
-        scale = tf.sqrt(
-            self.multiplicity * self.sigma * (1. - tf.square(self.correlation))
+        scale = torch.sqrt(
+            self.multiplicity * self.sigma * (1. - torch.square(self.correlation))
         )
-        ll_dw = tf.where(
+        # Root nodes have correlation 0 and no parent, so these are evaluated
+        # there only to be discarded by the where below.
+        ll_dw = torch.where(
             self.centric,
             FoldedNormal(loc, scale).log_prob(z_h),
-            Rice(loc, tf.sqrt(0.5) * scale).log_prob(z_h),
+            Rice(loc, math.sqrt(0.5) * scale).log_prob(z_h),
         )
 
         #Put them both together
-        ll = tf.where(
+        ll = torch.where(
             self.is_root,
             ll_sw,
             ll_dw,
         )
         return ll
 
-@tfk.saving.register_keras_serializable(package="abismal")
+@serialization.register
 class MultiWilsonPrior(PriorBase):
     """
     This class uses reparameterized samples to approximate the log probability 
@@ -184,29 +187,22 @@ class MultiWilsonPrior(PriorBase):
             If this is a tensor, it should have the combinded length of all
             the asus in the rac. 
         """
-        super().__init__(**kwargs)
-        self.rac = rac
-        self._correlation = correlation
-        self.sigma = sigma
-        self.built = True #This is always true
+        super().__init__(rac)
+        self._correlation_list = [float(c) for c in correlation]
+        self.register_buffer('_correlation', torch.tensor(self._correlation_list))
+        sigma = torch.as_tensor(sigma, dtype=torch.float32) * torch.ones(self.rac.asu_size)
+        self.register_buffer('sigma', sigma)
 
     @property
     def correlation(self):
-        return tf.gather(self._correlation, self.rac.asu_id)
+        return self._correlation[self.rac.asu_id]
 
     def get_config(self):
         config = super().get_config()
         config.update({
-            'rac' : tfk.saving.serialize_keras_object(self.rac),
-            'correlation' : self._correlation,
-            'sigma' : self.sigma,
+            'correlation' : self._correlation_list,
         })
         return config
-
-    @classmethod
-    def from_config(cls, config):
-        config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
-        return cls(**config)
 
     def _distribution(self, asu_id=None, hkl=None):
         sigma = self.sigma
@@ -243,17 +239,16 @@ class MultiWilsonPrior(PriorBase):
             # it by asu_id would return the correlation of Miller ids 0..n_asu,
             # silently yielding ~0 for most reflections. The per-ASU vector is
             # `self._correlation`.
-            correlation = tf.gather(self._correlation, asu_id)
+            correlation = self._correlation[asu_id]
             # log_prob gathers z at these indices, so they must be flat Miller
             # ids into the full ASU collection -- the same space
             # `rac.parent_miller_id` is already in.
             parent_id = self.rac.gather(self.rac.parent_miller_id, asu_id, hkl)
-            if len(tf.shape(sigma)) > 0:
-                # Gather with the CALLER's asu_id/hkl. These used to be
-                # overwritten with the full-ASU vectors just above, which both
-                # mismatched the batch length and passed a rank-2 hkl where a
-                # rank-1 index was expected.
-                sigma = self.rac.gather(self.sigma, asu_id, hkl)
+            # Gather with the CALLER's asu_id/hkl. These used to be
+            # overwritten with the full-ASU vectors just above, which both
+            # mismatched the batch length and passed a rank-2 hkl where a
+            # rank-1 index was expected.
+            sigma = self.rac.gather(self.sigma, asu_id, hkl)
         p = MultiWilsonDistribution(root, correlation, centric, epsilon, sigma, parent_id=parent_id)
         return p
 

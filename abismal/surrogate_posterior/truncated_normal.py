@@ -1,11 +1,11 @@
-import tensorflow as tf
-from tensorflow_probability import distributions as tfd
+import torch
+from abismal.distributions import TruncatedNormal as _TruncatedNormal
 from abismal.surrogate_posterior.folded_normal import FoldedNormalPosteriorBase
 
-class TruncatedNormal(tfd.TruncatedNormal):
-    def sample(self, *args, **kwargs):
-        z = super().sample(*args, **kwargs)
-        return tf.maximum(z, self.low)
+class TruncatedNormal(_TruncatedNormal):
+    def rsample(self, *args, **kwargs):
+        z = super().rsample(*args, **kwargs)
+        return torch.maximum(z, torch.as_tensor(self.low, dtype=z.dtype, device=z.device))
 
 class TruncatedNormalPosteriorBase(FoldedNormalPosteriorBase):
     """
@@ -21,4 +21,3 @@ class TruncatedNormalPosteriorBase(FoldedNormalPosteriorBase):
             high=self.high,
         )
         return q
-

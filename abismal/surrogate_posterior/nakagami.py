@@ -1,6 +1,5 @@
-import tensorflow as tf
-from tensorflow_probability import util as tfu
-from tensorflow_probability import bijectors as tfb
+import torch
+from abismal.surrogate_posterior.surrogate_posterior import PositiveParameter
 
 from abismal.distributions import Nakagami
 
@@ -28,12 +27,12 @@ class NakagamiPosteriorBase(object):
         self.concentration_min = concentration_min
 
         if loc_init is None:
-            loc_init = tf.ones(rac.asu_size)
+            loc_init = torch.ones(rac.asu_size)
         if scale_init is None:
             scale_init = 0.01 * loc_init
 
-        loc_init = tf.convert_to_tensor(loc_init)
-        scale_init = tf.convert_to_tensor(scale_init, dtype=loc_init.dtype)
+        loc_init = torch.as_tensor(loc_init, dtype=torch.float32)
+        scale_init = torch.as_tensor(scale_init, dtype=loc_init.dtype)
 
         # Spread: E[X**2] = Omega exactly, so set spread = loc**2 + scale**2.
         scale_sq = scale_init * scale_init
@@ -46,25 +45,23 @@ class NakagamiPosteriorBase(object):
         # Floor at 1.0 (the acentric Wilson case) to keep the unconstrained
         # variable in a well-conditioned region (u ≈ log(0.5) ≈ -0.7).
         concentration_init = spread_init / (4.0 * scale_sq)
-        concentration_init = tf.maximum(concentration_init, 1.0)
+        concentration_init = concentration_init.clamp_min(1.0)
 
-        self.spread = tfu.TransformedVariable(
-            spread_init,
-            tfb.Chain([tfb.Shift(epsilon), tfb.Exp()]),
-        )
-        self.concentration = tfu.TransformedVariable(
-            concentration_init,
-            tfb.Chain([tfb.Shift(concentration_min + epsilon), tfb.Exp()]),
-        )
-        self.built = True
+        self.spread = PositiveParameter(spread_init, shift=epsilon)
+        self.concentration = PositiveParameter(concentration_init, shift=concentration_min + epsilon)
+
+    def get_config(self):
+        config = super().get_config()
+        config['concentration_min'] = self.concentration_min
+        return config
 
     def _distribution(self, concentration, spread):
         return Nakagami(concentration, spread)
 
     def distribution(self, asu_id, hkl):
-        concentration = self.rac.gather(self.concentration, asu_id, hkl)
-        spread = self.rac.gather(self.spread, asu_id, hkl)
+        concentration = self.concentration.gather(self.rac, asu_id, hkl)
+        spread = self.spread.gather(self.rac, asu_id, hkl)
         return self._distribution(concentration, spread)
 
     def flat_distribution(self):
-        return self._distribution(self.concentration, self.spread)
+        return self._distribution(self.concentration(), self.spread())

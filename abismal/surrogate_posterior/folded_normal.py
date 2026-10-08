@@ -1,9 +1,7 @@
-import tensorflow as tf
-from tensorflow_probability import distributions as tfd
-from tensorflow_probability import util as tfu
-from tensorflow_probability import bijectors as tfb
-from abismal.distributions import FoldedNormal as FoldedNormal
-
+import torch
+from abismal.distributions import FoldedNormal
+from abismal.surrogate_posterior.surrogate_posterior import PositiveParameter
+from abismal.surrogate_posterior._shift import Shifted
 
 
 class FoldedNormalPosteriorBase(object):
@@ -15,42 +13,27 @@ class FoldedNormalPosteriorBase(object):
         self.low = self.epsilon
 
         if loc_init is None:
-            loc_init = tf.ones(rac.asu_size)
+            loc_init = torch.ones(rac.asu_size)
         if scale_init is None:
-            scale_init = 0.01 * tf.ones(rac.asu_size)
+            scale_init = 0.01 * torch.ones(rac.asu_size)
 
-        self.loc = tfu.TransformedVariable(
-            loc_init,
-            tfb.Exp(),
-        )
-
-        self.scale = tfu.TransformedVariable(
-            scale_init,
-            tfb.Chain([
-                tfb.Shift(epsilon), 
-                tfb.Exp(),
-            ]),
-        )
-        self.built = True
+        self.loc = PositiveParameter(loc_init)
+        self.scale = PositiveParameter(scale_init, shift=epsilon)
 
     def _distribution(self, loc, scale, low):
         f = FoldedNormal(
             loc, 
             scale, 
         )
-        q = tfd.TransformedDistribution(
-            f, 
-            tfb.Shift(low),
-        )
+        q = Shifted(f, low)
         return q
 
     def distribution(self, asu_id, hkl):
-        loc = self.rac.gather(self.loc, asu_id, hkl)
-        scale = self.rac.gather(self.scale, asu_id, hkl)
+        loc = self.loc.gather(self.rac, asu_id, hkl)
+        scale = self.scale.gather(self.rac, asu_id, hkl)
         q = self._distribution(loc, scale, self.low)
         return q
 
     def flat_distribution(self):
-        q = self._distribution(self.loc, self.scale, self.low)
+        q = self._distribution(self.loc(), self.scale(), self.low)
         return q
-

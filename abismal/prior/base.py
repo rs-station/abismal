@@ -1,7 +1,20 @@
-import tf_keras as tfk
+import torch
+from abismal import serialization
 
 
-class PriorBase(tfk.layers.Layer):
+class PriorBase(torch.nn.Module, serialization.Serializable):
+    def __init__(self, rac):
+        super().__init__()
+        self.rac = rac
+
+    def get_config(self):
+        return {'rac' : serialization.serialize(self.rac)}
+
+    @classmethod
+    def from_config(cls, config):
+        config['rac'] = serialization.deserialize(config['rac'])
+        return cls(**config)
+
     def distribution(self, asu_id, hkl):
         raise NotImplementedError(
             "Derived classes must implement distribution(asu_id, hkl) -> Distribution")
@@ -10,18 +23,7 @@ class PriorBase(tfk.layers.Layer):
         raise NotImplementedError(
             "Derived classes must implement flat_distribution() -> Distribution")
 
-    def call(self, inputs, flat):
-        (
-            asu_id,
-            hkl,
-            resolution,
-            wavelength,
-            metadata,
-            iobs,
-            sigiobs,
-        ) = inputs
-
+    def forward(self, inputs, flat):
         if flat:
             return self.flat_distribution()
-        return self.distribution(asu_id.flat_values, hkl.flat_values)
-
+        return self.distribution(inputs.asu_id, inputs.hkl)

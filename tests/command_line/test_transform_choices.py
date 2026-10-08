@@ -1,15 +1,13 @@
 """The --activation / --pre-activation choices must all actually work.
 
-The list is curated by hand because keras has no registry of its named
-activations to enumerate -- `dir(tf_keras.activations)` comes close but misses
-`leaky_relu`. A hand-written list can drift from what the layer accepts, and the
+The list is curated by hand. A hand-written list can drift from what the layer
+accepts, and the
 failure would land at model-build time in the middle of a run rather than at
 argument-parse time, so it is checked here.
 """
 import numpy as np
 import pytest
-import tensorflow as tf
-tf.config.set_visible_devices([], 'GPU')
+import torch
 
 from abismal.command_line.parser.architecture import (
     NAMED_ACTIVATIONS,
@@ -22,10 +20,9 @@ from abismal.layers import FeedForward
 @pytest.mark.parametrize("name", TRANSFORM_CHOICES)
 def test_every_choice_builds_a_working_layer(name):
     """Usable in both slots, not merely resolvable."""
-    layer = FeedForward(pre_activation=name, activation=name, epsilon=1e-6)
-    layer.build([4, 8])
-    out = layer(tf.random.normal((4, 8)))
-    assert np.all(np.isfinite(out.numpy())), f"{name} produced non-finite output"
+    layer = FeedForward(8, pre_activation=name, activation=name, epsilon=1e-6)
+    out = layer(torch.randn((4, 8)))
+    assert torch.isfinite(out).all(), f"{name} produced non-finite output"
 
 
 @pytest.mark.parametrize("name", TRANSFORM_CHOICES)
@@ -54,6 +51,6 @@ def test_defaults_are_selectable():
 
 
 def test_an_unlisted_activation_is_rejected():
-    """keras knows `mish`; the CLI deliberately does not offer it."""
+    """torch knows `mish`; the CLI deliberately does not offer it."""
     with pytest.raises(SystemExit):
         parser.parse_args(["--pre-activation=mish", "-d", "2.0", "dummy.mtz"])

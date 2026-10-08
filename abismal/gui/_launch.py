@@ -161,7 +161,7 @@ def no_output_scroll():
         return False
 
 
-def stale_modules(names=("ipywidgets", "tensorflow", "numpy")):
+def stale_modules(names=("ipywidgets", "torch", "numpy")):
     """Loaded modules whose version differs from the one now on disk.
 
     An install cannot replace a module the interpreter already imported: the old
@@ -185,7 +185,10 @@ def stale_modules(names=("ipywidgets", "tensorflow", "numpy")):
             on_disk = md.version(name)
         except Exception:
             continue
-        if loaded and on_disk and loaded != on_disk:
+        # Compare without the local version label: torch reports
+        # `2.14.1+cu130` from __version__ while its metadata says `2.14.1`,
+        # which is the same installation.
+        if loaded and on_disk and loaded.split("+")[0] != on_disk.split("+")[0]:
             stale.append((name, loaded, on_disk))
     return stale
 

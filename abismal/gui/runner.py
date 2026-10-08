@@ -239,7 +239,7 @@ class AbismalRunner:
     def start(self):
         """Launch a fresh abismal subprocess."""
         os.makedirs(self.out_dir, exist_ok=True)
-        cmd = ['abismal', *self.args, '--keras-verbosity', '2']
+        cmd = ['abismal', *self.args, '--verbosity', '2']
         # Force unbuffered stdout/stderr in the child so console.log fills in
         # real time — without this the tail thread sees nothing until the
         # child's block buffer flushes (often only on exit).

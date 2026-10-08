@@ -147,6 +147,18 @@ def test_matching_versions_are_not_stale(monkeypatch):
     assert launch_module.stale_modules(("ipywidgets",)) == []
 
 
+def test_a_local_version_label_is_not_staleness(monkeypatch):
+    """torch says 2.14.1+cu130 where its metadata says 2.14.1; same install."""
+    fake = types.ModuleType("torch")
+    fake.__version__ = "2.14.1+cu130"
+    monkeypatch.setitem(sys.modules, "torch", fake)
+
+    import importlib.metadata as md
+    monkeypatch.setattr(md, "version", lambda name: "2.14.1")
+
+    assert launch_module.stale_modules(("torch",)) == []
+
+
 def test_a_module_that_was_never_imported_is_not_stale(monkeypatch):
     monkeypatch.delitem(sys.modules, "ipywidgets", raising=False)
     assert launch_module.stale_modules(("ipywidgets",)) == []

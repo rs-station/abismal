@@ -1,10 +1,10 @@
 import numpy as np
-import tensorflow as tf
-import tf_keras as tfk
+import torch
+from abismal import serialization
 
 
-@tfk.saving.register_keras_serializable(package="abismal")
-class FourierFeatures(tfk.layers.Layer):
+@serialization.register
+class FourierFeatures(torch.nn.Module, serialization.Serializable):
     r"""Random Fourier features with a declared length scale.
 
     Maps ``x`` to ``[cos(Bx), sin(Bx)] / sqrt(num_frequencies)`` for a fixed,
@@ -27,7 +27,7 @@ class FourierFeatures(tfk.layers.Layer):
     scale as a smoothness prior on the input representation, not a bound on the
     function a deep network can express through it.
 
-    ``B`` is a non-trainable weight. It is drawn once at build time and then
+    ``B`` is a non-trainable buffer. It is drawn once at build time and then
     saved and restored with the model -- a redrawn ``B`` would be a different
     function, so a checkpoint that lost it would be meaningless. Leaving it
     fixed is also what keeps the length scale honest; see ``trainable_B``.
@@ -38,8 +38,8 @@ class FourierFeatures(tfk.layers.Layer):
 
     Notes
     -----
-    Accepts dense or ragged input and returns the same kind, so it can stand in
-    for a ``Dense`` on the ragged per-image batches used throughout abismal.
+    Acts on the last axis, so it can stand in for a ``Linear`` on the flat,
+    per-reflection batches used throughout abismal.
 
     The length scale is in units of the input's own scale. Metadata reaching
     the scale model has already been standardized per column, so a scalar
@@ -53,7 +53,7 @@ class FourierFeatures(tfk.layers.Layer):
         length_scale=1.0,
         seed=None,
         trainable_B=False,
-        **kwargs,
+        in_features=None,
     ):
         """
         Parameters
@@ -77,15 +77,22 @@ class FourierFeatures(tfk.layers.Layer):
             bandwidth minimizes the loss, which is the behaviour the length
             scale exists to prevent. Set it only if you want the features and
             have given up the guarantee.
+        in_features : int (optional)
+            The input width. If omitted, ``B`` is drawn on the first call.
         """
-        super().__init__(**kwargs)
+        super().__init__()
         self.num_frequencies = int(num_frequencies)
         self.length_scale = length_scale
         self.seed = seed
         self.trainable_B = trainable_B
+        self.in_features = None
+        self.register_buffer("B", None)
+        if in_features is not None:
+            self.build(in_features)
 
-    def build(self, shape):
-        d = int(shape[-1])
+    def build(self, d):
+        d = int(d)
+        self.in_features = d
 
         ell = np.broadcast_to(
             np.asarray(self.length_scale, dtype="float32"), (d,)
@@ -100,47 +107,39 @@ class FourierFeatures(tfk.layers.Layer):
         # each input direction its own bandwidth.
         rng = np.random.default_rng(self.seed)
         B = rng.standard_normal((d, self.num_frequencies)).astype("float32")
-        B = B / ell[:, None]
+        B = torch.as_tensor(B / ell[:, None])
 
-        self.B = self.add_weight(
-            shape=(d, self.num_frequencies),
-            initializer=tf.constant_initializer(B),
-            dtype="float32",
-            trainable=self.trainable_B,
-            name="B",
-        )
-        self.built = True
+        if self.trainable_B:
+            del self.B
+            self.B = torch.nn.Parameter(B)
+        else:
+            self.B = B
 
-    def call(self, data, **kwargs):
-        # Ragged in, ragged out, as Dense does -- this layer stands in for a
-        # Dense on ragged per-image batches, and matmul has no ragged kernel.
-        if isinstance(data, tf.RaggedTensor):
-            return tf.ragged.map_flat_values(self._encode, data)
-        return self._encode(data)
-
-    def _encode(self, data):
-        projected = tf.matmul(tf.cast(data, self.B.dtype), self.B)
+    def forward(self, data):
+        if self.B is None:
+            self.build(data.shape[-1])
+        data = torch.as_tensor(data)
+        projected = data.to(self.B.dtype) @ self.B
         # 1/sqrt(num_frequencies), not sqrt(2/num_frequencies): the cos and sin
         # pair already supplies the factor of two, so this normalization is
         # what makes z(x).z(y) an unbiased estimate of the kernel rather than
         # twice it.
-        norm = tf.math.rsqrt(tf.cast(self.num_frequencies, projected.dtype))
-        return tf.concat(
-            (tf.cos(projected), tf.sin(projected)), axis=-1
+        norm = self.num_frequencies ** -0.5
+        return torch.cat(
+            (torch.cos(projected), torch.sin(projected)), dim=-1
         ) * norm
 
     def compute_output_shape(self, shape):
         return tuple(shape[:-1]) + (2 * self.num_frequencies,)
 
     def get_config(self):
-        config = super().get_config()
         length_scale = self.length_scale
         if isinstance(length_scale, np.ndarray):
             length_scale = length_scale.tolist()
-        config.update({
+        return {
             "num_frequencies": self.num_frequencies,
             "length_scale": length_scale,
             "seed": self.seed,
             "trainable_B": self.trainable_B,
-        })
-        return config
+            "in_features": self.in_features,
+        }

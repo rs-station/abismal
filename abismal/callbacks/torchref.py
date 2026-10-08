@@ -1,12 +1,12 @@
 import sys
-import tf_keras as tfk
+from abismal.callbacks.base import Callback
 from os.path import exists, abspath, dirname, join
 from os import mkdir
 from subprocess import Popen
 from warnings import warn
 
 
-class TorchRefRunner(tfk.callbacks.Callback):
+class TorchRefRunner(Callback):
     """Run torchref refinement periodically on the merged output.
 
     A PyTorch-based alternative to :class:`PhenixRunner`. Because torchref runs
@@ -34,7 +34,6 @@ class TorchRefRunner(tfk.callbacks.Callback):
                  adp_aniso_sigma: str = 'auto', rigid_body: bool = True,
                  rigid_body_iter: int = 30, allow_overlap: bool = False,
                  *args, **kwargs):
-        super().__init__(*args, **kwargs)
         self.output_prefix = output_prefix
         self.asu_id = asu_id
         self.pdb_file = abspath(pdb_file) if pdb_file is not None else None

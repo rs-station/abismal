@@ -1,9 +1,9 @@
-import tf_keras as tfk
+from abismal.callbacks.base import Callback
 from os.path import exists, abspath
 from os import mkdir,environ
 from subprocess import Popen
 
-class PhenixRunner(tfk.callbacks.Callback):
+class PhenixRunner(Callback):
     """ Run PHENIX periodically on the output. """
     def __init__(self, output_directory : str, eff_file : str, 
             epoch_stride: int=5, asu_id : int=0, output_prefix : str='phenix', *args, **kwargs):
@@ -44,7 +44,6 @@ class PhenixRunner(tfk.callbacks.Callback):
 	```
 
         """
-        super().__init__(*args, **kwargs)
         self.output_prefix = output_prefix
         self.asu_id = asu_id
         self.eff_file = eff_file

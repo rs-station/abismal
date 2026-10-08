@@ -1,10 +1,10 @@
 import numpy as np
-import tensorflow as tf
-import tf_keras as tfk
+import torch
+from abismal import serialization
+from abismal import tracking
 from abismal.prior.base import PriorBase
 
 
-@tfk.saving.register_keras_serializable(package="abismal")
 class WilsonPriorBase(PriorBase):
     """Wilson's priors on structure factor amplitudes."""
     def __init__(self, rac, sigma=1., **kwargs):
@@ -16,10 +16,13 @@ class WilsonPriorBase(PriorBase):
             The Σ value for the wilson distribution. The represents the average intensity stratified by a measure
             like resolution. If this is an array it must be length rac.asu_size
         """
-        super().__init__(**kwargs)
-        self.rac = rac
-        self._sigma = sigma
-        self.built = True #This is always true
+        super().__init__(rac)
+        # Always a full-length buffer, even for a scalar, so that a saved model
+        # restores an empirical Σ through its state_dict without the config
+        # having to carry asu_size floats.
+        sigma = torch.as_tensor(sigma, dtype=torch.float32)
+        sigma = sigma * torch.ones(self.rac.asu_size)
+        self.register_buffer('_sigma', sigma)
 
     @property
     def sigma(self):
@@ -31,9 +34,9 @@ class WilsonPriorBase(PriorBase):
 
         Returns
         -------
-        mean : tf.Tensor
+        mean : np.ndarray
             Weighted mean intensity in each of `bins` resolution shells.
-        size : tf.Tensor
+        size : np.ndarray
             Summed inverse-variance weight in each shell (an effective count).
         labels : array
             Per-reflection bin assignment for `rac.dHKL`.
@@ -41,49 +44,42 @@ class WilsonPriorBase(PriorBase):
             The `bins + 1` resolution (dHKL) bin edges.
         """
         from reciprocalspaceship.utils import bin_by_percentile
-        labels,edges = bin_by_percentile(rac.dHKL, bins=bins, ascending=False)
-        mean = tf.zeros(bins)
-        size = tf.zeros(bins)
+        labels,edges = bin_by_percentile(rac.dHKL.cpu().numpy(), bins=bins, ascending=False)
+        labels_t = torch.as_tensor(labels, device=rac.dHKL.device)
+        mean = np.zeros(bins)
+        size = np.zeros(bins)
         from tqdm import tqdm
-        for i,(batch, _) in tqdm(enumerate(dataset), total=maxiter):
+        for i,batch in tqdm(enumerate(dataset), total=maxiter):
             if i > maxiter:
                 break
-            (
-                asu_id,
-                hkl_in,
-                resolution,
-                wavelength,
-                metadata,
-                iobs,
-                sigiobs,
-            ) = batch
-            idx = rac.gather(labels, asu_id, hkl_in).flat_values
-            I = tf.squeeze(iobs.flat_values, axis=-1)
-            SIGI = tf.squeeze(sigiobs.flat_values, axis=-1)
+            asu_id = torch.as_tensor(batch.asu_id, device=labels_t.device)
+            hkl = torch.as_tensor(batch.hkl, device=labels_t.device)
+            idx = rac.gather(labels_t, asu_id, hkl).cpu().numpy()
+            I = np.asarray(batch.iobs)[:, 0].astype('float64')
+            SIGI = np.asarray(batch.sigiobs)[:, 0].astype('float64')
 
             if isigi_cutoff is not None:
-                mask = tf.cast(I / SIGI > isigi_cutoff, 'float32')
+                mask = (I / SIGI > isigi_cutoff).astype('float64')
             else:
-                mask = tf.ones_like(I)
+                mask = np.ones_like(I)
 
             # Inverse-variance weight per observation; masked observations get zero weight.
-            w = mask / tf.square(SIGI)
+            w = mask / np.square(SIGI)
 
             # `size` now accumulates summed weights rather than counts. The batched
             # Welford combine rule mean += (W_b / W) * (mean_b - mean) holds for
             # weighted means when W is the running sum of weights.
-            batch_size = tf.scatter_nd(idx[:,None], w, (bins,))
-            # divide_no_nan guards bins with zero summed weight in this batch
-            # (e.g. a resolution shell absent from the batch, or fully masked
-            # by the I/sigI cutoff). Such a bin gets batch_mean=0 and an update
-            # weight of 0, leaving the running mean untouched instead of
-            # poisoning it with NaN (0/0 -> NaN, then 0 * NaN -> NaN).
-            batch_mean = tf.math.divide_no_nan(
-                tf.scatter_nd(idx[:,None], w * I, (bins,)), batch_size
-            )
-
-            size = size + batch_size
-            mean = mean + tf.math.divide_no_nan(batch_size, size) * (batch_mean - mean)
+            batch_size = np.bincount(idx, w, minlength=bins)
+            # Bins with zero summed weight in this batch (a resolution shell
+            # absent from the batch, or fully masked by the I/sigI cutoff) get
+            # batch_mean=0 and an update weight of 0, leaving the running mean
+            # untouched instead of poisoning it with NaN.
+            with np.errstate(divide='ignore', invalid='ignore'):
+                batch_mean = np.where(
+                    batch_size > 0, np.bincount(idx, w * I, minlength=bins) / batch_size, 0.
+                )
+                size = size + batch_size
+                mean = mean + np.where(size > 0, batch_size / size, 0.) * (batch_mean - mean)
 
         return mean, size, labels, edges
 
@@ -94,8 +90,8 @@ class WilsonPriorBase(PriorBase):
         )
 
         if standardize:
-            k = tf.math.reduce_sum(
-                mean * size / tf.math.reduce_sum(size)
+            k = np.sum(
+                mean * size / np.sum(size)
             )
             mean = mean / k
 
@@ -108,49 +104,35 @@ class WilsonPriorBase(PriorBase):
                 [edges[-1]-eps],
             ))
             y = np.concatenate(([mean[0]], mean, [mean[-1]]))
-            sigma = interp1d(x**-2., y)(rac.dHKL**-2)
-            sigma = tf.cast(sigma, 'float32')
+            dHKL = rac.dHKL.cpu().numpy()
+            sigma = interp1d(x**-2., y)(dHKL**-2)
         else:
-            sigma = tf.gather(mean, labels)
+            sigma = mean[labels]
 
-        return cls(rac, sigma)
+        return cls(rac, sigma.astype('float32'), **kwargs)
 
     def get_config(self):
-        config = super().get_config()
-        config.update({
-            'rac' : tfk.saving.serialize_keras_object(self.rac),
-            'sigma' : tfk.saving.serialize_keras_object(self.sigma),
-        })
-        return config
-
-
-    @classmethod
-    def from_config(cls, config):
-        config['rac'] = tfk.saving.deserialize_keras_object(config['rac'])
-        config['sigma'] = tfk.saving.deserialize_keras_object(config['sigma'])
-        return cls(**config)
+        # Σ is restored from the state_dict; see __init__.
+        return super().get_config()
 
 
 class AutoWilsonPriorBase(WilsonPriorBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         b_init = 0.
-        self.b = self.add_weight('WilsonB', shape=(), initializer=tfk.initializers.Constant(b_init))
-        self._k = self.add_weight('WilsonK', shape=(), initializer='zeros')
+        self.b = torch.nn.Parameter(torch.tensor(b_init))
+        self._k = torch.nn.Parameter(torch.tensor(0.))
 
     @property
     def k(self):
-        return tf.math.exp(self._k)
-        #return tf.nn.softplus(self._k)
+        return torch.exp(self._k)
 
     @property
     def sigma(self):
-        sigma = tf.math.exp(-self.b * tf.math.reciprocal(tf.math.square(self.rac.dHKL)) + self._k)
-        #sigma = sigma / tf.math.reduce_mean(sigma)
+        sigma = torch.exp(-self.b * torch.reciprocal(torch.square(self.rac.dHKL)) + self._k)
         return sigma
 
-    def call(self, inputs, flat):
-        self.add_metric(self.k, 'WilsonK')
-        self.add_metric(self.b, 'WilsonB')
-        return super().call(inputs, flat)
-
+    def forward(self, inputs, flat):
+        tracking.add_metric(self.k, 'WilsonK')
+        tracking.add_metric(self.b, 'WilsonB')
+        return super().forward(inputs, flat)

@@ -1,64 +1,70 @@
-"""epoch_0.keras is written before the model is built, on purpose.
+"""WeightSaver writes a model that reloads to the same function.
 
-Its consumer is `abismal.cchalf --sf-init`, which wants the structure factor
-initialization. The surrogate posterior is built in its constructor so those
-weights are present; the scale model builds lazily and is not. Building it here
-would mean pulling a batch through the model before training, filling the
-shuffle buffer an extra time -- one of the slowest steps in data loading, paid
-twice, for weights nothing reads. So the partial file is intended and Keras'
-warning about it is suppressed.
+epoch_0 is written before the first gradient step. Its consumer is
+`abismal.cchalf --sf-init`, which wants the structure factor initialization, so
+the file has to hold the whole model as it was constructed.
 """
-
-import warnings
-
-import tf_keras as tfk
+import numpy as np
+import torch
 
 from abismal.callbacks import WeightSaver
+from abismal.optimizers import Adam
+from abismal.saving import load_model, load_optimizer
+from abismal.training import parameter_groups
+from conftest import build_small_model, synthetic_batch
 
 
-def _unbuilt_model():
-    """A model with a weight already, and a layer that has not been built."""
-    model = tfk.Sequential([tfk.layers.Dense(3)])
-    return model
+class _Trainer:
+    def __init__(self, model):
+        self.model = model
+        self.optimizer = Adam(parameter_groups(model))
 
 
-def test_saving_an_unbuilt_model_emits_no_warning(tmp_path):
+def _predict(model, batch):
+    model.eval()
+    torch.manual_seed(0)
+    with torch.no_grad():
+        return model(batch.map(torch.as_tensor), training=False)
+
+
+def test_epoch_zero_is_written_and_reloads_to_the_same_model(tmp_path):
+    model = build_small_model()
     saver = WeightSaver(str(tmp_path))
-    saver.model = _unbuilt_model()
+    saver.set_trainer(_Trainer(model))
+    saver.on_train_begin()
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        saver.on_train_begin(logs=None)
+    path = tmp_path / "epoch_0.pt"
+    assert path.exists()
+    reloaded = load_model(str(path))
+    assert type(reloaded) is type(model)
 
-    unbuilt = [w for w in caught if "has not yet been built" in str(w.message)]
-    assert not unbuilt, [str(w.message) for w in unbuilt]
-    assert (tmp_path / "epoch_0.keras").exists()
+    for (k, a), (_, b) in zip(model.state_dict().items(), reloaded.state_dict().items()):
+        assert torch.equal(a, b), k
+
+    batch = synthetic_batch(model)
+    assert torch.allclose(_predict(model, batch), _predict(reloaded, batch))
 
 
-def test_the_file_is_still_written_and_reloadable(tmp_path):
-    """Suppressing the warning must not change what lands on disk."""
+def test_epoch_end_saves_numbered_by_completed_epochs(tmp_path):
+    model = build_small_model()
     saver = WeightSaver(str(tmp_path))
-    saver.model = _unbuilt_model()
-    saver.on_train_begin(logs=None)
+    saver.set_trainer(_Trainer(model))
+    saver.on_epoch_end(0)
+    saver.on_epoch_end(1)
+    assert (tmp_path / "epoch_1.pt").exists()
+    assert (tmp_path / "epoch_2.pt").exists()
 
-    reloaded = tfk.saving.load_model(str(tmp_path / "epoch_0.keras"))
-    assert isinstance(reloaded, tfk.Sequential)
 
-
-def test_the_suppression_does_not_leak_to_other_saves(tmp_path):
-    """A genuine unbuilt-model save elsewhere must still warn.
-
-    The filter is scoped to one call, so anything that follows is unaffected --
-    otherwise this would hide a real mistake somewhere else in a run.
-    """
+def test_the_optimizer_is_saved_with_its_hyperparameters(tmp_path):
+    model = build_small_model()
+    trainer = _Trainer(model)
+    trainer.optimizer.beta_2 = 0.95
     saver = WeightSaver(str(tmp_path))
-    saver.model = _unbuilt_model()
-    saver.on_train_begin(logs=None)
+    saver.set_trainer(trainer)
+    saver.on_epoch_end(0)
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        tfk.saving.save_model(_unbuilt_model(), str(tmp_path / "elsewhere.keras"))
-
-    assert any("has not yet been built" in str(w.message) for w in caught), (
-        "the unbuilt-model warning should still fire outside WeightSaver"
-    )
+    reloaded = load_model(str(tmp_path / "epoch_1.pt"))
+    opt = load_optimizer(str(tmp_path / "epoch_1.pt"), reloaded)
+    assert isinstance(opt, Adam)
+    assert opt.beta_2 == 0.95
+    assert [g['lazy'] for g in opt.param_groups] == [False, True]

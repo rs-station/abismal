@@ -1,17 +1,17 @@
-import tf_keras as tfk
+from abismal import serialization
 from abismal.surrogate_posterior import StructureFactorPosteriorBase
 from abismal.surrogate_posterior.normal import NormalPosteriorBase,MultivariateNormalPosteriorBase
 import reciprocalspaceship as rs
 
 
-@tfk.saving.register_keras_serializable(package="abismal")
+@serialization.register
 class NormalPosterior(NormalPosteriorBase, StructureFactorPosteriorBase):
     """
     A structure factor surrogate posterior parameterized by a normal distribution
     """
 
 
-@tfk.saving.register_keras_serializable(package="abismal")
+@serialization.register
 class MultivariateNormalPosterior(MultivariateNormalPosteriorBase, StructureFactorPosteriorBase):
     """
     A structure factor surrogate posterior parameterized by a low-rank multivariate normal distribution
@@ -21,7 +21,7 @@ class MultivariateNormalPosterior(MultivariateNormalPosteriorBase, StructureFact
 
     def get_flat_extras(self):
         extras = {}
-        for i,v in enumerate(self.scale_update.numpy().T):
+        for i,v in enumerate(self.scale_update.detach().cpu().numpy().T):
             extras[f'Comp{i}'] = rs.DataSeries(v, dtype='F')
         return extras
 

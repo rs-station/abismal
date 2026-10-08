@@ -12,6 +12,8 @@ _FILE_PATTERNS = (
     'abismal.pid',
     'datamanager.yml',
     'history.csv',
+    'epoch_*.pt',
+    # Checkpoints from abismal 1.x, which an out_dir may still hold.
     'epoch_*.keras',
     'asu_*.mtz',
 )
