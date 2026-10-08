@@ -8,7 +8,7 @@ import torch
 
 from abismal import tracking
 from abismal.merging import VariationalMergingModel
-from conftest import build_small_model, synthetic_batch
+from model_helpers import build_small_model, synthetic_batch
 
 
 def _ragged_reference(ll, valid, image_id, num_images):

@@ -7,7 +7,7 @@ import pytest
 from abismal.command_line.cchalf import freeze_all_but_posterior
 from abismal.optimizers import Adam
 from abismal.training import Trainer, parameter_groups
-from conftest import build_small_model, synthetic_batch
+from model_helpers import build_small_model, synthetic_batch
 
 
 @pytest.fixture

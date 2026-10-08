@@ -11,7 +11,7 @@ from abismal.callbacks import WeightSaver
 from abismal.optimizers import Adam
 from abismal.saving import load_model, load_optimizer
 from abismal.training import parameter_groups
-from conftest import build_small_model, synthetic_batch
+from model_helpers import build_small_model, synthetic_batch
 
 
 class _Trainer:

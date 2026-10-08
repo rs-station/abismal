@@ -8,7 +8,7 @@ from abismal.io.pipeline import ImageCache, BatchStream
 from abismal.optimizers import Adam
 from abismal.training import Trainer, EarlyStopping, parameter_groups, grad_rms
 from abismal.callbacks.base import Callback
-from conftest import build_small_model, synthetic_batch
+from model_helpers import build_small_model, synthetic_batch
 
 
 def _images(model, n, seed=0):
