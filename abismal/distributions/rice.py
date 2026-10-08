@@ -19,8 +19,12 @@ def rice_sample_gradients(z, nu, sigma):
 
 @tf.custom_gradient
 def stateless_rice(shape, nu, sigma, seed):
-    z1 = tf.random.stateless_normal(shape, seed, mean=nu, stddev=sigma)
-    z2 = tf.random.stateless_normal(shape, seed, mean=0., stddev=sigma)
+    # Two seeds, not one. Drawing both components from the same seed made
+    # z2 == z1 - nu exactly, so z = sqrt(z1^2 + (z1 - nu)^2) -- a one-dimensional
+    # family of values that is not Rice distributed at all.
+    seed1, seed2 = samplers.split_seed(seed, n=2)
+    z1 = tf.random.stateless_normal(shape, seed1, mean=nu, stddev=sigma)
+    z2 = tf.random.stateless_normal(shape, seed2, mean=0., stddev=sigma)
     z = tf.sqrt(z1*z1 + z2*z2)
     def grad(upstream):
         dnu,dsigma = rice_sample_gradients(z, nu, sigma)
