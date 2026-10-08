@@ -10,42 +10,22 @@ authors=[
 description = "Stochastic merging for diffraction data."
 readme = "README.md"
 dynamic = ["version"]
-# Colab moved to 3.13; the old <3.13 ceiling excluded the runtime this GUI targets.
-requires-python = ">= 3.9,<3.14"
+# 3.10, not 3.9: 3.9 is end of life, and torch >=2.9, ray and torchref have all
+# dropped it. No ceiling -- every dependency has wheels through 3.14.
+requires-python = ">= 3.10"
 dependencies = [
     "reciprocalspaceship>=0.9.16",
     "tqdm",
-    "tensorflow-probability[tf]==0.25",
-    # A range, not a pin. `==2.18.0` made abismal uninstallable on Google Colab:
-    # TF 2.18 caps ml-dtypes below 0.5, Colab's preinstalled jax requires 0.5 or
-    # newer, and TF 2.18's lite/python/util.py imports jax unconditionally -- so
-    # `import tensorflow` raised ValueError before any of our code ran. Invisible
-    # anywhere jax is absent, which is every developer environment here.
-    #
-    # Verified against the official Colab image on 2.20: the test suite passes,
-    # a merge runs end to end, and torch/torchref import alongside TF in one
-    # process without the segfault seen elsewhere. 2.19 falls in the range and is
-    # untested.
-    "tensorflow>=2.18,<2.21",
+    # A floor, not a pin. Colab and most GPU hosts ship torch already; anything
+    # tighter makes pip replace it, which in a live kernel means a multi-GB
+    # download and a restart. The default Linux wheel bundles CUDA, so there is
+    # no separate GPU extra.
+    "torch>=2.5",
     "matplotlib",
     "seaborn",
     "rs-booster",
-    # tensorflow 2.18 caps numpy at <2.1, and scikit-image >=0.25 pulls a tifffile
-    # that requires numpy>=2.1. Left unpinned, `pip install abismal` resolves
-    # scikit-image to a release that drags numpy above tensorflow's ceiling and
-    # breaks the install.
-    #
-    # Marked, not absolute: scikit-image 0.24 has no cp313 wheel, so on Python 3.13
-    # this pin sent pip to a 22.7 MB source tarball that fails to build its own
-    # metadata -- five minutes to a dead end, which is how it presented on Colab.
-    # The ceiling cannot bind on 3.13 anyway, since TF 2.18 has no cp313 wheel for
-    # a resolution to land on, so the marker costs nothing where it is dropped.
-    # Two entries, not one marked entry: a marker that fails drops the requirement
-    # altogether rather than relaxing it, and abismal needs skimage either way --
-    # _torchref_worker imports peak_local_max lazily, so losing it would not fail
-    # the install or the import, only a torchref run, halfway through.
-    "scikit-image<0.25; python_version < '3.13'",
-    "scikit-image; python_version >= '3.13'",
+    # Imported lazily by the torchref peak finder (_torchref_worker).
+    "scikit-image",
     "ray",
 ]
 
@@ -60,14 +40,10 @@ dev = [
     # holding the GPU and 264 GB of ray spill, because nothing stopped it.
     "pytest-timeout",
 ]
-cuda = [
-    "tensorflow[and-cuda]>=2.18,<2.21",
-]
-# Per-epoch refinement via --torchref-pdb. Optional because it pulls torch, which
-# is large and irrelevant to a plain merging run. Installing it puts torchref in
-# the same interpreter as abismal, so no separate environment is needed.
+# Per-epoch refinement via --torchref-pdb. Optional because torchref brings
+# numba and pyarrow, and caps numpy, scipy, pandas and torch below their latest
+# releases -- constraints a plain merging run has no reason to accept.
 torchref = [
-    "torch>=2.4.0",
     "torchref>=0.6.0",
 ]
 # No `dials` extra, and this is not an oversight.

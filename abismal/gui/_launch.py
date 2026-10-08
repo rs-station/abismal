@@ -42,11 +42,15 @@ def on_colab():
 
 
 def install_torchref():
-    """Add torchref where torch already exists, which is cheap and makes refinement work.
+    """Add torchref, which is cheap and makes refinement work.
 
-    Deliberately not in the `gui` extra: that pulls ~800 MB of torch for everyone
-    who only merges. Colab ships torch already and torchref on top is 3.5 MB, so
-    where torch is present the trade reverses.
+    torch comes with abismal, so torchref on top is 3.5 MB. It is still not in
+    the `gui` extra, because it caps numpy, scipy, pandas and torch, and someone
+    who only merges should not have their environment held back by it. The
+    example data is there to drive refinement, so there the trade reverses.
+
+    The torch check is a guard against a broken install, not a size decision:
+    without torch, pip-installing torchref would pull it in behind abismal's back.
 
     Without it, --torchref-pdb fails inside a detached worker whose stderr nobody
     reads -- the run trains to completion and silently refines nothing.
@@ -197,8 +201,7 @@ def install_dials(quiet=False):
     """Build a DIALS prefix beside this interpreter, for .expt/.refl inputs.
 
     Separate from `install_torchref` because the cost is different by orders of
-    magnitude -- torchref is 3.5 MB where torch already exists, this is several
-    GB and minutes. Opt in, and only where it is the only way to read the files
+    magnitude -- torchref is 3.5 MB, this is several GB and minutes. Opt in, and only where it is the only way to read the files
     the user actually has.
     """
     from abismal.io._dials_env import install
@@ -210,7 +213,7 @@ def launch(example_data=False, dials=False, branch=None, quiet=False):
     """Build the GUI, and return the widget for the notebook to display.
 
     `example_data=True` also fetches the lysozyme dataset and its reference
-    files, and adds torchref where torch already exists -- the reference data is
+    files, and adds torchref -- the reference data is
     there to drive refinement, so it would be no use without it. Off by default:
     someone who brought their own data should not be made to download 31 MB.
 

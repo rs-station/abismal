@@ -406,8 +406,8 @@ class AbismalRunner:
 
     def _append_log(self, line):
         # Filtered here rather than at capture: console.log on disk keeps every
-        # line, including the ones this hides, so nothing is lost -- the panel
-        # just does not open on a dozen lines about cuFFT registration.
+        # line, including the ones this hides, so nothing is lost. See
+        # _log_filter for what counts as noise (currently nothing).
         if is_noise(line):
             return
         self._log_text += line

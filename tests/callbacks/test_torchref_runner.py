@@ -12,8 +12,6 @@ from pathlib import Path
 
 import pytest
 
-tfk = pytest.importorskip("tf_keras")
-
 from abismal.callbacks.torchref import TorchRefRunner
 
 

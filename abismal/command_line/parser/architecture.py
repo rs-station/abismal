@@ -3,13 +3,11 @@ description = "Arguments affecting the model architecture and dimensions"
 
 from abismal.layers import FeedForward
 
-# Keras has no registry of its named activations to enumerate. `dir` over
-# `tf_keras.activations` comes close, but it misses `leaky_relu` -- which resolves
-# through `tfk.activations.get` and works fine -- so it would silently drop a
-# usable option. This list is curated instead, and any of these may be given to
-# either of the two transform slots. `FeedForward.get_transform` still accepts any
-# keras activation; the restriction is the CLI's, so the choices render as a
-# dropdown in the notebook GUI, which builds itself from `action.choices`.
+# The activations either of the two transform slots may be given. These are the
+# names layers/feed_forward.py maps onto torch functions; listing them as
+# choices makes the CLI reject anything else up front, and makes the option
+# render as a dropdown in the notebook GUI, which builds itself from
+# `action.choices`.
 NAMED_ACTIVATIONS = (
     "relu",
     "swish",

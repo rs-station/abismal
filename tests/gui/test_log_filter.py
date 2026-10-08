@@ -1,95 +1,95 @@
 """What the log panel shows, and what it hides.
 
-TensorFlow narrates its startup and its per-epoch dataset exhaustion through the
-same stderr abismal reports on. In a terminal that scrolls past; in a fixed log
-box it is what a user sees first, and on a short run sometimes all they see.
+A library that narrates its startup through the same stderr abismal reports on
+buries abismal's output: in a fixed log box it is what a user sees first, and on
+a short run sometimes all they see. TensorFlow did; PyTorch does not, so nothing
+is hidden today. These tests pin the mechanism with stand-in markers, and pin
+that a real run's output passes through untouched.
 """
 from pathlib import Path
 
+import pytest
+
+from abismal.gui import _log_filter
 from abismal.gui._log_filter import NoiseFilter, is_noise, strip_noise
 
-
-NOISE = [
-    "2026-05-15 14:17:48.970679: E external/local_xla/xla/stream_executor/cuda/"
-    "cuda_fft.cc:477] Unable to register cuFFT factory: Attempting to register",
-    "WARNING: All log messages before absl::InitializeLog() is called are written"
-    " to STDERR",
-    "I0000 00:00:1778869071.448782  603023 gpu_device.cc:2022] Created device "
-    "/job:localhost/replica:0/task:0/device:GPU:0 with 46732 MB memory",
-    "2026-05-15 14:17:48.995392: I tensorflow/core/platform/cpu_feature_guard.cc:210]"
-    " This TensorFlow binary is optimized to use available CPU instructions",
-    "I0000 00:00:1778869082.207106 device_compiler.h:188] Compiled cluster using XLA!",
-]
 
 SIGNAL = [
     "Epoch 1/12",
     "1000/1000 - 187s - loss: 10.9483 - NLL: 5.3453 - KL: 2.1794",
     "Freezing intensity standardization layer...",
     "RuntimeWarning: skipping torchref at epoch 5: 1 earlier run(s) still going",
+    "UserWarning: Early stopping conditioned on metric `val_wCCpred` which is not available.",
     "Traceback (most recent call last):",
     "ValueError: something abismal actually said",
 ]
 
 
-def test_tensorflow_narration_is_dropped():
-    for line in NOISE:
-        assert is_noise(line), line
+@pytest.fixture
+def chatter(monkeypatch):
+    """A stand-in library that announces itself, so the mechanism has something to drop."""
+    monkeypatch.setattr(_log_filter, "NOISE_MARKERS", ("Registered plugin",))
+    return "I0000 00:00:1778869082.207106 plugin.cc:12] Registered plugin cuFoo"
 
 
-def test_abismal_output_and_warnings_survive():
+def test_marked_lines_are_dropped(chatter):
+    assert is_noise(chatter)
+
+
+def test_abismal_output_and_warnings_survive(chatter):
     """Matched on message text, never on severity.
 
-    absl's I0000 prefix is shared with anything logging through it, so dropping a
-    severity would take abismal's own warnings with it.
+    A logging prefix like absl's I0000 is shared with anything logging through
+    it, so dropping a severity would take abismal's own warnings with it.
     """
+    for line in SIGNAL:
+        assert not is_noise(line), line
+    assert not is_noise("I0000 00:00:1778869082.2 trainer.py:9] abismal said this")
+
+
+def test_a_continuation_under_noise_goes_with_it(chatter):
+    """Dropping a header and keeping its indented continuations is worse than
+    not filtering: the panel fills with orphaned fragments."""
+    noise = NoiseFilter()
+    assert noise.keep(chatter) is False
+    assert noise.keep("\t [[{{node IteratorGetNext}}]]") is False
+    assert noise.keep("    while registering cuFoo") is False
+
+
+def test_a_continuation_under_a_real_error_is_kept(chatter):
+    """The same kind of line is the most useful detail in a genuine traceback.
+
+    This is the whole reason the filter is stateful -- deciding per line would
+    either keep orphaned continuations or throw away the detail that localises a
+    real failure.
+    """
+    noise = NoiseFilter()
+    assert noise.keep("Traceback (most recent call last):") is True
+    assert noise.keep('  File "abismal/training/__init__.py", line 9, in fit') is True
+    assert noise.keep("ValueError: Incompatible shapes") is True
+    assert noise.keep("\t [[{{node IteratorGetNext}}]]") is True
+
+
+def test_the_filter_resets_between_blocks(chatter):
+    noise = NoiseFilter()
+    noise.keep(chatter)                                    # noise
+    assert noise.keep("Epoch 1/12") is True                # signal again
+    assert noise.keep("  warnings.warn(") is True          # continues the signal
+
+
+def test_nothing_is_hidden_by_default():
+    """A PyTorch run says nothing that needs hiding, so the filter must not
+    invent work: every line abismal writes reaches the panel."""
     for line in SIGNAL:
         assert not is_noise(line), line
 
 
-def test_a_graph_frame_under_noise_goes_with_it():
-    """End-of-epoch exhaustion trails `[[{{node ...}}]]` lines, once per epoch.
-
-    Dropping the header and keeping its continuations is worse than not
-    filtering: the panel fills with orphaned brackets.
-    """
-    noise = NoiseFilter()
-    header = ("2026-05-15 14:18:27.354855: I tensorflow/core/framework/"
-              "local_rendezvous.cc:405] Local rendezvous is aborting with "
-              "status: OUT_OF_RANGE: End of sequence")
-    assert noise.keep(header) is False
-    assert noise.keep("\t [[{{node IteratorGetNext}}]]") is False
-    assert noise.keep("\t [[Func/variational_merging_model/image_scaler/_11]]") is False
-
-
-def test_a_graph_frame_under_a_real_error_is_kept():
-    """The same line is the most useful detail in a genuine traceback.
-
-    This is the whole reason the filter is stateful -- deciding per line would
-    either keep a screenful of end-of-epoch frames or throw away the one detail
-    that localises a real failure.
-    """
-    noise = NoiseFilter()
-    assert noise.keep("ValueError: Incompatible shapes in RaggedConcat") is True
-    assert noise.keep("\t [[{{node IteratorGetNext}}]]") is True
-
-
-def test_the_filter_resets_between_blocks():
-    noise = NoiseFilter()
-    noise.keep("oneDNN custom operations are on")          # noise
-    assert noise.keep("Epoch 1/12") is True                # signal again
-    assert noise.keep("\t [[{{node Foo}}]]") is True       # continues the signal
-
-
-def test_the_recorded_log_comes_out_readable():
-    """Against the real captured log, not a hand-written sample."""
+def test_the_recorded_log_comes_through_whole():
+    """Against the captured log the replay stub plays, not a hand-written sample."""
     recorded = Path(__file__).parent / "replay" / "console.log"
     raw = recorded.read_text()
-    kept = strip_noise(raw).splitlines()
+    kept = strip_noise(raw)
 
-    assert len(kept) < len(raw.splitlines()) / 2, "barely filtered anything"
-    assert any(line.startswith("Epoch 1/") for line in kept), "lost the epochs"
-    assert any("loss:" in line for line in kept), "lost the losses"
-    assert not any("cuFFT" in line for line in kept)
-    assert not any("IteratorGetNext" in line for line in kept)
-    # Whatever survives, nothing should be an orphaned continuation.
-    assert not any(line.strip().startswith("[[") for line in kept)
+    assert kept == raw
+    assert any(line.startswith("Epoch 1/") for line in kept.splitlines())
+    assert any("loss:" in line for line in kept.splitlines())

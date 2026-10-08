@@ -8,25 +8,25 @@ will use it.
 
 A fallback, not the primary way to install abismal. Somewhere a package manager
 can solve the whole environment at once -- a fresh conda or micromamba env with
-abismal, TensorFlow and dials together -- that is simpler and has fewer moving
+abismal, torch and dials together -- that is simpler and has fewer moving
 parts. This exists for the case that does not cover: an interpreter that already
 has a working abismal and needs .expt/.refl support without being rebuilt.
 
 The prefix is then *appended* to sys.path, never prepended. PYTHONPATH and
 prepending put the conda tree ahead of everything, which is not what we want:
 the prefix carries its own numpy, ml_dtypes, h5py and scipy, and shadowing the
-host's broke TensorFlow outright -- conda's older ml_dtypes made jax raise on
-import, which is the same failure as the old `tensorflow==2.18` pin. Appended,
-the prefix supplies only what the host genuinely lacks, which is dxtbx and
-dials and their private dependencies.
+host's swaps packages out from under a kernel that already imported them -- on
+Colab, conda's older ml_dtypes made the preinstalled jax raise on import.
+Appended, the prefix supplies only what the host genuinely lacks, which is dxtbx
+and dials and their private dependencies.
 
 One version does have to line up. dxtbx ships compiled extensions built against
 a particular numpy, and numpy's ABI is forward- but not backward-compatible, so
 the host's numpy must be at least the prefix's. The solve is constrained to
-`numpy<2.4` for that reason: it lands on numpy 2.3.x, which TensorFlow accepts
-(>=1.26, no ceiling) and which stays under torchref's `numpy<2.4.0` -- so the
-resulting stack holds together with refinement still working. Left
-unconstrained, conda picks numpy 2.5 and torchref becomes uninstallable.
+`numpy<2.4` for that reason: it lands on numpy 2.3.x, which stays under
+torchref's `numpy<2.4.0` -- so the resulting stack holds together with
+refinement still working. Left unconstrained, conda picks numpy 2.5 and
+torchref becomes uninstallable.
 """
 import os
 import subprocess
@@ -134,8 +134,8 @@ def _preload_runtime(prefix):
     opened.
 
     Only effective if nothing has already loaded the system libstdc++. Once
-    TensorFlow is imported it has, and the preload cannot displace symbols that
-    are already resolved -- so this helps a clean process and not a live kernel
+    torch (or any other C++ extension) is imported it has, and the preload
+    cannot displace symbols that are already resolved -- so this helps a clean process and not a live kernel
     that has been training. That is why `activate` also exports
     LD_LIBRARY_PATH: the merge runs in a subprocess, which starts fresh and
     reads the variable the way the linker expects. The in-process path is a

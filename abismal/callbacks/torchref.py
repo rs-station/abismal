@@ -13,10 +13,10 @@ class TorchRefRunner(Callback):
     on CPU/GPU through PyTorch (no external Phenix install), it works on Colab.
 
     Each invocation launches ``_torchref_worker.py`` as a detached subprocess.
-    The worker is started *by file path* so it never imports the abismal package
-    (and therefore never initializes a second TensorFlow/CUDA context); it is a
-    pure PyTorch process. Refinement runs on CPU by default to avoid contending
-    with the training process for GPU memory.
+    The worker is started *by file path* and does not import the abismal
+    package. Running it as a separate process means a crash in refinement
+    cannot take training down. Refinement runs on CPU by default to avoid
+    contending with the training process for GPU memory.
 
     When the merged data are anomalous the worker also builds an anomalous
     difference map and runs peak finding on it, writing ``peaks.csv`` alongside
@@ -154,9 +154,9 @@ class TorchRefRunner(Callback):
         worker = join(dirname(abspath(__file__)), "_torchref_worker.py")
         # abismal and torchref install into one environment (`abismal[torchref]`),
         # so the training interpreter always has torchref and can run the worker
-        # directly. The subprocess is still worth keeping: it isolates the worker's
-        # PyTorch/CUDA context from TensorFlow's, and a crash in refinement cannot
-        # take training down with it.
+        # directly. The subprocess is still worth keeping: a crash in refinement
+        # cannot take training down with it, and the worker's device and memory
+        # stay separate from the training process's.
         command = [
             sys.executable, worker,
             "--mtz", mtz_file,

@@ -13,11 +13,12 @@ Every field is chosen to distinguish a specific failure:
              directory lookup would have said instead. On Colab it succeeds and
              returns a supervisor's cwd, so a plausible wrong answer used to
              arrive before the /content fallback ever ran.
-  packages.* whether the TensorFlow downgrade actually took. Colab ships 2.20,
-             abismal pins 2.18, and the install happens under a live kernel: an
-             already-imported module keeps the old version in memory, which is a
-             successful install that still ends in a broken import.
-  gpu.*      whether a GPU runtime actually has a GPU that TensorFlow can see.
+  packages.* whether the install changed what Colab shipped. abismal asks only
+             for torch>=2.5 so Colab's own is kept, but the install happens
+             under a live kernel: an already-imported module that pip did
+             replace keeps the old version in memory, which is a successful
+             install that still ends in a broken import.
+  gpu.*      whether a GPU runtime actually has a GPU that torch can see.
   imports.*  torchref in particular, whose absence is otherwise silent -- the
              refinement worker is detached and its stderr goes to a file.
 
@@ -52,14 +53,12 @@ PACKAGES = (
     "ipython",
     "jupyterlab",
     "numpy",
-    "tensorflow",
-    "tensorflow-probability",
     "torch",
     "torchref",
     "reciprocalspaceship",
 )
 
-MODULES = ("google.colab", "abismal", "abismal.gui", "tensorflow", "torch", "torchref")
+MODULES = ("google.colab", "abismal", "abismal.gui", "torch", "torchref")
 
 
 def _safe(fn, default=None):
@@ -82,8 +81,8 @@ def _version(name):
 def _importable(name):
     from importlib.util import find_spec
 
-    # find_spec, not import: torch alongside some TensorFlow versions segfaults,
-    # and whether it *could* be imported is the whole question.
+    # find_spec, not import: importing is a side effect on the kernel being
+    # reported, and whether it *could* be imported is the whole question.
     return _safe(lambda: find_spec(name) is not None, default=False)
 
 
@@ -135,17 +134,17 @@ def _paths():
     }
 
 
-def _gpu(tf_preloaded):
-    def tf_devices():
-        # Only when TensorFlow is already loaded. Importing it here would be
-        # invasive: on Colab this probe may run before the install, and importing
-        # TF 2.20 first is exactly what makes the downgrade to 2.18 need a restart.
+def _gpu(torch_preloaded):
+    def torch_devices():
+        # Only when torch is already loaded. Importing it here would be invasive:
+        # on Colab this probe may run before the install, and a module imported
+        # before pip replaces it is exactly what makes an install need a restart.
         # A probe must not create the condition it is there to report.
-        if "tensorflow" not in sys.modules:
+        if "torch" not in sys.modules:
             return None
-        import tensorflow as tf
+        from abismal.device import list_devices
 
-        return [d.name for d in tf.config.list_physical_devices("GPU")]
+        return list_devices()
 
     def smi():
         import subprocess
@@ -164,11 +163,10 @@ def _gpu(tf_preloaded):
         ),
         "nvidia_smi": _safe(smi),
         "cuda_version_env": os.environ.get("CUDA_VERSION"),
-        # Sampled before the probe ran: probing _is_colab imports abismal.gui,
-        # which pulls TensorFlow in, so asking here would always say True and
-        # tell us nothing about the kernel we were handed.
-        "tensorflow_imported_before_probe": tf_preloaded,
-        "tf_gpu_devices": _safe(tf_devices),
+        # Sampled before the probe ran, so it describes the kernel we were
+        # handed rather than whatever the probe itself imported.
+        "torch_imported_before_probe": torch_preloaded,
+        "torch_devices": _safe(torch_devices),
     }
 
 
@@ -198,14 +196,14 @@ def _runner_state(runner):
 
 def probe(runner=None):
     """The whole diagnostic as a JSON-serializable dict."""
-    tf_preloaded = "tensorflow" in sys.modules
+    torch_preloaded = "torch" in sys.modules
     return {
         "schema": SCHEMA,
         "environment": _environment(),
         "paths": _paths(),
         "packages": {name: _version(name) for name in PACKAGES},
         "imports": {name: _importable(name) for name in MODULES},
-        "gpu": _gpu(tf_preloaded),
+        "gpu": _gpu(torch_preloaded),
         "threads": _safe(lambda: sorted(t.name for t in threading.enumerate())),
         "runner": _runner_state(runner) if runner is not None else None,
     }

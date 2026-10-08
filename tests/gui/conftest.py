@@ -9,9 +9,8 @@ import os
 import threading
 import warnings
 
-# Before abismal is imported anywhere below: TF's cuFFT/cuDNN registration errors bury
-# real failure output, and matplotlib must not go looking for a display.
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+# Before abismal is imported anywhere below: matplotlib must not go looking for a
+# display.
 os.environ.setdefault("MPLBACKEND", "Agg")
 
 import pytest

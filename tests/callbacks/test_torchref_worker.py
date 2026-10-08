@@ -1,10 +1,9 @@
 """Tests for the torchref worker's map-geometry and peak-finding helpers.
 
 The worker is deliberately not importable as ``abismal.callbacks._torchref_worker``
--- it is spawned by file path so that it never imports the ``abismal`` package
-and never initialises a second TensorFlow/CUDA context. These tests load it the
-same way a spawned worker would, by path, so they exercise the module that
-actually runs.
+-- it is spawned by file path, independent of the ``abismal`` package. These
+tests load it the same way a spawned worker would, by path, so they exercise
+the module that actually runs.
 
 Everything here is a pure function over a numpy array or a gemmi grid: no
 refinement, no GPU, no reference data.

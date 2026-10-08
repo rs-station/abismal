@@ -42,12 +42,12 @@ def ray_context(log_level="DEBUG", **ray_kwargs):
 
     set_ray_loglevel(log_level)
 
-    # Hide the GPU from the workers. These tasks only parse reflection files, but a
-    # worker that can see the GPU initializes its own TensorFlow GPU context, and
-    # that context takes essentially all the free memory -- set_memory_growth runs
-    # in the training process (abismal.io.set_gpu), not here. The workers run during
-    # data loading, so they get there first and training then OOMs on its first
-    # matmul with only a GB left.
+    # Hide the GPU from the workers. These tasks only parse reflection files and
+    # never touch torch, so nothing here needs a GPU -- and under TensorFlow, a
+    # worker that could see one took essentially all of its memory, and training
+    # then OOMed on its first matmul. torch allocates lazily, so that no longer
+    # happens on its own, but a worker has no business holding a CUDA context on
+    # the card training uses, and hiding it costs nothing.
     #
     # Ray used to do this for us: through 2.53 a task requesting no GPUs got
     # CUDA_VISIBLE_DEVICES="", but 2.57 leaves the variable unset. Set it here so

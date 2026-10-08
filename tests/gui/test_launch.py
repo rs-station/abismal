@@ -84,7 +84,10 @@ def test_fetching_is_a_no_op_off_colab(not_colab, no_downloads):
 # ---------------------------------------------------------------------------
 
 def test_torchref_is_not_installed_without_torch(monkeypatch):
-    """Otherwise this is an 800 MB surprise in someone's local environment."""
+    """torch is a dependency of abismal, so its absence is a broken install.
+
+    That is not something to paper over by pip-installing into it from here.
+    """
     import importlib.util
 
     real = importlib.util.find_spec

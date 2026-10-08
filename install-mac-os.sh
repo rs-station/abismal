@@ -1,7 +1,8 @@
+# abismal on macOS. torch's macOS wheels include the Metal (MPS) backend, and
+# abismal selects it automatically on Apple silicon, so there is nothing
+# GPU-specific to install. `abismal --list-devices` shows what it found.
 ENVNAME=abismal
-PY_VERSION=3.11
-TFP_VERSION=0.24.0
-TF_VERSION=2.16.1
+PY_VERSION=3.12
 
 conda activate base
 
@@ -16,11 +17,9 @@ fi
 conda activate $ENVNAME
 pip install --upgrade pip
 
-conda install -c conda-forge dials -y
-pip install tensorflow==$TF_VERSION
-pip install tensorflow-probability[tf]==$TFP_VERSION
-pip install tensorflow-metal
+# The pins match pre-install.sh, so adding the torchref extra later does not
+# overwrite conda-built packages. See "About the version pins" in README.md.
+conda install -c conda-forge -y dials "numpy<2.4" "pandas<2.4" "scipy<1.18"
 
 # Install abismal
 pip install abismal
-

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A stand-in for the real `abismal` console script.
 
-`AbismalRunner.start()` runs ``['abismal', *args, '--keras-verbosity', '2']`` resolved
+`AbismalRunner.start()` runs ``['abismal', *args, '--verbosity', '2']`` resolved
 from PATH, so putting this directory first on PATH makes the runner launch it instead
 -- and everything else about the launch stays real: the actual subprocess.Popen call,
 start_new_session, the stdout redirect into console.log, the pid file, the exit code,
@@ -13,7 +13,7 @@ condition, _schedule_poll's early return and the pid-file lifecycle are all driv
 that /proc check, so mocking Popen would force mocking _pid_is_abismal too, and most of
 the behaviour under test would be stub.
 
-Stdlib only: it starts in tens of milliseconds and never imports TensorFlow.
+Stdlib only: it starts in tens of milliseconds and never imports torch.
 
 Behaviour is entirely env-driven so one file covers every scenario:
 

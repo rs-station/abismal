@@ -65,7 +65,7 @@ def test_the_packaged_notebook_is_a_valid_notebook():
 
 def test_the_packaged_notebook_carries_no_outputs():
     """It is a template. Shipping someone's execution output in it would put a
-    stale TensorFlow banner and a stranger's file paths in front of every user.
+    stale training log and a stranger's file paths in front of every user.
     """
     import nbformat
 

@@ -57,17 +57,13 @@ def test_a_complete_run(replay):
     H.wait_for_replay(runner, timeout=30)
 
     log = H.log_text(runner)
-    # The panel is filtered, so the fixture's first line -- TensorFlow's oneDNN
-    # banner -- is deliberately absent. "Epoch 1/12" is the earliest thing a user
-    # is meant to see, and it standing first is what says the tail started at the
-    # top of the file rather than wherever it happened to attach.
+    # "Epoch 1/12" is the fixture's first line, and it standing first is what
+    # says the tail started at the top of the file rather than wherever it
+    # happened to attach.
     assert "Epoch 1/12" in log
     assert "Epoch 12/12" in log
     assert log.index("Epoch 1/12") < log.index("Epoch 12/12")
-    assert "oneDNN custom operations are on" not in log
-
-    # Filtered for display only: the file keeps every line.
-    assert "oneDNN custom operations are on" in Path(runner.console_log).read_text()
+    assert "Freezing intensity standardization layer..." in log
 
     assert runner.progress_widget.max == 12
     assert runner.progress_widget.value == 12
@@ -82,13 +78,21 @@ def test_a_complete_run(replay):
     assert pdb_file and "epoch_12" in pdb_file
 
 
-def test_the_log_is_escaped_on_the_way_in(replay):
-    """The captured log contains tab-indented `[[{{node IteratorGetNext}}]]` blocks."""
-    runner = replay()
+def test_the_log_is_escaped_on_the_way_in(replay, tmp_path):
+    """A traceback names `<module>`, which must reach the panel as text, not markup."""
+    console = tmp_path / "console.log"
+    console.write_text(
+        "Epoch 1/1\n"
+        "Traceback (most recent call last):\n"
+        '  File "<string>", line 1, in <module>\n'
+        "ValueError: shapes <3> & <4> do not match\n"
+    )
+    runner = replay(console=console, total_epochs=1)
     H.wait_for_replay(runner, timeout=30)
 
-    assert "[[{{node" in H.log_text(runner)
-    assert "&lt;" in runner.log_widget.value or "<pre" in runner.log_widget.value
+    assert 'File "<string>", line 1, in <module>' in H.log_text(runner)
+    assert "&lt;module&gt;" in runner.log_widget.value
+    assert "<module>" not in runner.log_widget.value
 
 
 def test_output_streams_rather_than_arriving_at_the_end(replay):
@@ -150,7 +154,9 @@ def test_per_epoch_results_are_picked_up_as_they_appear(replay):
 def test_the_first_epoch_renders_an_iframe_and_later_ones_reload_it(replay):
     """Re-embedding the viewer per epoch would reset the camera, so subsequent epochs
     postMessage into the existing iframe instead."""
-    runner = replay(delay=0.02)
+    # Slow enough that the poll sees more than one epoch's results arrive: the
+    # fixture has only a couple of lines per epoch.
+    runner = replay(delay=0.1)
     H.wait_for_replay(runner, timeout=30)
 
     viewer_payloads = [

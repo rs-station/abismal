@@ -158,7 +158,7 @@ def debug_notebook(source_text, slug, code_sha, notebook_path, branch):
     diagnostics = f'''# Diagnostics -- added by devtools/colab_deploy.py, not in the committed notebook.
 # Run this and paste the output back. It reports the environment as JSON: which
 # packages the install actually changed, where the file pickers resolve to, and
-# whether TensorFlow was already loaded when the install ran.
+# whether torch was already loaded when the install ran.
 import json, urllib.request
 
 _src = urllib.request.urlopen("{probe_url}").read()

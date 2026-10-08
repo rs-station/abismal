@@ -25,9 +25,7 @@ import os
 import re
 from pathlib import Path
 
-# Set before abismal is imported anywhere. TF's cuFFT/cuDNN registration errors bury
-# real output, and matplotlib must not try to find a display.
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+# Set before abismal is imported anywhere: matplotlib must not try to find a display.
 os.environ.setdefault("MPLBACKEND", "Agg")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

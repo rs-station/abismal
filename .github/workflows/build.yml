@@ -14,7 +14,7 @@ jobs:
     runs-on: [ubuntu-latest]
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     # Skip CI if 'skip ci' is contained in latest commit message
     if: "!contains(github.event.head_commit.message, 'skip ci')"
@@ -44,29 +44,38 @@ jobs:
       run: |
         source $CONDA/etc/profile.d/conda.sh
         conda create -qyn abismal -c conda-forge python=${{ matrix.python-version }} dials \
-          "pandas<2.4" "scipy<1.18"
+          "numpy<2.4" "pandas<2.4" "scipy<1.18"
         conda activate abismal
         echo "Using python from $(which python)"
         python --version
         echo "Using pip from ... $(which pip)"
         pip install -q --upgrade pip
-        # Refinement runs on CPU, and the runners have no GPU, so take the CPU
-        # build of torch. It is a fraction of the size of the CUDA wheels, which
-        # matters on a runner with a small disk. Installing it first means the
-        # torchref extra finds torch>=2.4.0 already satisfied and leaves it be.
-        pip install -q torch --index-url https://download.pytorch.org/whl/cpu
-        pip install -qe ".[dev,torchref,gui]"
+        # The runners have no GPU, so take the CPU build of torch: a fraction of
+        # the size of the CUDA wheels, which matters on a runner with a small
+        # disk. One pass with an extra index rather than a separate torch install
+        # first: torchref caps torch, and a CPU torch newer than that cap would be
+        # replaced by the CUDA build from PyPI. The CPU wheels carry a `+cpu`
+        # local version, which outranks PyPI's for the same release.
+        pip install -qe ".[dev,torchref,gui]" --extra-index-url https://download.pytorch.org/whl/cpu
 
     - name: Report the installed stack
       run: |
         source $CONDA/etc/profile.d/conda.sh
         conda activate abismal
         python -c "
-        import numpy, tensorflow, torch, torchref, dxtbx
-        print(f'numpy {numpy.__version__}  tensorflow {tensorflow.__version__}')
+        import numpy, torch, torchref, dxtbx
+        print(f'numpy {numpy.__version__}')
         print(f'torch {torch.__version__}  torchref {torchref.__version__}')
         print(f'dxtbx {dxtbx.__file__}')
         "
+
+    - name: Check that TensorFlow is not installed
+      # abismal no longer uses it. Nothing should pull it back in, and a test
+      # that passes only because some dependency dragged it along should fail.
+      run: |
+        source $CONDA/etc/profile.d/conda.sh
+        conda activate abismal
+        python -c "import importlib.util, sys; sys.exit('tensorflow is installed' if importlib.util.find_spec('tensorflow') else 0)"
 
     - name: Run tests with pytest
       env:

@@ -1,10 +1,10 @@
-"""Keeping TensorFlow's startup narration out of the GUI's log panel.
+"""Keeping library startup narration out of the GUI's log panel.
 
-Training shares stderr with everything else abismal has to say, so the console
-log on disk is a mixture: a dozen lines about cuFFT registration and oneDNN
-before anything happens, then the epochs, the warnings and any traceback. On a
-terminal that scrolls past. In a fixed log box it is the first thing a user sees
-and, on a short run, sometimes the only thing.
+Training shares stderr with everything else in the process, so the console log
+on disk is a mixture of abismal's epochs, warnings and tracebacks and whatever
+the libraries underneath decide to say. On a terminal that scrolls past. In a
+fixed log box it is the first thing a user sees and, on a short run, sometimes
+the only thing.
 
 Filtered where the log is *displayed* rather than where it is captured. The
 runner already reads console.log line by line to drive the progress bar, so this
@@ -12,74 +12,48 @@ is a predicate on strings -- no file descriptors, no reader threads, no risk of
 losing a line that mattered. The file on disk keeps everything, which is the
 point: this hides noise from the panel without deciding what gets recorded.
 
-The markers come from the same survey as the `tf-quiet` branch's stderr filter.
-If that ever lands, the two should share this list.
+Nothing needs hiding at the moment. abismal 1.x ran on TensorFlow, which opened
+every run with a dozen lines about cuFFT registration and oneDNN and closed every
+epoch with a screenful of dataset-exhaustion notices; this module existed for
+those. A PyTorch run writes only abismal's own output (checked on .mtz and
+CrystFEL .stream inputs), so the list below is empty. The mechanism stays, so a
+library that starts narrating again costs one line here rather than a new filter.
 """
 
-NOISE_MARKERS = (
-    "] Created device /job:",
-    "] XLA service ",
-    "StreamExecutor device (",
-    "] Loaded cuDNN version",
-    "] Compiled cluster using XLA!",
-    "Unable to register cuFFT factory",
-    "Unable to register cuDNN factory",
-    "Unable to register cuBLAS factory",
-    "All log messages before absl::InitializeLog",
-    "oneDNN custom operations are on",
-    "This TensorFlow binary is optimized",
-    "To enable the following instructions:",
-    "disabling MLIR crash reproducer",
-    # Dataset exhaustion at the end of every epoch, reported as an abort. One of
-    # these blocks per epoch, each trailing a couple of graph-node references.
-    "Local rendezvous is aborting with status: OUT_OF_RANGE",
-    # recv at :424 and send at :428, both per epoch.
-    "Local rendezvous recv item cancelled",
-    "Local rendezvous send item cancelled",
-    # Keras' one-shot advisory that the callback hooks cost more than a batch.
-    # It disables itself after reporting once, and it fires for abismal because
-    # every callback here is custom -- the per-batch hooks do nothing, so what it
-    # measures is Keras' own bookkeeping. This is the only line dropped here that
-    # carries any signal; remove it if you ever want to hear about a genuinely
-    # expensive per-batch callback.
-    "is slow compared to the batch time",
-)
-
-# The continuation of "To enable the following instructions:", which arrives as
-# its own line and is meaningless without the line above it.
-_CONTINUATIONS = ("To enable them in other operations,",)
+#: Substrings that mark a line as a library's status chatter. Matched on message
+#: text, never on a severity prefix -- see `is_noise`.
+NOISE_MARKERS = ()
 
 
 def is_noise(line):
-    """Is this one of TensorFlow's own status lines rather than abismal's output?
+    """Is this one of a library's own status lines rather than abismal's output?
 
-    Matched on message text, never on the severity prefix. absl's `I0000` is
-    shared with anything else logging through it, so dropping a severity would
-    hide messages worth reading -- and abismal's own warnings come through the
-    same channel.
+    Matched on message text, never on the severity prefix. A logging prefix such
+    as absl's `I0000` is shared with anything else logging through it, so
+    dropping a severity would hide messages worth reading -- and abismal's own
+    warnings come through the same channel.
     """
-    return any(marker in line for marker in NOISE_MARKERS + _CONTINUATIONS)
+    return any(marker in line for marker in NOISE_MARKERS)
 
 
-def _is_graph_frame(line):
-    """An indented `[[{{node ...}}]]` reference, which continues the line above.
+def _is_continuation(line):
+    """An indented line, which continues the one above it.
 
-    TensorFlow trails its status messages with these, and so do its tracebacks.
-    Whether one is noise depends entirely on what it is continuing, which is why
-    the filter below has to remember.
+    Python's warnings print their source line this way, tracebacks indent their
+    frames, and TensorFlow trailed its status messages with indented graph-node
+    references. Whether one is noise depends entirely on what it is continuing,
+    which is why the filter below has to remember.
     """
-    stripped = line.strip()
-    return stripped.startswith("[[") and line[:1].isspace()
+    return bool(line.strip()) and line[:1].isspace()
 
 
 class NoiseFilter:
-    """Drops TensorFlow's status lines, and only their continuations.
+    """Drops noise lines, and with them only their own continuations.
 
-    Stateful because a graph-node reference is noise under "Local rendezvous is
-    aborting", which happens at the end of every epoch, and is the most useful
-    line in the file under a genuine error. Deciding per line cannot tell those
-    apart: it would either keep a screenful of end-of-epoch frames or throw away
-    the one detail that localises a real failure.
+    Stateful because the same indented line can be noise under a status message
+    and the most useful line in the file under a genuine error. Deciding per
+    line cannot tell those apart: it would either keep orphaned continuations of
+    hidden lines or throw away the detail that localises a real failure.
     """
 
     def __init__(self):
@@ -87,7 +61,7 @@ class NoiseFilter:
 
     def keep(self, line):
         """Whether this line belongs in the log panel."""
-        if _is_graph_frame(line):
+        if _is_continuation(line):
             return not self._dropped_last
         self._dropped_last = is_noise(line)
         return not self._dropped_last

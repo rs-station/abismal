@@ -412,24 +412,27 @@ def test_the_gui_extra_carries_no_frontend():
     assert any("jupyterlab" in dep for dep in extras["lab"]), extras["lab"]
 
 
-def test_tensorflow_is_a_range_not_a_pin():
-    """Regression: `tensorflow==2.18.0` made abismal uninstallable on Colab.
+def test_torch_is_a_floor_not_a_pin():
+    """Colab ships torch, and installing abismal must not replace it.
 
-    TF 2.18 caps ml-dtypes below 0.5; Colab's preinstalled jax requires 0.5 or
-    newer; and TF 2.18 imports jax unconditionally. Pinning to it meant
-    `import tensorflow` raised before any abismal code ran -- and nowhere else,
-    because no developer environment here has jax.
+    An exact pin or a ceiling below Colab's version makes pip download several
+    GB of torch into a live kernel that already imported the old one, which then
+    needs a restart. The same lesson was learned the hard way with
+    `tensorflow==2.18.0`, which made abismal uninstallable on Colab outright.
     """
     import tomllib
+    from packaging.requirements import Requirement
 
     pyproject = Path(__file__).parents[2] / "pyproject.toml"
     if not pyproject.is_file():
         pytest.skip("not running from a checkout")
 
     deps = tomllib.loads(pyproject.read_text())["project"]["dependencies"]
-    tf = [d for d in deps if d.startswith("tensorflow>") or d.startswith("tensorflow=")]
-    assert tf, deps
-    assert "==" not in tf[0], f"an exact pin locks out Colab's stack: {tf[0]}"
+    torch = [Requirement(d) for d in deps if Requirement(d).name == "torch"]
+    assert torch, deps
+    for spec in torch[0].specifier:
+        assert spec.operator == ">=", f"only a floor leaves Colab's torch alone: {torch[0]}"
+    assert not any(Requirement(d).name.startswith("tensorflow") for d in deps), deps
 
 
 
@@ -550,35 +553,36 @@ def test_tooltips_go_on_controls_not_containers():
 
 
 
-def test_python_313_is_supported_and_unwheeled_pins_are_marked():
+def test_colabs_python_is_supported_and_skimage_always_applies():
     """Regression: the install failed on Colab for five minutes, then gave up.
 
-    Live Colab is on Python 3.13. `requires-python` ended at <3.13, excluding the
-    runtime this GUI exists for, and `scikit-image<0.25` has no cp313 wheel, so
-    pip fell back to a 22.7 MB source tarball and died generating its metadata.
-    A cap that predates a Python release has to say which Pythons it applies to,
-    or it silently becomes "build this from source" on the newest one.
+    Live Colab is on Python 3.13. `requires-python` once ended at <3.13,
+    excluding the runtime this GUI exists for, and a `scikit-image<0.25` pin
+    (there only because TensorFlow capped numpy) has no cp313 wheel, so pip fell
+    back to a 22.7 MB source tarball and died generating its metadata.
 
-    Two entries, not one marked entry: a failing marker drops a requirement
-    rather than relaxing it, and skimage is imported lazily by the torchref peak
-    finder -- so losing it would surface halfway through a refinement, not here.
+    skimage must apply on every supported Python: it is imported lazily by the
+    torchref peak finder, so losing it would surface halfway through a
+    refinement, not at install time.
     """
     import tomllib
     from packaging.requirements import Requirement
+    from packaging.specifiers import SpecifierSet
 
     pyproject = Path(__file__).parents[2] / "pyproject.toml"
     if not pyproject.is_file():
         pytest.skip("not running from a checkout")
 
     project = tomllib.loads(pyproject.read_text())["project"]
-    assert "<3.13" not in project["requires-python"], (
-        f"requires-python {project['requires-python']!r} excludes Colab's runtime"
-    )
+    supported = SpecifierSet(project["requires-python"])
+    for version in ("3.12", "3.13", "3.14"):
+        assert version in supported, (
+            f"requires-python {project['requires-python']!r} excludes {version}"
+        )
 
     entries = [d for d in project["dependencies"] if "scikit-image" in d]
     assert entries, project["dependencies"]
-    assert any("python_version" in d for d in entries)
-    for version in ("3.12", "3.13"):
+    for version in ("3.12", "3.13", "3.14"):
         applies = [
             d for d in entries
             if Requirement(d).marker is None
@@ -602,8 +606,8 @@ def test_the_notebook_asks_colab_for_a_gpu():
     """abismal trains a model, so the default runtime should have one.
 
     Colab reads `accelerator` from the notebook's own metadata when it opens
-    it -- there is no URL parameter for this. Verified against notebooks in
-    tensorflow/docs, which carry the same key.
+    it -- there is no URL parameter for this. Verified against Google's own
+    published notebooks (tensorflow/docs), which carry the same key.
 
     A request, not a guarantee: a free-tier session without quota gets a CPU
     runtime anyway, silently. It also only applies to a fresh runtime, so an

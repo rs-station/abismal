@@ -350,9 +350,9 @@ def main(args=None):
         # produces a run that trains to completion and silently refines nothing.
         # Checked here, while there is still someone watching the terminal.
         #
-        # find_spec rather than an import: torchref pulls torch, and torch in the
-        # same interpreter as some TensorFlow versions segfaults. Asking whether
-        # it could be imported is the whole question, so ask only that.
+        # find_spec rather than an import: importing torchref is slow (numba) and
+        # this process never uses it. Asking whether it could be imported is the
+        # whole question, so ask only that.
         from importlib.util import find_spec
 
         if find_spec("torchref") is None:

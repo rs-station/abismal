@@ -2,7 +2,7 @@
 """Drive the official Colab runtime image locally.
 
 The container reproduces Colab's *runtime* exactly -- the same Python, the same
-preinstalled TensorFlow and numpy, the same process tree and filesystem layout --
+preinstalled torch and numpy, the same process tree and filesystem layout --
 which is the half of Colab that can be automated. It does not reproduce Colab's
 frontend: the widget manager is proprietary and output areas are sandboxed onto a
 separate origin, so anything about whether pixels appear still needs `serve` plus
@@ -10,7 +10,7 @@ a real Colab tab.
 
 What that division buys: the install/dependency class of bug, the /proc and
 JPY_PARENT_PID behaviour that decides where the file pickers open, PATH, and
-whether a GPU runtime has a GPU TensorFlow can see -- all without a human.
+whether a GPU runtime has a GPU torch can see -- all without a human.
 
 Subcommands:
 
@@ -96,8 +96,8 @@ def cmd_pull(args):
 def cmd_build(args):
     """Install the working tree into the image once and commit the result.
 
-    Without this every probe re-downloads TensorFlow, which dwarfs the thing being
-    tested. The commit is the cache.
+    Without this every probe reinstalls abismal's dependencies, which dwarfs the
+    thing being tested. The commit is the cache.
     """
     engine = _podman()
     if not _image_exists(engine, UPSTREAM):
@@ -128,7 +128,7 @@ def cmd_build(args):
         return got.returncode
 
     # Commit before verifying. The install takes minutes and the import check is
-    # the thing most likely to fail -- on Colab it already does, over a
+    # the thing most likely to fail -- under TensorFlow it did, over a
     # jax/ml_dtypes conflict -- and an image you cannot poke at is no way to
     # investigate why. A failed check is a finding, not a reason to throw the
     # artifact away.

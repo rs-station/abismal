@@ -1,7 +1,7 @@
 """Installing the DIALS toolbox beside an interpreter that only has pip.
 
 The constraints this encodes were measured, not guessed: prepending the prefix
-shadows the host's ml_dtypes and breaks TensorFlow through jax, and leaving the
+shadows the host's ml_dtypes and breaks Colab's jax on import, and leaving the
 conda solve unconstrained picks a numpy that makes torchref uninstallable.
 """
 import sys
@@ -16,8 +16,8 @@ def test_the_solve_is_capped_below_numpy_2_4():
     """Unconstrained, conda picks numpy 2.5 and torchref stops being installable.
 
     torchref declares numpy<2.4.0; dxtbx unconstrained wants >=2.5.1. Capping
-    the solve lands on dxtbx 3.26 with numpy 2.3.x, which TensorFlow accepts
-    (>=1.26, no ceiling) and refinement still works alongside.
+    the solve lands on dxtbx 3.26 with numpy 2.3.x, and refinement still works
+    alongside.
     """
     assert env.NUMPY_CEILING == "numpy<2.4"
 
@@ -39,8 +39,7 @@ def test_activate_appends_and_never_prepends(tmp_path, monkeypatch):
 
     The prefix carries its own numpy, ml_dtypes, h5py and scipy. Ahead of the
     host's they shadow them, and conda's older ml_dtypes made jax raise on
-    import -- taking TensorFlow with it. Appended, the prefix supplies only what
-    is genuinely missing.
+    import. Appended, the prefix supplies only what is genuinely missing.
     """
     site_packages, dynload = env._site_packages(tmp_path)
     site_packages.mkdir(parents=True)
@@ -146,7 +145,7 @@ def test_children_inherit_the_library_path(tmp_path, monkeypatch):
     The dynamic linker reads LD_LIBRARY_PATH when a process starts, so setting
     it inside a running interpreter does nothing for that interpreter -- the
     conda extensions want a newer CXXABI than an old host libstdc++ exports,
-    and once TensorFlow has loaded the system one it is too late to preload
+    and once torch has loaded the system one it is too late to preload
     another. A child starts fresh and reads the variable properly, and the
     merge runs in a child.
     """
