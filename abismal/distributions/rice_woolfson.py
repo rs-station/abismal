@@ -1,125 +1,69 @@
-from abismal.distributions import FoldedNormal, Rice
-import tensorflow as tf
-from tensorflow_probability.python.internal import dtype_util
-from tensorflow_probability.python.internal import tensor_util
-import numpy as np
-from tensorflow_probability.python.distributions import distribution
-from tensorflow_probability.python.internal import reparameterization
-from tensorflow_probability.python.internal import parameter_properties
-from tensorflow_probability.python.bijectors import exp as exp_bijector
+import torch
+from torch.distributions import constraints
+from torch.distributions.distribution import Distribution
+from torch.distributions.utils import broadcast_all
 
-class RiceWoolfson(distribution.AutoCompositeTensorDistribution):
-    def __init__(self,
-		   loc,
-		   scale,
-           centric,
-		   validate_args=False,
-		   allow_nan_stats=True,
-		   name='Rice'):
+from abismal.distributions.folded_normal import FoldedNormal
+from abismal.distributions.rice import Rice
 
-        parameters = dict(locals())
-        dtype = dtype_util.common_dtype([loc, scale], dtype_hint=tf.float32)
-        with tf.name_scope(name) as name:
-            self._loc = tensor_util.convert_nonref_to_tensor(loc)
-            self._scale = tensor_util.convert_nonref_to_tensor(scale)
-            self._centric = tensor_util.convert_nonref_to_tensor(centric, dtype='bool')
-        super(RiceWoolfson, self).__init__(
-            dtype=dtype,
-            validate_args=validate_args,
-            allow_nan_stats=allow_nan_stats,
-            reparameterization_type=reparameterization.FULLY_REPARAMETERIZED,
-            parameters=parameters,
-            name=name)
 
-    @classmethod
-    def _parameter_properties(cls, dtype, num_classes=None):
-        # pylint: disable=g-long-lambda
-        pp = dict(
-            loc=parameter_properties.ParameterProperties(),
-            scale=parameter_properties.ParameterProperties(
-                default_constraining_bijector_fn=(
-                    lambda: exp_bijector.Exp()
-                )
-            ),
-            centric=parameter_properties.ParameterProperties(),
-        )
-        return pp
-        # pylint: enable=g-long-lambda
+class RiceWoolfson(Distribution):
+    """Folded normal where ``centric`` is true and Rice elsewhere.
 
-    @property
-    def loc(self):
-        return self._loc
+    Both component distributions are evaluated everywhere and selected with
+    ``torch.where``, which keeps shapes static; their gradients are finite in the
+    discarded branch, so the selection does not leak NaNs.
+    """
+    arg_constraints = {"loc": constraints.real, "scale": constraints.positive}
+    support = constraints.nonnegative
+    has_rsample = True
 
-    @property
-    def scale(self):
-        return self._scale
-
-    @property
-    def centric(self):
-        return self._centric
+    def __init__(self, loc, scale, centric, validate_args=False):
+        self.loc, self.scale = broadcast_all(loc, scale)
+        centric = torch.as_tensor(centric, dtype=torch.bool, device=self.loc.device)
+        batch_shape = torch.broadcast_shapes(self.loc.shape, centric.shape)
+        self.loc = self.loc.expand(batch_shape)
+        self.scale = self.scale.expand(batch_shape)
+        self.centric = centric.expand(batch_shape)
+        super().__init__(batch_shape, validate_args=validate_args)
 
     @property
     def _centric_distribution(self):
-        return FoldedNormal(self.loc, self.scale)
+        return FoldedNormal(self.loc, self.scale, validate_args=self._validate_args)
 
     @property
     def _acentric_distribution(self):
-        return Rice(self.loc, self.scale)
+        return Rice(self.loc, self.scale, validate_args=self._validate_args)
 
-    def _log_prob(self, X, **kwargs):
-        return tf.where(
-            self._centric,
-            self._centric_distribution.log_prob(X),
-            self._acentric_distribution.log_prob(X),
+    def _select(self, centric_value, acentric_value):
+        return torch.where(self.centric, centric_value, acentric_value)
+
+    def log_prob(self, value):
+        return self._select(
+            self._centric_distribution.log_prob(value),
+            self._acentric_distribution.log_prob(value),
         )
 
-    def _sample_n(self, n, seed=None):
-        return tf.where(
-            self._centric,
-            self._centric_distribution.sample(n, seed=seed),
-            self._acentric_distribution.sample(n, seed=seed),
+    def rsample(self, sample_shape=torch.Size()):
+        return self._select(
+            self._centric_distribution.rsample(sample_shape),
+            self._acentric_distribution.rsample(sample_shape),
         )
 
-    def _mean(self):
-        return tf.where(
-            self._centric,
-            self._centric_distribution.mean(),
-            self._acentric_distribution.mean(),
+    @property
+    def mean(self):
+        return self._select(
+            self._centric_distribution.mean, self._acentric_distribution.mean
         )
 
-    def _variance(self):
-        return tf.where(
-            self._centric,
-            self._centric_distribution.variance(),
-            self._acentric_distribution.variance(),
+    @property
+    def variance(self):
+        return self._select(
+            self._centric_distribution.variance, self._acentric_distribution.variance
         )
 
-    def _stddev(self):
-        return tf.where(
-            self._centric,
-            self._centric_distribution.stddev(),
-            self._acentric_distribution.stddev(),
+    @property
+    def stddev(self):
+        return self._select(
+            self._centric_distribution.stddev, self._acentric_distribution.stddev
         )
-
-
-
-if __name__=="__main__":
-    n = 100
-    loc,scale = np.random.random((2, n)).astype('float32')
-    centric = np.random.choice([False, True], size=n)
-    q = RiceWoolfson(loc, scale, centric)
-    p = RiceWoolfson(0., 1., centric)
-    x = np.linspace(-10., 10., 1000)
-    u = q.mean()
-    s = q.stddev()
-    v = q.variance()
-
-    q.log_prob(x[:,None])
-    q.prob(x[:,None])
-    q.sample(n)
-    q.sample_intensities(n)
-    q.kl_divergence(p)
-
-    from IPython import embed
-    embed(colors='linux')
-

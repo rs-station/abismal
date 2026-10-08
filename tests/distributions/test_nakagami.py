@@ -1,221 +1,190 @@
 import numpy as np
 import pytest
-import tensorflow as tf
-import tensorflow_probability as tfp
+import torch
+from scipy.special import gammaln
+from scipy.stats import kstest
 from scipy.stats import nakagami as scipy_nakagami
+from torch.distributions import Gamma, HalfNormal, Weibull, kl_divergence
 
-from abismal.distributions import Nakagami
+from abismal.distributions import Nakagami, log_gamma_half_ratio, log_gamma_half_ratio_excess
 
-tfd = tfp.distributions
-
-
-@pytest.mark.parametrize("m,omega", [
-    (0.5, 1.0),
-    (1.0, 1.0),
-    (1.5, 2.3),
-    (3.0, 0.7),
-])
-def test_sample_shape_and_support(m, omega):
-    dist = Nakagami(m, omega)
-    samples = dist.sample(1000, seed=0)
-    assert samples.shape == (1000,)
-    assert tf.reduce_all(tf.math.is_finite(samples)).numpy()
-    assert tf.reduce_all(samples >= 0.0).numpy()
-
-
-def test_sample_shape_broadcasting():
-    m = tf.constant([0.5, 1.0, 1.5])
-    omega = tf.constant([[1.0], [2.0]])
-    dist = Nakagami(m, omega)
-    samples = dist.sample(50, seed=0)
-    assert samples.shape == (50, 2, 3)
-
-
-@pytest.mark.parametrize("m,omega", [
+PARAMS = [
     (0.5, 1.0),
     (1.0, 1.5),
     (2.5, 0.7),
     (4.0, 3.1),
-])
+    (37.0, 2.0),
+    (1e3, 1.0),
+    (1e5, 4.0),
+]
+
+
+@pytest.mark.parametrize("m,omega", PARAMS[:4])
+def test_sample_shape_and_support(m, omega):
+    torch.manual_seed(0)
+    samples = Nakagami(m, omega).sample((1000,))
+    assert samples.shape == (1000,)
+    assert torch.isfinite(samples).all()
+    assert (samples >= 0.0).all()
+
+
+def test_sample_shape_broadcasting():
+    m = torch.tensor([0.5, 1.0, 1.5])
+    omega = torch.tensor([[1.0], [2.0]])
+    samples = Nakagami(m, omega).sample((50,))
+    assert samples.shape == (50, 2, 3)
+
+
+@pytest.mark.parametrize("m,omega", PARAMS[:4])
+def test_samples_match_scipy(m, omega):
+    torch.manual_seed(1)
+    z = Nakagami(m, omega).sample((20000,)).double().numpy()
+    assert kstest(z, scipy_nakagami(m, scale=np.sqrt(omega)).cdf).pvalue > 1e-3
+
+
+@pytest.mark.parametrize("m,omega", PARAMS)
 def test_log_prob_matches_scipy(m, omega):
-    dist = Nakagami(m, omega)
-    x = np.linspace(0.05, 5.0, 50).astype(np.float32)
-    log_prob = dist.log_prob(x).numpy()
-    expected = scipy_nakagami.logpdf(x, m, scale=np.sqrt(omega))
-    np.testing.assert_allclose(log_prob, expected, rtol=1e-4, atol=1e-5)
+    d = scipy_nakagami(m, scale=np.sqrt(omega))
+    x = np.linspace(d.ppf(1e-4), d.ppf(1 - 1e-4), 50).astype(np.float32)
+    log_prob = Nakagami(m, omega).log_prob(torch.from_numpy(x)).numpy()
+    expected = d.logpdf(x.astype(np.float64))
+    # float32 resolves log1p(u) - u, u ~ 1/sqrt(m), to ~eps |u|, which the
+    # density multiplies by m: ~5e-5 absolute at m = 1e5.
+    atol = 1e-4
+    np.testing.assert_allclose(log_prob, expected, rtol=1e-4, atol=atol)
+
+
+def test_cdf_matches_scipy():
+    x = torch.linspace(0.0, 4.0, 30)
+    np.testing.assert_allclose(
+        Nakagami(1.7, 2.1).cdf(x).numpy(),
+        scipy_nakagami.cdf(x.numpy(), 1.7, scale=np.sqrt(2.1)),
+        atol=1e-6,
+    )
 
 
 def test_centric_wilson_matches_half_normal():
     sigma = 1.7
-    dist = Nakagami(0.5, sigma * sigma)
-    reference = tfd.HalfNormal(scale=sigma)
-    x = np.linspace(0.01, 5.0, 40).astype(np.float32)
+    x = torch.linspace(0.01, 5.0, 40)
     np.testing.assert_allclose(
-        dist.log_prob(x).numpy(), reference.log_prob(x).numpy(),
+        Nakagami(0.5, sigma * sigma).log_prob(x).numpy(),
+        HalfNormal(sigma).log_prob(x).numpy(),
         rtol=1e-4, atol=1e-5)
 
 
 def test_acentric_wilson_matches_weibull():
     sigma = 1.7
-    dist = Nakagami(1.0, sigma * sigma)
-    reference = tfd.Weibull(concentration=2.0, scale=sigma)
-    x = np.linspace(0.01, 5.0, 40).astype(np.float32)
+    x = torch.linspace(0.01, 5.0, 40)
     np.testing.assert_allclose(
-        dist.log_prob(x).numpy(), reference.log_prob(x).numpy(),
+        Nakagami(1.0, sigma * sigma).log_prob(x).numpy(),
+        Weibull(sigma, 2.0).log_prob(x).numpy(),
         rtol=1e-4, atol=1e-5)
 
 
-def test_reparameterized_gradients():
-    m = tf.Variable(2.0)
-    omega = tf.Variable(1.5)
-    with tf.GradientTape() as tape:
-        samples = Nakagami(m, omega).sample(2048, seed=1)
-        loss = tf.reduce_mean(samples)
-    grads = tape.gradient(loss, [m, omega])
-    for g in grads:
-        assert g is not None
-        assert tf.math.is_finite(g).numpy()
-        assert tf.abs(g).numpy() > 0.0
+@pytest.mark.parametrize("m,omega", [(0.7, 1.0), (2.0, 1.5), (10.0, 0.5)])
+def test_reparameterized_gradients(m, omega):
+    """d/dtheta E[y] from samples against the analytic mean's gradient."""
+    torch.manual_seed(1)
+    mt = torch.tensor(m, requires_grad=True)
+    ot = torch.tensor(omega, requires_grad=True)
+    Nakagami(mt, ot).rsample((400000,)).mean().backward()
+    sample_grads = [mt.grad.item(), ot.grad.item()]
+
+    h = 1e-5
+    mean = lambda m, o: scipy_nakagami.mean(m, scale=np.sqrt(o))
+    expected = [
+        (mean(m + h, omega) - mean(m - h, omega)) / (2 * h),
+        (mean(m, omega + h) - mean(m, omega - h)) / (2 * h),
+    ]
+    np.testing.assert_allclose(sample_grads, expected, atol=5e-3)
 
 
 def test_kl_self_is_zero():
     p = Nakagami(2.0, 1.3)
-    kl = tfd.kl_divergence(p, p).numpy()
-    np.testing.assert_allclose(kl, 0.0, atol=1e-6)
+    np.testing.assert_allclose(kl_divergence(p, p).item(), 0.0, atol=1e-6)
 
 
 def test_kl_matches_gamma_kl():
     m1, o1 = 1.5, 1.2
     m2, o2 = 2.3, 0.8
-    p = Nakagami(m1, o1)
-    q = Nakagami(m2, o2)
-    gp = tfd.Gamma(concentration=m1, rate=m1 / o1)
-    gq = tfd.Gamma(concentration=m2, rate=m2 / o2)
-    kl_nak = tfd.kl_divergence(p, q).numpy()
-    kl_gam = tfd.kl_divergence(gp, gq).numpy()
+    kl_nak = kl_divergence(Nakagami(m1, o1), Nakagami(m2, o2)).item()
+    kl_gam = kl_divergence(Gamma(m1, m1 / o1), Gamma(m2, m2 / o2)).item()
     np.testing.assert_allclose(kl_nak, kl_gam, rtol=1e-6, atol=1e-7)
 
 
 def test_kl_matches_monte_carlo():
+    torch.manual_seed(42)
     p = Nakagami(2.5, 1.2)
     q = Nakagami(1.7, 0.9)
-    kl_analytic = tfd.kl_divergence(p, q).numpy()
-
-    n = 200_000
-    samples = p.sample(n, seed=42)
-    mc = tf.reduce_mean(p.log_prob(samples) - q.log_prob(samples)).numpy()
-    # MC standard error is small for n=200k; allow 3-sigma tolerance plus headroom.
+    kl_analytic = kl_divergence(p, q).item()
+    samples = p.sample((200_000,))
+    mc = (p.log_prob(samples) - q.log_prob(samples)).mean().item()
     assert abs(kl_analytic - mc) < 0.01
 
 
-@pytest.mark.parametrize("m,omega", [
-    (0.5, 1.0),
-    (1.0, 1.5),
-    (2.5, 0.7),
-    (4.0, 3.1),
-])
+def test_kl_is_registered_analytically():
+    result = kl_divergence(Nakagami(1.5, 1.0), Nakagami(2.0, 1.5))
+    assert torch.isfinite(result)
+    assert result.item() >= 0.0
+
+
+@pytest.mark.parametrize("m,omega", PARAMS)
 def test_mean_matches_scipy(m, omega):
-    d = Nakagami(m, omega)
     expected = scipy_nakagami.mean(m, scale=np.sqrt(omega))
-    np.testing.assert_allclose(d.mean().numpy(), expected, rtol=1e-5, atol=1e-6)
+    np.testing.assert_allclose(Nakagami(m, omega).mean.item(), expected, rtol=1e-5)
 
 
-@pytest.mark.parametrize("m,omega", [
-    (0.5, 1.0),
-    (1.0, 1.5),
-    (2.5, 0.7),
-    (4.0, 3.1),
-])
+@pytest.mark.parametrize("m,omega", PARAMS)
 def test_variance_and_stddev_match_scipy(m, omega):
+    # Omega (1 - Gamma(m + 1/2)^2 / (m Gamma(m)^2)) in float64 from the excess
+    # r = lgamma(m + 1/2) - lgamma(m) - log(m)/2; scipy's own var() cancels for
+    # m >~ 1e4.
+    r = gammaln(m + 0.5) - gammaln(m) - 0.5 * np.log(m)
+    if m > 100:
+        r = -1 / (8 * m) + 1 / (192 * m**3)
+    expected_var = -omega * np.expm1(2 * r)
     d = Nakagami(m, omega)
-    expected_var = scipy_nakagami.var(m, scale=np.sqrt(omega))
-    expected_std = scipy_nakagami.std(m, scale=np.sqrt(omega))
-    np.testing.assert_allclose(d.variance().numpy(), expected_var, rtol=1e-4, atol=1e-6)
-    np.testing.assert_allclose(d.stddev().numpy(), expected_std, rtol=1e-4, atol=1e-6)
+    np.testing.assert_allclose(d.variance.item(), expected_var, rtol=1e-4)
+    np.testing.assert_allclose(d.stddev.item(), np.sqrt(expected_var), rtol=1e-4)
+    if m < 100:
+        np.testing.assert_allclose(
+            expected_var, scipy_nakagami.var(m, scale=np.sqrt(omega)), rtol=1e-6)
 
 
-@pytest.mark.parametrize("m,omega", [
-    (0.5, 1.0),
-    (1.0, 1.5),
-    (2.5, 0.7),
-    (4.0, 3.1),
-])
+@pytest.mark.parametrize("m,omega", PARAMS)
 def test_mode_matches_closed_form(m, omega):
-    d = Nakagami(m, omega)
     expected = np.sqrt(max(0.0, (2.0 * m - 1.0) * omega / (2.0 * m)))
-    np.testing.assert_allclose(d.mode().numpy(), expected, rtol=1e-5, atol=1e-6)
+    np.testing.assert_allclose(Nakagami(m, omega).mode.item(), expected, rtol=1e-5, atol=1e-6)
 
 
 def test_square_returns_gamma_with_matched_parameters():
     m, omega = 2.3, 1.7
-    d = Nakagami(m, omega)
-    sq = d.square()
-    assert isinstance(sq, tfd.Gamma)
-    np.testing.assert_allclose(sq.concentration.numpy(), m)
-    np.testing.assert_allclose(sq.rate.numpy(), m / omega)
+    sq = Nakagami(m, omega).square()
+    assert isinstance(sq, Gamma)
+    np.testing.assert_allclose(sq.concentration.item(), m, rtol=1e-6)
+    np.testing.assert_allclose(sq.rate.item(), m / omega, rtol=1e-6)
 
 
 def test_square_distribution_matches_monte_carlo():
-    m, omega = 1.8, 2.1
-    d = Nakagami(m, omega)
+    torch.manual_seed(7)
+    d = Nakagami(1.8, 2.1)
     sq = d.square()
-    # Squared samples from Nakagami should look like Gamma draws.
-    y = d.sample(200_000, seed=7)
+    y = d.sample((200_000,))
     ysq = y * y
-    np.testing.assert_allclose(
-        tf.reduce_mean(ysq).numpy(), sq.mean().numpy(), rtol=1e-2)
-    np.testing.assert_allclose(
-        tf.math.reduce_variance(ysq).numpy(), sq.variance().numpy(), rtol=5e-2)
+    np.testing.assert_allclose(ysq.mean().item(), sq.mean.item(), rtol=1e-2)
+    np.testing.assert_allclose(ysq.var().item(), sq.variance.item(), rtol=5e-2)
 
 
-def test_kl_is_registered_analytically():
-    p = Nakagami(1.5, 1.0)
-    q = Nakagami(2.0, 1.5)
-    # Should not hit the fallback path — calling kl_divergence directly
-    # against the registered dispatch should return a concrete tensor.
-    result = tfd.kl_divergence(p, q)
-    assert tf.math.is_finite(result).numpy()
-    assert result.numpy() >= 0.0
+def test_log_gamma_half_ratio_matches_scipy():
+    m = np.geomspace(0.5, 1e6, 300)
+    expected = gammaln(m + 0.5) - gammaln(m)
+    result = log_gamma_half_ratio(torch.tensor(m, dtype=torch.float32)).double().numpy()
+    np.testing.assert_allclose(result, expected, rtol=2e-6, atol=2e-7)
 
 
-# The Wilson priors for structure factors should be Nakagami-equivalent to the
-# previous HalfNormal / Weibull formulations after the refactor.
-
-@pytest.mark.parametrize("epsilon,sigma", [(1.0, 1.0), (1.0, 2.5), (3.0, 0.7)])
-def test_centric_wilson_factory_matches_half_normal(epsilon, sigma):
-    from abismal.prior.structure_factor.wilson import centric_wilson
-    dist = centric_wilson(epsilon, sigma)
-    reference = tfd.HalfNormal(scale=tf.math.sqrt(epsilon * sigma))
-    x = np.linspace(0.01, 5.0, 40).astype(np.float32)
-    np.testing.assert_allclose(
-        dist.log_prob(x).numpy(), reference.log_prob(x).numpy(),
-        rtol=1e-4, atol=1e-5)
-
-
-@pytest.mark.parametrize("epsilon,sigma", [(1.0, 1.0), (1.0, 2.5), (3.0, 0.7)])
-def test_acentric_wilson_factory_matches_weibull(epsilon, sigma):
-    from abismal.prior.structure_factor.wilson import acentric_wilson
-    dist = acentric_wilson(epsilon, sigma)
-    reference = tfd.Weibull(
-        concentration=2.0, scale=tf.math.sqrt(epsilon * sigma))
-    x = np.linspace(0.01, 5.0, 40).astype(np.float32)
-    np.testing.assert_allclose(
-        dist.log_prob(x).numpy(), reference.log_prob(x).numpy(),
-        rtol=1e-4, atol=1e-5)
-
-
-def test_wilson_distribution_dispatches_per_reflection():
-    from abismal.prior.structure_factor.wilson import wilson_distribution
-    centric = tf.constant([True, False, True, False])
-    epsilon = tf.constant([1.0, 1.0, 2.0, 2.0])
-    dist = wilson_distribution(centric, epsilon, 1.5)
-    x = tf.constant([0.5, 0.5, 1.0, 1.0])
-    lp = dist.log_prob(x).numpy()
-    # The centric entries should match HalfNormal; acentric, Weibull(2, ...).
-    expected = np.array([
-        tfd.HalfNormal(scale=tf.math.sqrt(1.0 * 1.5)).log_prob(0.5).numpy(),
-        tfd.Weibull(2.0, scale=tf.math.sqrt(1.0 * 1.5)).log_prob(0.5).numpy(),
-        tfd.HalfNormal(scale=tf.math.sqrt(2.0 * 1.5)).log_prob(1.0).numpy(),
-        tfd.Weibull(2.0, scale=tf.math.sqrt(2.0 * 1.5)).log_prob(1.0).numpy(),
-    ])
-    np.testing.assert_allclose(lp, expected, rtol=1e-4, atol=1e-5)
+def test_log_gamma_half_ratio_excess_matches_scipy():
+    # Compared where float64 gammaln still resolves the excess (~ -1/(8m)).
+    m = np.geomspace(0.5, 1e3, 200)
+    expected = gammaln(m + 0.5) - gammaln(m) - 0.5 * np.log(m)
+    result = log_gamma_half_ratio_excess(torch.tensor(m, dtype=torch.float32)).double().numpy()
+    np.testing.assert_allclose(result, expected, rtol=5e-6)
