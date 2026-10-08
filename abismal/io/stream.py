@@ -2,9 +2,9 @@
 import mmap
 import numpy as np
 import gemmi
-import tensorflow as tf
 from abismal.io.common import check_for_ray,ray_context
 from abismal.io.crystfel import StreamLoaderBase
+from abismal.io.loader import make_record
 from reciprocalspaceship.decorators import spacegroupify,cellify
 
 
@@ -37,7 +37,6 @@ class StreamLoader(StreamLoaderBase):
         """
         super().__init__(stream_file, encoding)
         self.cell_tol = cell_tol
-        self.signature = None
         self.cell = self._get_unit_cell(cell)
         self.asu_id = asu_id
         self.wavelength = wavelength
@@ -66,7 +65,7 @@ class StreamLoader(StreamLoaderBase):
             cell = gemmi.UnitCell(*cell)
         return cell
 
-    def _convert_to_tf(self, peak_list, wavelength):
+    def _convert_to_numpy(self, peak_list, wavelength):
         hkl = peak_list[:,:3]
         d = self.cell.calculate_d_array(hkl)
         I = peak_list[:,3]
@@ -91,26 +90,21 @@ class StreamLoader(StreamLoaderBase):
             SigI = SigI[idx]
             metadata = metadata[idx]
 
-        I = tf.convert_to_tensor(I[None,:,None])
-        d = tf.convert_to_tensor(d[None,:,None])
-        SigI = tf.convert_to_tensor(SigI[None,:,None])
-        hkl = tf.convert_to_tensor(hkl[None,:,:], dtype='int64')
-        metadata = tf.convert_to_tensor(metadata[None,:,:])
-        asu = tf.ones_like(I, dtype='int64') * self.asu_id
-        wavelength = tf.ones_like(I) * wavelength
-
-        data = ((asu, hkl, d, wavelength, metadata, I, SigI), (I,))
-        return data
+        return make_record(self.asu_id, hkl, d, wavelength, metadata, I, SigI)
 
     def _parse_chunk(self, *args, **kwargs):
         data = super()._parse_chunk(*args, **kwargs)
-        result = [self._convert_to_tf(pl, data['wavelength']) for pl in data['peak_lists'] if len(pl) > 0]
+        result = [self._convert_to_numpy(pl, data['wavelength']) for pl in data['peak_lists'] if len(pl) > 0]
         result = [pl for pl in result if pl is not None]
         return result
 
     def get_dataset(self, peak_list_columns=None, **ray_kwargs):
         """
-        Convert CrystFEL .stream files to a tf.data.Dataset.
+        Lazily parse the CrystFEL .stream file into per-image records.
+
+        Returns a generator of 7-tuples of numpy arrays (see `DataLoader`).
+        Nothing is read until it is iterated; with `num_cpus > 1` the first
+        `next` starts ray and submits every chunk.
         """
 
         if peak_list_columns is None:
@@ -130,17 +124,11 @@ class StreamLoader(StreamLoaderBase):
             **ray_kwargs,
         )
 
-        def data_gen():
-            for chunk in chunks:
-                for peak_list in chunk:
-                    yield peak_list
-
-        if self.signature is None:
-            for datum in data_gen():
-                self.signature = StreamLoader.get_signature_from_datum(datum)
-                break
-
-        return tf.data.Dataset.from_generator(data_gen, output_signature=self.signature).unbatch()
+        # Chunks come back in file order, each as soon as it is parsed, so a
+        # consumer can start on the first images while ray works on the rest.
+        for chunk in chunks:
+            for peak_list in chunk:
+                yield peak_list
 
     def read_crystfel(
         self,
@@ -190,7 +178,7 @@ class StreamLoader(StreamLoaderBase):
 
         # Check whether ray is available
         use_ray = False
-        if num_cpus > 1:
+        if num_cpus is not None and num_cpus > 1:
             use_ray = check_for_ray()
 
         with open(self.filename, "r") as f:
@@ -233,22 +221,3 @@ class StreamLoader(StreamLoaderBase):
                         crystal_metadata_keys,
                         peak_list_columns,
                     )
-
-    @staticmethod
-    def get_signature_from_datum(datum):
-        """Work out the proper signature for creating a dataset from an example"""
-        #if ragged:
-        #    signature = tf.nest.map_structure(tf.RaggedTensorSpec.from_value, datum)
-        #else:
-        #    signature = tf.nest.map_structure(tf.TensorSpec.from_tensor, datum)
-        def to_ragged_spec(tensor):
-            spec = tf.TensorSpec.from_tensor(tensor)
-            shape,dtype = spec.shape,spec.dtype
-            new = tf.TensorSpec(
-                shape = (shape[0], None, shape[2]),
-                dtype=dtype,
-            )
-            return new
-        signature = tf.nest.map_structure(to_ragged_spec, datum)
-        return signature
-

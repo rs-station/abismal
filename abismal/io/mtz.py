@@ -1,8 +1,7 @@
 #/usr/bin/env cctbx.python
 import numpy as np
 import reciprocalspaceship as rs
-import tensorflow as tf
-from .loader import DataLoader
+from .loader import DataLoader, make_record, split_by_image
 
 
 MTZ_METADATA_KEYS = [
@@ -110,19 +109,21 @@ class MTZLoader(DataLoader):
         ds.sort_values("rowids", inplace=True)
         rowids = ds.rowids.to_numpy("int32")
 
-        I = tf.RaggedTensor.from_value_rowids(ds[self.intensity_key].to_numpy("float32")[:,None], rowids)
-        d = tf.RaggedTensor.from_value_rowids(ds['dHKL'].to_numpy("float32")[:,None], rowids)
-        SigI = tf.RaggedTensor.from_value_rowids(ds[self.sigma_key].to_numpy("float32")[:,None], rowids)
-        Metadata = tf.RaggedTensor.from_value_rowids(ds[self.metadata_keys].to_numpy("float32"), rowids)
-        HKL = tf.RaggedTensor.from_value_rowids(ds.get_hkls(), rowids)
-        wavelength = tf.ones_like(I) * self.wavelength
-        ASU = tf.ones_like(I, dtype='int32') * self.asu_id
-
-        tfds = tf.data.Dataset.from_tensor_slices(
-            ((ASU, HKL, d, wavelength, Metadata, I, SigI), (I,)),
+        columns = (
+            ds['dHKL'].to_numpy("float32"),
+            ds.get_hkls().astype("int32"),
+            ds[self.metadata_keys].to_numpy("float32"),
+            ds[self.intensity_key].to_numpy("float32"),
+            ds[self.sigma_key].to_numpy("float32"),
         )
+        # The file is read and filtered eagerly, above, so that cell, space
+        # group and metadata_keys are settled (and a bad metadata request has
+        # raised) by the time this returns. Only the per-image split is lazy.
+        return self._records(rowids, columns)
 
-        return tfds
+    def _records(self, rowids, columns):
+        for d, hkl, metadata, I, SigI in split_by_image(rowids, *columns):
+            yield make_record(self.asu_id, hkl, d, self.wavelength, metadata, I, SigI)
 
 if __name__=='__main__':
     stream_file = '/mnt/raid/data/xtal/20210615_Neutze_collab/indexing_dark_before_merging_intensities.stream'
