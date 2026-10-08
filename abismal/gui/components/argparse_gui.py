@@ -101,8 +101,8 @@ class ArgparseGUIBase:
         'r_free_mtz': ('.mtz',),
         'eff_files': ('.eff',),
         'torchref_pdb': ('.pdb', '.cif'),
-        'posterior_init_file': ('.pt',),
-        'scale_init_file': ('.pt',),
+        'posterior_init_file': ('.pt', '.keras'),
+        'scale_init_file': ('.pt', '.keras'),
     }
     skipped_actions = [
         "help",

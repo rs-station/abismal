@@ -138,7 +138,7 @@ args_and_kwargs = (
         (
             "--posterior-init-file",
         ),{
-            "help": "A saved abismal model (`epoch_N.pt`) from which to initialize the intensity or structure factors weights.",
+            "help": "A saved abismal model (`epoch_N.pt`) from which to initialize the intensity or structure factors weights. An abismal 1.x `.keras` file is converted on the fly.",
             "type": Path,
             "default": None,
         }
@@ -148,7 +148,7 @@ args_and_kwargs = (
         (
             "--scale-init-file",
         ),{
-            "help": "A saved abismal model (`epoch_N.pt`) from which to initialize the scale model weights.",
+            "help": "A saved abismal model (`epoch_N.pt`) from which to initialize the scale model weights. An abismal 1.x `.keras` file is converted on the fly.",
             "type": Path,
             "default": None,
         }
