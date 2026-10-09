@@ -47,9 +47,12 @@ def configure(device):
     """
     torch.set_float32_matmul_precision("high")
     if device.type == "cuda" and "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
-        # Private, so tolerate a torch that has moved it; the default allocator
-        # only costs memory, not correctness.
-        setter = getattr(torch.cuda.memory, "_set_allocator_settings", None)
+        # Private, and moved between torch versions; tolerate either location,
+        # or neither -- the default allocator only costs memory, not correctness.
+        setter = (
+            getattr(torch._C, "_accelerator_setAllocatorSettings", None)
+            or getattr(torch.cuda.memory, "_set_allocator_settings", None)
+        )
         if setter is not None:
             setter("expandable_segments:True")
 
