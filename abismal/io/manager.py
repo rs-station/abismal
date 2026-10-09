@@ -54,7 +54,7 @@ class DataManager:
             num_cpus=None, separate=False, wavelength=None, ray_log_level="ERROR",
             test_fraction=0., separate_friedel_mates=False, cell_tol=None, isigi_cutoff=None, 
             shuffle_buffer_size=0, batch_size=100, steps_per_epoch=None, validation_steps=None,
-            epochs=30, ambiguate=False, mtz_metadata=None, seed=None,
+            epochs=30, ambiguate=False, mtz_metadata=None, split_halves=False, seed=None,
         ):
         if separate_friedel_mates and separate:
             raise ValueError("Cannot combine --separate-friedel-mates and --separate")
@@ -83,6 +83,7 @@ class DataManager:
         self.validation_steps = validation_steps
         self.epochs = epochs
         self.ambiguate = ambiguate
+        self.split_halves = split_halves
         # Seeds the shuffle buffers only. None gives a new order every run, as
         # the unseeded tf.data shuffle did. The train/test split and the
         # ambiguation are deterministic regardless.
@@ -109,6 +110,7 @@ class DataManager:
             'epochs' : self.epochs,
             'ambiguate' : self.ambiguate,
             'mtz_metadata' : self.mtz_metadata,
+            'split_halves' : self.split_halves,
             'seed' : self.seed,
         }
         return conf
@@ -142,6 +144,7 @@ class DataManager:
             validation_steps = parser.validation_steps,
             epochs = parser.epochs,
             ambiguate = parser.enable_index_ambiguation,
+            split_halves = parser.split_halves,
             seed = getattr(parser, 'seed', None),
         )
 
@@ -326,6 +329,7 @@ class DataManager:
             cache, 'train', batch_size=self.batch_size,
             shuffle_buffer_size=self.shuffle_buffer_size,
             repeat=repeat_train, seed=train_seed,
+            split_halves=self.split_halves,
         )
         test = None
         if test_fraction > 0.:

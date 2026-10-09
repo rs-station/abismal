@@ -228,6 +228,18 @@ def main(args=None):
 
     surrogate_posterior = Posterior(**posterior_kwargs)
 
+    half_posterior = None
+    if parser.split_halves:
+        if not surrogate_posterior.independent:
+            raise SystemExit("--split-halves needs a posterior over independent reflections")
+        # Two copies of every ASU, one per random half of the images, starting
+        # where the full posterior starts.
+        half_kwargs = dict(posterior_kwargs)
+        half_kwargs["rac"] = ReciprocalASUCollection(*rasu, *rasu)
+        for k in ("loc_init", "scale_init"):
+            half_kwargs[k] = torch.cat([torch.as_tensor(posterior_kwargs[k])] * 2)
+        half_posterior = Posterior(**half_kwargs)
+
     scale_model = ImageScaler(
         metadata_length=train.metadata_length,
         mlp_width=parser.d_model,
@@ -264,6 +276,7 @@ def main(args=None):
         kl_weight=parser.kl_weight,
         reindexing_ops=reindexing_ops,
         standardize=standardize_inputs,
+        half_posterior=half_posterior,
     )
 
     if parser.learning_rate_final is not None:
@@ -303,7 +316,12 @@ def main(args=None):
     weight_saver = WeightSaver(out_dir)
     freezer = StandardizationFreezer()
 
-    callbacks = [
+    callbacks = []
+    if half_posterior is not None:
+        # First, so EarlyStopping can see its statistics
+        from abismal.callbacks import HalfDatasetStatistics
+        callbacks.append(HalfDatasetStatistics(out_dir))
+    callbacks += [
         mtz_saver,
         history_saver,
         weight_saver,

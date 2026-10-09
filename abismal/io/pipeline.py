@@ -21,6 +21,7 @@ without a framework. The properties that matter to training are kept:
 """
 import queue
 import threading
+import zlib
 from itertools import islice
 
 import numpy as np
@@ -196,11 +197,23 @@ def reservoir_shuffle(iterable, buffer_size, rng=None):
             buffer.pop()
 
 
-def batched(iterable, batch_size):
+def image_half(image, seed=0):
+    """
+    Which of two random halves of the data an image belongs to, 0 or 1.
+
+    Decided by a hash of the image's miller indices, so an image lands in the
+    same half on every pass without carrying an id.
+    """
+    hkl = np.ascontiguousarray(image[1])
+    return (zlib.crc32(hkl.tobytes()) ^ seed) & 1
+
+
+def batched(iterable, batch_size, split_halves=False):
     """Collate consecutive images into `Batch`es of `batch_size` images.
 
     The last batch holds the remainder, like tf.data's `ragged_batch` with
-    `drop_remainder=False`.
+    `drop_remainder=False`. With `split_halves` each batch records which
+    random half every reflection's image belongs to.
     """
     if batch_size < 1:
         raise ValueError(f"batch_size must be positive, got {batch_size}")
@@ -209,7 +222,8 @@ def batched(iterable, batch_size):
         images = list(islice(it, batch_size))
         if not images:
             return
-        yield Batch.collate(images)
+        halves = [image_half(im) for im in images] if split_halves else None
+        yield Batch.collate(images, halves)
 
 
 class prefetch:
@@ -335,7 +349,9 @@ class BatchStream:
     every run, as tf.data's unseeded shuffle did. Either way each new iterator
     draws a new order.
     """
-    def __init__(self, cache, split='train', batch_size=100, shuffle_buffer_size=0, repeat=False, seed=None):
+    def __init__(self, cache, split='train', batch_size=100, shuffle_buffer_size=0, repeat=False, seed=None,
+                 split_halves=False):
+        self.split_halves = split_halves
         self.cache = cache
         self.split = split
         self.batch_size = batch_size
@@ -351,7 +367,7 @@ class BatchStream:
 
     def batches(self):
         images = reservoir_shuffle(self.images(), self.shuffle_buffer_size, self.rng)
-        return batched(images, self.batch_size)
+        return batched(images, self.batch_size, self.split_halves)
 
     def __iter__(self):
         return self.batches()

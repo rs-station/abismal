@@ -24,17 +24,20 @@ class Batch(NamedTuple):
     sigiobs: Any     # [N,1] float32
     image_id: Any    # [N]   int64
     num_images: int  # B
+    half: Any = None  # [N] int64, or None. Which random half (0 or 1) each
+                      # reflection's image belongs to; see abismal.io.pipeline.image_half
 
     def map(self, fn):
         """Apply `fn` to every array field, keeping `num_images`."""
-        return Batch(*(fn(a) for a in self[:8]), self.num_images)
+        half = None if self.half is None else fn(self.half)
+        return Batch(*(fn(a) for a in self[:8]), self.num_images, half)
 
     @property
     def inputs(self):
         return tuple(self[:7])
 
     @classmethod
-    def collate(cls, images):
+    def collate(cls, images, halves=None):
         """Concatenate a list of per-image 7-tuples into one Batch."""
         images = list(images)
         if len(images) == 0:
@@ -42,4 +45,7 @@ class Batch(NamedTuple):
         fields = [np.concatenate(f, axis=0) for f in zip(*images)]
         lengths = [len(image[0]) for image in images]
         image_id = np.repeat(np.arange(len(images), dtype=np.int64), lengths)
-        return cls(*fields, image_id, len(images))
+        half = None
+        if halves is not None:
+            half = np.repeat(np.asarray(halves, dtype=np.int64), lengths)
+        return cls(*fields, image_id, len(images), half)

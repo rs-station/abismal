@@ -67,8 +67,17 @@ def build(args, metadata_length, cell, spacegroup):
         hidden_units=2 * args.d_model, prior_name="lognormal", pre_activation="relu",
         batch_normalize=False, precision=getattr(args, "precision", "float32"),
     )
+    half = None
+    if getattr(args, "split_halves", False):
+        from abismal.symmetry import ReciprocalASUCollection
+        rasu = rac.reciprocal_asus[0]
+        half = FoldedNormalPosterior(
+            ReciprocalASUCollection(rasu, rasu), loc_init=loc.repeat(2),
+            scale_init=prior.flat_distribution().stddev.repeat(2),
+        )
     return VariationalMergingModel(
         scale, q, prior, StudentTLikelihood(32.), mc_samples=args.mc_samples, standardize=True,
+        half_posterior=half,
     )
 
 

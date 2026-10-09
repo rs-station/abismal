@@ -112,4 +112,15 @@ args_and_kwargs = (
         }
     ),
 
+    (
+        (
+            "--split-halves",
+        ),{
+            "help": "Experimental. Also fit two posteriors to random halves of the images, "
+                    "using the full model's scales, and report CC1/2 and CCanom between them "
+                    "after every epoch, overall in history.csv and by resolution in "
+                    "half_dataset_statistics.csv. The merged output is unaffected.",
+            "action": "store_true",
+        }
+    ),
 )

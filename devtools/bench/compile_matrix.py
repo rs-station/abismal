@@ -51,6 +51,7 @@ def parse_args():
     p.add_argument("--warmup", type=int, default=30)
     p.add_argument("--steps", type=int, default=100)
     p.add_argument("--variants", nargs="+", default=list(VARIANTS))
+    p.add_argument("--split-halves", action="store_true", help="Also fit half-dataset posteriors")
     p.add_argument("--run-one", default=None, help=argparse.SUPPRESS)
     p.add_argument("--cache", default=None, help=argparse.SUPPRESS)
     return p.parse_args()
@@ -60,12 +61,14 @@ def load_batches(args, path):
     """Read the batches once and save them, so every variant sees the same ones."""
     from abismal.io.manager import DataManager
     dm = DataManager(args.input, dmin=args.dmin, batch_size=args.batch_size, num_cpus=4,
-                     steps_per_epoch=args.batches, shuffle_buffer_size=10_000)
+                     steps_per_epoch=args.batches, shuffle_buffer_size=10_000,
+                     split_halves=args.split_halves)
     train, _ = dm.get_train_test_splits()
     it = iter(train)
     batches = [next(it) for _ in range(args.batches)]
     np.savez(path, n=len(batches), cell=list(dm.cell.parameters), spacegroup=dm.spacegroup.xhm(),
-             **{f"{i}_{k}": v for i, b in enumerate(batches) for k, v in zip(b._fields, b) if k != "num_images"},
+             **{f"{i}_{k}": v for i, b in enumerate(batches) for k, v in zip(b._fields, b)
+                if k != "num_images" and v is not None},
              **{f"{i}_num_images": b.num_images for i, b in enumerate(batches)})
 
 
@@ -85,10 +88,11 @@ def run_one(args, variant):
     data = np.load(args.cache, allow_pickle=False)
     cell = gemmi.UnitCell(*data["cell"])
     sg = gemmi.SpaceGroup(str(data["spacegroup"]))
-    fields = [f for f in Batch._fields if f != "num_images"]
+    fields = [f for f in Batch._fields[:8]]
     batches = []
     for i in range(int(data["n"])):
-        b = Batch(*[data[f"{i}_{f}"] for f in fields], int(data[f"{i}_num_images"]))
+        half = data[f"{i}_half"] if f"{i}_half" in data else None
+        b = Batch(*[data[f"{i}_{f}"] for f in fields], int(data[f"{i}_num_images"]), half)
         batches.append(b.map(lambda a: torch.as_tensor(a).to(device)))
 
     torch.manual_seed(0)

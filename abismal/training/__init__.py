@@ -22,7 +22,7 @@ def parameter_groups(model):
     lazily (see abismal.optimizers), and everything else.
     """
     groups = model.parameter_groups()
-    lazy = groups.pop("q")
+    lazy = groups.pop("q") + groups.pop("q_half", [])
     dense = [p for params in groups.values() for p in params]
     out = []
     if dense:
@@ -196,7 +196,7 @@ class Trainer:
 
         metrics = {"loss": loss.detach()}
         metrics.update(tracked)
-        labels = {"scale": "|∇s|", "q": "|∇q|", "ll": "|∇ll|", "p": "|∇p|"}
+        labels = {"scale": "|∇s|", "q": "|∇q|", "ll": "|∇ll|", "p": "|∇p|", "q_half": "|∇q½|"}
         for name, params in self.model.parameter_groups().items():
             grads = [p.grad for p in params if p.grad is not None]
             # Like keras, the likelihood and prior only report a gradient norm

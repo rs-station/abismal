@@ -1,7 +1,7 @@
 """Small real models and batches for tests that need them."""
 
 
-def build_small_model(metadata_length=3, dmin=4.0, posterior="foldednormal", prior="wilson", standardize=True, reindexing_ops=None):
+def build_small_model(metadata_length=3, dmin=4.0, posterior="foldednormal", prior="wilson", standardize=True, reindexing_ops=None, split_halves=False):
     """A small but complete VariationalMergingModel, for tests that need a real one."""
     import gemmi
     from abismal.symmetry import ReciprocalASU, ReciprocalASUGraph
@@ -25,14 +25,21 @@ def build_small_model(metadata_length=3, dmin=4.0, posterior="foldednormal", pri
     elif posterior == "rice":
         from abismal.surrogate_posterior.structure_factor import RicePosterior as Posterior
     q = Posterior(rac, loc_init=loc_init, scale_init=scale_init)
+    half = None
+    if split_halves:
+        from abismal.symmetry import ReciprocalASUCollection
+        rasu = rac.reciprocal_asus[0]
+        half = Posterior(ReciprocalASUCollection(rasu, rasu),
+                         loc_init=loc_init.repeat(2), scale_init=scale_init.repeat(2))
     scale_model = ImageScaler(metadata_length, mlp_width=8, mlp_depth=2, prior_name="lognormal")
     return VariationalMergingModel(
         scale_model, q, prior, NormalLikelihood(), mc_samples=4,
         reindexing_ops=reindexing_ops, standardize=standardize,
+        half_posterior=half,
     )
 
 
-def synthetic_batch(model, num_images=3, refls_per_image=20, seed=0):
+def synthetic_batch(model, num_images=3, refls_per_image=20, seed=0, split_halves=False):
     """A Batch of random observations of reflections in `model`'s ASU."""
     import numpy as np
     from abismal.io import Batch
@@ -54,4 +61,5 @@ def synthetic_batch(model, num_images=3, refls_per_image=20, seed=0):
             I,
             np.sqrt(I + 1.).astype(np.float32),
         ))
-    return Batch.collate(images)
+    halves = [i % 2 for i in range(num_images)] if split_halves else None
+    return Batch.collate(images, halves)

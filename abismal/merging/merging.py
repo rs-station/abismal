@@ -24,8 +24,18 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
             epsilon=1e-6,
             reindexing_ops=None,
             standardize=False,
+            half_posterior=None,
         ):
+        """
+        `half_posterior`, optional, is a second surrogate posterior over twice
+        the ASUs of `surrogate_posterior`: the first copy is fit to the images in
+        one random half of the data and the second to the other half. It is a
+        passive probe for CC1/2 and CCanom during training: it sees the scales
+        and reindexing choices of the full model without affecting them. See
+        `_fit_half_posterior`.
+        """
         super().__init__()
+        self.half_posterior = half_posterior
         self.epsilon = epsilon
         self.likelihood = likelihood
         self.prior = prior
@@ -55,13 +65,14 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
             'epsilon' : self.epsilon,
             'reindexing_ops' : [op.triplet() for op in self.reindexing_ops],
             'standardize' : self.standardize,
+            'half_posterior' : serialization.serialize(self.half_posterior),
         }
         return config
 
     @classmethod
     def from_config(cls, config):
-        for k in ['scale_model', 'surrogate_posterior', 'likelihood', 'prior']:
-            config[k] = serialization.deserialize(config[k])
+        for k in ['scale_model', 'surrogate_posterior', 'likelihood', 'prior', 'half_posterior']:
+            config[k] = serialization.deserialize(config.get(k))
         return cls(**config)
 
     def parameter_groups(self):
@@ -78,7 +89,11 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
             ("q", self.surrogate_posterior),
             ("ll", self.likelihood),
             ("p", self.prior),
+            ("q_half", self.half_posterior),
         ]:
+            if module is None:
+                groups[name] = []
+                continue
             params = [
                 p for p in module.parameters()
                 if p.requires_grad and id(p) not in seen
@@ -143,6 +158,39 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
         pick = idx[image_id]
         pick = pick.reshape(pick.shape + (1,) * (candidate.dim() - 1))
         return torch.where(pick, candidate, best)
+
+    def _fit_half_posterior(self, inputs, hkl, scale, mc_samples):
+        """
+        Add the half-dataset posterior's objective to the loss.
+
+        Each reflection is scored under the copy of the posterior belonging to
+        its image's half, indexed by the operator the full model chose for that
+        image, and scaled by the full model's scales with gradients stopped. The
+        prior is evaluated without gradients too, so this term moves only the
+        half posterior: it is `abismal.cchalf` run alongside training.
+        """
+        n_asu = len(self.surrogate_posterior.rac)
+        asu_id = inputs.asu_id + inputs.half[:, None].to(inputs.asu_id.dtype) * n_asu
+        q = self.half_posterior.distribution(asu_id, hkl)
+        with torch.no_grad():
+            p = self.prior(inputs._replace(hkl=hkl), flat=False)
+        z = q.rsample((mc_samples,))
+        kl_div = self.half_posterior.compute_kl_terms(q, p, samples=z)
+        ipred = z.transpose(0, 1)
+        if self.half_posterior.parameterization == 'structure_factor':
+            ipred = torch.square(ipred)
+        ipred = ipred * scale.detach()
+        ll = self.likelihood(ipred, inputs.iobs, inputs.sigiobs)
+        valid = self.surrogate_posterior.rac.valid(inputs.asu_id, hkl)
+        image_ll = self._image_log_likelihood(ll, valid, inputs.image_id, inputs.num_images)
+        # An image nothing in the ASU indexes would score -1e30; leave it out
+        image_ll = torch.where(image_ll > -1e29, image_ll, 0.)
+        ll = image_ll.mean()
+        kl_div = (kl_div * valid[:, 0].to(kl_div.dtype)).mean()
+        self.half_posterior.register_seen(asu_id, hkl)
+        tracking.add_metric(-ll, name='NLL½')
+        tracking.add_metric(kl_div, name='KL½')
+        tracking.add_loss(-ll + self.kl_weight * kl_div)
 
     def _call_dependent(self, inputs, mc_samples=None, training=None):
         """
@@ -280,6 +328,9 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
         kl_div = kl_div.mean()
         tracking.add_metric(kl_div, name='KL')
         tracking.add_loss(self.kl_weight * kl_div)
+
+        if training and self.half_posterior is not None and getattr(inputs, "half", None) is not None:
+            self._fit_half_posterior(inputs, hkl, scale, mc_samples)
 
         ipred_avg = ipred.mean(-1)
         return ipred_avg
