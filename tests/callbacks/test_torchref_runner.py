@@ -321,3 +321,13 @@ def test_torchref_imports_in_the_training_interpreter():
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip()
+
+
+def test_cpu_worker_cannot_see_the_gpu(tmp_path, monkeypatch):
+    """With CUDA torch installed, a CPU worker must not reach the GPU at all."""
+    from abismal.callbacks.torchref import TorchRefRunner
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+    cpu = TorchRefRunner(str(tmp_path), None, device="cpu")
+    assert cpu.worker_env()["CUDA_VISIBLE_DEVICES"] == ""
+    gpu = TorchRefRunner(str(tmp_path), None, device="cuda")
+    assert gpu.worker_env()["CUDA_VISIBLE_DEVICES"] == "0"

@@ -1,3 +1,4 @@
+import os
 import sys
 from abismal.callbacks.base import Callback
 from os.path import exists, abspath, dirname, join
@@ -181,5 +182,21 @@ class TorchRefRunner(Callback):
         stderr = join(result_dir, "stderr.txt")
         stdout = join(result_dir, "stdout.txt")
         with open(stderr, 'w') as e, open(stdout, 'w') as o:
-            p = Popen(command, cwd=result_dir, stderr=e, stdout=o)
+            p = Popen(command, cwd=result_dir, stderr=e, stdout=o, env=self.worker_env())
             self.processes.append((p, result_dir))
+
+    def worker_env(self):
+        """
+        The worker's environment: the training process's, with the GPU hidden
+        when refinement runs on the CPU.
+
+        `--device cpu` alone is not enough once torch can see a GPU: torchref
+        probes for an accelerator and puts some scaler targets on it anyway,
+        leaving a refinement split across devices, and the worker opens a CUDA
+        context on the card training is using. Under TensorFlow abismal ran
+        with CPU-only torch, which hid the problem.
+        """
+        env = dict(os.environ)
+        if str(self.device) == "cpu":
+            env["CUDA_VISIBLE_DEVICES"] = ""
+        return env
