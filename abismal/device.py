@@ -1,4 +1,5 @@
 """Choosing the PyTorch device abismal trains on."""
+import os
 import torch
 
 
@@ -36,5 +37,18 @@ def configure(device):
     TensorFlow ran float32 matmuls in TF32 on Ampere and newer GPUs by default;
     PyTorch does not, and without it the scale network runs several times
     slower for no accuracy abismal can use.
+
+    On CUDA it also switches the caching allocator to expandable segments,
+    unless PYTORCH_CUDA_ALLOC_CONF already says otherwise. Every batch holds a
+    different number of reflections, so blocks freed by one step rarely fit
+    the next and the default allocator fragments: on cxidb_81 a run reserving
+    10 GB was using 1.6 GB. Expandable segments grow and reuse one mapping
+    instead. Must run before the first allocation on the device.
     """
     torch.set_float32_matmul_precision("high")
+    if device.type == "cuda" and "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
+        # Private, so tolerate a torch that has moved it; the default allocator
+        # only costs memory, not correctness.
+        setter = getattr(torch.cuda.memory, "_set_allocator_settings", None)
+        if setter is not None:
+            setter("expandable_segments:True")
