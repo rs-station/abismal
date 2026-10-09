@@ -229,9 +229,12 @@ def main(args=None):
     surrogate_posterior = Posterior(**posterior_kwargs)
 
     half_posterior = None
-    if parser.split_halves:
-        if not surrogate_posterior.independent:
-            raise SystemExit("--split-halves needs a posterior over independent reflections")
+    fit_halves = not parser.disable_cchalf
+    if fit_halves and not surrogate_posterior.independent:
+        # Half posteriors are only implemented for independent reflections
+        logger.info("Not computing CC1/2 and CCanom: the posterior is not over independent reflections")
+        fit_halves = False
+    if fit_halves:
         # Two copies of every ASU, one per random half of the images, starting
         # where the full posterior starts.
         half_kwargs = dict(posterior_kwargs)
@@ -320,7 +323,7 @@ def main(args=None):
     if half_posterior is not None:
         # First, so EarlyStopping can see its statistics
         from abismal.callbacks import HalfDatasetStatistics
-        callbacks.append(HalfDatasetStatistics(out_dir))
+        callbacks.append(HalfDatasetStatistics(out_dir, dmin=dm.dmin))
     callbacks += [
         mtz_saver,
         history_saver,

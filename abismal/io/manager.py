@@ -144,7 +144,7 @@ class DataManager:
             validation_steps = parser.validation_steps,
             epochs = parser.epochs,
             ambiguate = parser.enable_index_ambiguation,
-            split_halves = parser.split_halves,
+            split_halves = not parser.disable_cchalf,
             seed = getattr(parser, 'seed', None),
         )
 

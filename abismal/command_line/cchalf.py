@@ -69,6 +69,9 @@ def main(args=None):
 
     for repeat in range(parser.repeats):
         dm = DataManager.from_file(parser.datamanager_yml)
+        # The halves here are the whole job; a run's own in-training half
+        # posteriors would only be fit again, to no purpose.
+        dm.split_halves = False
         half1,half2 = dm.get_half_datasets()
 
         for half_id,half in enumerate([half1, half2]):

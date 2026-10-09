@@ -114,12 +114,15 @@ args_and_kwargs = (
 
     (
         (
-            "--split-halves",
+            "--disable-cchalf",
         ),{
-            "help": "Experimental. Also fit two posteriors to random halves of the images, "
-                    "using the full model's scales, and report CC1/2 and CCanom between them "
-                    "after every epoch, overall in history.csv and by resolution in "
-                    "half_dataset_statistics.csv. The merged output is unaffected.",
+            "help": "Do not fit the two half-dataset merges that give CC1/2 and CCanom. "
+                    "By default abismal fits them alongside the full merge, using its "
+                    "scales, writes them to half_1/ and half_2/ after every epoch, and "
+                    "reports CC1/2 and CCanom overall in history.csv and by resolution in "
+                    "half_dataset_statistics.csv -- what abismal.cchalf computes after "
+                    "training, at a few percent of the cost. The merged output is the same "
+                    "either way.",
             "action": "store_true",
         }
     ),
