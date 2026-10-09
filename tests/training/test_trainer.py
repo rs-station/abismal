@@ -150,3 +150,12 @@ def test_compiled_step_matches_eager_loss():
     torch.manual_seed(0)
     b, _ = compiled._test_loss(batch)
     assert torch.allclose(a, b, rtol=1e-3)
+
+
+def test_epoch_metrics_weight_batches_by_images():
+    from abismal.training import _RunningMeans
+    means = _RunningMeans()
+    means.update({"NLL": torch.tensor(10.)}, weight=100)
+    means.update({"NLL": torch.tensor(20.)}, weight=2)
+    # Unweighted this would be 15; by images it is barely moved from 10
+    assert abs(means.result()["NLL"] - (10. * 100 + 20. * 2) / 102) < 1e-5
