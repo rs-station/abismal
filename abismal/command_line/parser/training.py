@@ -112,4 +112,24 @@ args_and_kwargs = (
         }
     ),
 
+    (
+        (
+            "--reflections-per-image",
+        ),{
+            "help": "Experimental. Draw this many reflections from each image at random "
+                    "for every batch, so all batches have the same shape. Off by default, "
+                    "which uses every reflection of every image.",
+            "default": None,
+            "type": int,
+        }
+    ),
+    (
+        (
+            "--sample-without-replacement",
+        ),{
+            "help": "With --reflections-per-image, draw without replacement from images "
+                    "that have enough reflections.",
+            "action": "store_true",
+        }
+    ),
 )

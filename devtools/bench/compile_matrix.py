@@ -35,6 +35,9 @@ VARIANTS = {
     "bf16-eager": {"precision": "bfloat16"},
     "bf16-default": {"precision": "bfloat16", "compile": {}},
     "bf16-autotune": {"precision": "bfloat16", "compile": {"mode": "max-autotune-no-cudagraphs"}},
+    "bf16-dynamic": {"precision": "bfloat16", "compile": {"dynamic": True}},
+    "bf16-static": {"precision": "bfloat16", "compile": {"dynamic": False}},
+    "bf16-static-cudagraphs": {"precision": "bfloat16", "compile": {"dynamic": False, "mode": "reduce-overhead"}},
 }
 
 
@@ -51,6 +54,8 @@ def parse_args():
     p.add_argument("--warmup", type=int, default=30)
     p.add_argument("--steps", type=int, default=100)
     p.add_argument("--variants", nargs="+", default=list(VARIANTS))
+    p.add_argument("--reflections-per-image", type=int, default=None,
+                   help="Fixed-shape batches of this many reflections drawn per image")
     p.add_argument("--run-one", default=None, help=argparse.SUPPRESS)
     p.add_argument("--cache", default=None, help=argparse.SUPPRESS)
     return p.parse_args()
@@ -60,7 +65,8 @@ def load_batches(args, path):
     """Read the batches once and save them, so every variant sees the same ones."""
     from abismal.io.manager import DataManager
     dm = DataManager(args.input, dmin=args.dmin, batch_size=args.batch_size, num_cpus=4,
-                     steps_per_epoch=args.batches, shuffle_buffer_size=10_000)
+                     steps_per_epoch=args.batches, shuffle_buffer_size=10_000,
+                     reflections_per_image=args.reflections_per_image)
     train, _ = dm.get_train_test_splits()
     it = iter(train)
     batches = [next(it) for _ in range(args.batches)]

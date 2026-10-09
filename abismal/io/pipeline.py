@@ -196,11 +196,11 @@ def reservoir_shuffle(iterable, buffer_size, rng=None):
             buffer.pop()
 
 
-def batched(iterable, batch_size):
+def batched(iterable, batch_size, drop_remainder=False):
     """Collate consecutive images into `Batch`es of `batch_size` images.
 
     The last batch holds the remainder, like tf.data's `ragged_batch` with
-    `drop_remainder=False`.
+    `drop_remainder=False`, unless `drop_remainder` is set.
     """
     if batch_size < 1:
         raise ValueError(f"batch_size must be positive, got {batch_size}")
@@ -209,7 +209,28 @@ def batched(iterable, batch_size):
         images = list(islice(it, batch_size))
         if not images:
             return
+        if drop_remainder and len(images) < batch_size:
+            return
         yield Batch.collate(images)
+
+
+def sample_reflections(image, k, rng, replace=True):
+    """
+    `k` of an image's reflections, drawn at random.
+
+    With `replace=True` they are drawn with replacement. Otherwise they are
+    drawn without replacement from images holding at least `k`, and smaller
+    images are filled up to `k` with repeats. Either way every image comes out
+    the same size, so batches of them have a fixed shape.
+    """
+    n = len(image[0])
+    if replace:
+        idx = rng.integers(0, n, size=k)
+    elif n >= k:
+        idx = rng.choice(n, size=k, replace=False)
+    else:
+        idx = np.concatenate([rng.permutation(n), rng.integers(0, n, size=k - n)])
+    return tuple(a[idx] for a in image)
 
 
 class prefetch:
@@ -335,7 +356,10 @@ class BatchStream:
     every run, as tf.data's unseeded shuffle did. Either way each new iterator
     draws a new order.
     """
-    def __init__(self, cache, split='train', batch_size=100, shuffle_buffer_size=0, repeat=False, seed=None):
+    def __init__(self, cache, split='train', batch_size=100, shuffle_buffer_size=0, repeat=False, seed=None,
+                 reflections_per_image=None, sample_with_replacement=True):
+        self.reflections_per_image = reflections_per_image
+        self.sample_with_replacement = sample_with_replacement
         self.cache = cache
         self.split = split
         self.batch_size = batch_size
@@ -351,7 +375,13 @@ class BatchStream:
 
     def batches(self):
         images = reservoir_shuffle(self.images(), self.shuffle_buffer_size, self.rng)
-        return batched(images, self.batch_size)
+        k = self.reflections_per_image
+        if k is None:
+            return batched(images, self.batch_size)
+        # Fixed-shape batches: every image resampled to k reflections, and no
+        # short final batch.
+        images = (sample_reflections(im, k, self.rng, self.sample_with_replacement) for im in images)
+        return batched(images, self.batch_size, drop_remainder=True)
 
     def __iter__(self):
         return self.batches()

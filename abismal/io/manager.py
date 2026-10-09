@@ -54,7 +54,8 @@ class DataManager:
             num_cpus=None, separate=False, wavelength=None, ray_log_level="ERROR",
             test_fraction=0., separate_friedel_mates=False, cell_tol=None, isigi_cutoff=None, 
             shuffle_buffer_size=0, batch_size=100, steps_per_epoch=None, validation_steps=None,
-            epochs=30, ambiguate=False, mtz_metadata=None, seed=None,
+            epochs=30, ambiguate=False, mtz_metadata=None, reflections_per_image=None,
+            sample_with_replacement=True, seed=None,
         ):
         if separate_friedel_mates and separate:
             raise ValueError("Cannot combine --separate-friedel-mates and --separate")
@@ -83,6 +84,8 @@ class DataManager:
         self.validation_steps = validation_steps
         self.epochs = epochs
         self.ambiguate = ambiguate
+        self.reflections_per_image = reflections_per_image
+        self.sample_with_replacement = sample_with_replacement
         # Seeds the shuffle buffers only. None gives a new order every run, as
         # the unseeded tf.data shuffle did. The train/test split and the
         # ambiguation are deterministic regardless.
@@ -109,6 +112,8 @@ class DataManager:
             'epochs' : self.epochs,
             'ambiguate' : self.ambiguate,
             'mtz_metadata' : self.mtz_metadata,
+            'reflections_per_image' : self.reflections_per_image,
+            'sample_with_replacement' : self.sample_with_replacement,
             'seed' : self.seed,
         }
         return conf
@@ -142,6 +147,8 @@ class DataManager:
             validation_steps = parser.validation_steps,
             epochs = parser.epochs,
             ambiguate = parser.enable_index_ambiguation,
+            reflections_per_image = parser.reflections_per_image,
+            sample_with_replacement = not parser.sample_without_replacement,
             seed = getattr(parser, 'seed', None),
         )
 
@@ -326,6 +333,8 @@ class DataManager:
             cache, 'train', batch_size=self.batch_size,
             shuffle_buffer_size=self.shuffle_buffer_size,
             repeat=repeat_train, seed=train_seed,
+            reflections_per_image=self.reflections_per_image,
+            sample_with_replacement=self.sample_with_replacement,
         )
         test = None
         if test_fraction > 0.:
@@ -333,6 +342,8 @@ class DataManager:
                 cache, 'test', batch_size=self.batch_size,
                 shuffle_buffer_size=self.shuffle_buffer_size,
                 repeat=repeat_test, seed=test_seed,
+                reflections_per_image=self.reflections_per_image,
+                sample_with_replacement=self.sample_with_replacement,
             )
         return train, test
 

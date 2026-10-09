@@ -357,3 +357,33 @@ def test_stream_iterate_transfer():
 
     inline = list(stream.iterate(transfer=transfer, prefetch=0))
     assert [b.num_images for b in inline] == [3, 3, 3, 1]
+
+
+def test_sample_reflections_fixes_the_shape():
+    from abismal.io.pipeline import sample_reflections
+    rng = np.random.default_rng(0)
+    for n in (3, 10, 50):
+        image = (np.arange(n)[:, None], np.arange(3 * n).reshape(n, 3))
+        for replace in (True, False):
+            out = sample_reflections(image, 20, rng, replace)
+            assert out[0].shape == (20, 1) and out[1].shape == (20, 3)
+            # rows stay intact
+            assert (out[1][:, 0] == 3 * out[0][:, 0]).all()
+    # without replacement, an image with enough reflections has no repeats
+    out = sample_reflections((np.arange(50)[:, None],), 20, rng, replace=False)
+    assert len(np.unique(out[0])) == 20
+
+
+def test_fixed_shape_batches_are_all_full():
+    from abismal.io.pipeline import ImageCache, BatchStream
+    rng = np.random.default_rng(1)
+    images = []
+    for i in range(23):
+        n = int(rng.integers(5, 40))
+        images.append(tuple(np.zeros((n, w), np.float32) for w in (1, 3, 1, 1, 2, 1, 1)))
+    stream = BatchStream(ImageCache(images), batch_size=5, reflections_per_image=8, seed=0)
+    batches = list(stream)
+    assert len(batches) == 4  # the 3 leftover images are dropped
+    for b in batches:
+        assert b.num_images == 5 and len(b.iobs) == 40
+        assert (b.image_id == np.repeat(np.arange(5), 8)).all()

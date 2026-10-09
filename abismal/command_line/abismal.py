@@ -414,7 +414,9 @@ def main(args=None):
     compile_options = None
     if compile_model:
         logger.info("Compiling model")
-        compile_options = {"dynamic": True}
+        # Fixed-shape batches compile to static kernels; otherwise the
+        # reflection count varies from batch to batch.
+        compile_options = {"dynamic": parser.reflections_per_image is None}
 
     trainer = Trainer(
         model,
