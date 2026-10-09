@@ -116,3 +116,37 @@ def test_nonfinite_gradients_are_zeroed():
 
 def test_grad_rms_of_an_empty_group_is_zero():
     assert grad_rms([]).item() == 0.
+
+
+def test_bfloat16_scale_model_trains_and_reports_float32():
+    torch.manual_seed(0)
+    model = build_small_model()
+    model.scale_model.precision = "bfloat16"
+    trainer = Trainer(model, Adam(parameter_groups(model)), verbose=0)
+    batch = synthetic_batch(model).map(torch.as_tensor)
+    metrics = trainer.train_step(batch)
+    assert all(torch.isfinite(v) for v in metrics.values())
+    z = model.scale_model(batch, mc_samples=3, training=False)
+    assert z.dtype == torch.float32
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="compiles for CUDA")
+def test_compiled_step_matches_eager_loss():
+    """The compiled loss is the eager loss, up to kernel-level rounding."""
+    import torch._inductor.config as inductor_config
+    # Inductor otherwise draws its own random numbers, which are not eager's
+    # even from the same seed, so the Monte Carlo samples would differ.
+    inductor_config.fallback_random = True
+    model = build_small_model().cuda()
+    batch = synthetic_batch(model).map(lambda a: torch.as_tensor(a).cuda())
+    eager = Trainer(model, Adam(parameter_groups(model)), verbose=0)
+    compiled = Trainer(model, Adam(parameter_groups(model)), verbose=0, compile={"dynamic": True})
+    # Give the standardization layers their moments; a fresh model has none
+    with torch.no_grad():
+        eager._train_loss(batch)
+    model.eval()
+    torch.manual_seed(0)
+    a, _ = eager._test_loss(batch)
+    torch.manual_seed(0)
+    b, _ = compiled._test_loss(batch)
+    assert torch.allclose(a, b, rtol=1e-3)

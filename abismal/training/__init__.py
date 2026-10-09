@@ -6,6 +6,7 @@ It keeps the parts of keras' behavior the rest of abismal depends on:
 them), per-epoch metric logs named the way `history.csv` has always named them,
 `val_` prefixed validation metrics, and callbacks with keras' hook names.
 """
+import functools
 import math
 import sys
 import time
@@ -108,6 +109,13 @@ class _RunningMeans:
         return {prefix + k: float(v) for k, v in zip(self.sums, values)}
 
 
+def _loss_and_metrics(model, batch, training):
+    """The objective for one batch, and the metrics reported while computing it."""
+    with tracking.track() as tracker:
+        model(batch, training=training)
+    return tracker.total_loss(), dict(tracker.metrics)
+
+
 def _format_logs(logs):
     return " - ".join(f"{k}: {v:.4f}" for k, v in logs.items())
 
@@ -122,17 +130,25 @@ class Trainer:
     callbacks : list (optional)
     verbose : int (optional)
         0 is silent, 1 shows a progress bar, 2 prints one line per epoch.
-    step_fn : callable (optional)
-        Replaces `model` in the training step's forward pass -- for instance a
-        `torch.compile`d version of it.
+    compile : dict (optional)
+        Keyword arguments for `torch.compile`, applied to the loss computation
+        of the training and validation steps. None (the default) runs eagerly.
     """
-    def __init__(self, model, optimizer, device=None, callbacks=None, verbose=1, step_fn=None):
+    def __init__(self, model, optimizer, device=None, callbacks=None, verbose=1, compile=None):
         self.model = model
         self.optimizer = optimizer
         self.device = torch.device(device) if device is not None else torch.device("cpu")
         self.callbacks = list(callbacks) if callbacks is not None else []
         self.verbose = verbose
-        self.forward = step_fn if step_fn is not None else model
+        self._train_loss = functools.partial(_loss_and_metrics, model, training=True)
+        self._test_loss = functools.partial(_loss_and_metrics, model, training=False)
+        if compile is not None:
+            # What is compiled returns only the loss and the (detached) metrics.
+            # Compiling the model itself also made its unused prediction an
+            # output of the graph, and AOTAutograd's backward then failed on
+            # that output's missing gradient.
+            self._train_loss = torch.compile(self._train_loss, **compile)
+            self._test_loss = torch.compile(self._test_loss, **compile)
         self.history = {}
         self.stop_training = False
         for callback in self.callbacks:
@@ -164,15 +180,13 @@ class Trainer:
 
     def train_step(self, batch):
         self.model.train()
-        with tracking.track() as tracker:
-            self.forward(batch, training=True)
-        loss = tracker.total_loss()
+        loss, tracked = self._train_loss(batch)
 
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
 
         metrics = {"loss": loss.detach()}
-        metrics.update(tracker.metrics)
+        metrics.update(tracked)
         labels = {"scale": "|∇s|", "q": "|∇q|", "ll": "|∇ll|", "p": "|∇p|"}
         for name, params in self.model.parameter_groups().items():
             grads = [p.grad for p in params if p.grad is not None]
@@ -189,10 +203,9 @@ class Trainer:
     @torch.no_grad()
     def test_step(self, batch):
         self.model.eval()
-        with tracking.track() as tracker:
-            self.model(batch, training=False)
-        metrics = {"loss": tracker.total_loss().detach()}
-        metrics.update(tracker.metrics)
+        loss, tracked = self._test_loss(batch)
+        metrics = {"loss": loss.detach()}
+        metrics.update(tracked)
         return metrics
 
     def _run(self, iterator, steps, step_fn, progress):

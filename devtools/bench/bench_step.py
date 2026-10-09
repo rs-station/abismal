@@ -65,7 +65,7 @@ def build(args, metadata_length, cell, spacegroup):
     scale = ImageScaler(
         metadata_length, mlp_width=args.d_model, mlp_depth=args.layers,
         hidden_units=2 * args.d_model, prior_name="lognormal", pre_activation="relu",
-        batch_normalize=False,
+        batch_normalize=False, precision=getattr(args, "precision", "float32"),
     )
     return VariationalMergingModel(
         scale, q, prior, StudentTLikelihood(32.), mc_samples=args.mc_samples, standardize=True,
@@ -131,7 +131,7 @@ def main():
     if not args.no_compile:
         compiled = Trainer(
             model, Adam(parameter_groups(model)), device=device, verbose=0,
-            step_fn=torch.compile(model, dynamic=True),
+            compile={"dynamic": True},
         )
         start = time.perf_counter()
         time_steps(compiled, batches, 3, device)

@@ -225,6 +225,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             random_seed=1234,
             batch_normalize=True,
             metadata_noise_factor=0.1,
+            precision="float32",
         ):
         """
         This function has a lot of overrides, but comes with sensible defaults built in.
@@ -274,6 +275,12 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             The standard deviation of the Gaussian noise added to the metadata. This regularizes
             the model against overfitting on small data sets. The noise is only applied when
             `training` is True. The default is 0.1.
+        precision : str (optional)
+            'float32' (the default) or 'bfloat16'. With 'bfloat16' the networks
+            run under autocast, which roughly halves their time and activation
+            memory on GPUs with bfloat16 tensor cores. Weights, the pooled
+            image representation and everything downstream of the networks
+            stay in float32.
         """
         super().__init__()
         self.metadata_length = metadata_length
@@ -297,6 +304,9 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         self.random_seed = random_seed
         self.batch_normalize = batch_normalize
         self.metadata_noise_factor = metadata_noise_factor
+        if precision not in ("float32", "bfloat16"):
+            raise ValueError(f"precision must be 'float32' or 'bfloat16', not {precision!r}")
+        self.precision = precision
 
         input_bias=False
 
@@ -370,8 +380,16 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             'random_seed': self.random_seed,
             'batch_normalize' : self.batch_normalize,
             'metadata_noise_factor' : self.metadata_noise_factor,
+            'precision' : self.precision,
         }
         return config
+
+    def _autocast(self, like):
+        return torch.autocast(
+            device_type=like.device.type,
+            dtype=torch.bfloat16,
+            enabled=self.precision == "bfloat16",
+        )
 
     def bijector_function(self, x):
         return self.bijector_dict[self.bijector_name](x) + self.epsilon
@@ -393,7 +411,9 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         num_images : int
         """
         sums = image.new_zeros((num_images, image.shape[-1])).index_add_(0, image_id, image)
-        counts = torch.bincount(image_id, minlength=num_images).to(image.dtype)
+        # index_add rather than bincount, whose output length depends on the
+        # data and so breaks the graph under torch.compile.
+        counts = image.new_zeros(num_images).index_add_(0, image_id, image.new_ones(image_id.shape))
         num = sums[image_id] - image
         den = (counts[image_id] - 1.).clamp_min(1.)
         return num / den[:, None]
@@ -433,13 +453,18 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         # The scale branch sees the (normalized) metadata columns only.
         scale = image[..., :self.metadata_length]
 
-        unpooled_image = self.input_image(image)
-        image = self.image_network(unpooled_image)
-        image = self.pool(image, image_id, num_images)
+        with self._autocast(image):
+            unpooled_image = self.input_image(image)
+            image = self.image_network(unpooled_image)
+        # Pool and sum in float32: the leave-one-out mean subtracts each
+        # reflection from its image's total, which bfloat16 cannot resolve.
+        image = self.pool(image.float(), image_id, num_images)
 
-        scale_in = self.input_scale(scale) + image
-        q_latent = self.scale_network(scale_in)
-        q_params = self.output_dense(q_latent)
+        with self._autocast(image):
+            scale_in = self.input_scale(scale) + image
+            q_latent = self.scale_network(scale_in)
+            q_params = self.output_dense(q_latent)
+        q_params = q_params.float()
 
         q = self.distribution_function(q_params)
 

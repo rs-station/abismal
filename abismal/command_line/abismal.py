@@ -244,6 +244,7 @@ def main(args=None):
         dropout=parser.dropout,
         batch_normalize=parser.batch_normalize,
         metadata_noise_factor=parser.metadata_noise_factor,
+        precision=parser.precision,
         share_weights=True,
     )
 
@@ -408,10 +409,10 @@ def main(args=None):
     model.to(device)
     opt = Optimizer(parameter_groups(model), **optimizer_kwargs)
 
-    step_fn = None
+    compile_options = None
     if parser.compile:
         logger.info("Compiling model")
-        step_fn = torch.compile(model, dynamic=True)
+        compile_options = {"dynamic": True}
 
     trainer = Trainer(
         model,
@@ -419,7 +420,7 @@ def main(args=None):
         device=device,
         callbacks=callbacks,
         verbose=parser.verbosity,
-        step_fn=step_fn,
+        compile=compile_options,
     )
 
     if parser.embed:

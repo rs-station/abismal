@@ -48,6 +48,17 @@ args_and_kwargs = (
     ),
     (
         (
+            "--precision",
+        ),{
+            "help": "Numerical precision of the scale model's networks: float32 (the "
+                    "default) or bfloat16, which runs them about twice as fast on GPUs "
+                    "with bfloat16 tensor cores. Everything else stays float32.",
+            "default": "float32",
+            "choices": ["float32", "bfloat16"],
+        }
+    ),
+    (
+        (
             "--run-eagerly",
         ),{
             "help": "Accepted for compatibility with abismal 1.x and ignored: PyTorch runs "
