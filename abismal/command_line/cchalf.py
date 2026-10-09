@@ -41,9 +41,19 @@ def main(args=None):
     parser.add_argument(
         "--device", help="Run on this PyTorch device, for instance 'cpu' or 'cuda:1'. Overrides --gpu-id.", type=str, default=None,
     )
+    parser.add_argument(
+        "--compile", "--jit-compile", dest="compile", nargs="?", const="always", default="auto",
+        choices=["auto", "always", "never"],
+        help="torch.compile the training step: 'auto' (the default) compiles on CUDA GPUs only.",
+    )
+    parser.add_argument(
+        "--precision", default="auto", choices=["auto", "float32", "bfloat16"],
+        help="Precision of the scale model's networks. 'auto' (the default) uses bfloat16 on GPUs "
+             "that support it natively and float32 elsewhere, whatever the model was trained with.",
+    )
     parser = parser.parse_args(args)
 
-    from abismal.device import select_device, configure
+    from abismal.device import select_device, configure, resolve_compile, resolve_precision
     from abismal.io.manager import DataManager
     from abismal.callbacks import MtzSaver
     from abismal.saving import load_model, load_optimizer
@@ -51,6 +61,8 @@ def main(args=None):
 
     device = select_device(parser.gpu_id, parser.device)
     configure(device)
+    precision = resolve_precision(parser.precision, device)
+    compile_options = {"dynamic": True} if resolve_compile(parser.compile, device) else None
 
     refls = []
 
@@ -67,6 +79,7 @@ def main(args=None):
                     sf_model.surrogate_posterior.state_dict())
 
             freeze_all_but_posterior(model)
+            model.scale_model.precision = precision
             model.to(device)
 
             # Same optimizer and hyperparameters, but fresh moments, over the
@@ -80,7 +93,7 @@ def main(args=None):
             callbacks = [
                 MtzSaver(f"half_{half_id+1}", reference_mtz=parser.reference_mtz, dmin=dm.dmin)
             ]
-            trainer = Trainer(model, opt, device=device, callbacks=callbacks, verbose=parser.verbosity)
+            trainer = Trainer(model, opt, device=device, callbacks=callbacks, verbose=parser.verbosity, compile=compile_options)
             history = trainer.fit(
                 half, 
                 epochs=dm.epochs, 

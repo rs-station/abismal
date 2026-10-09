@@ -52,3 +52,30 @@ def configure(device):
         setter = getattr(torch.cuda.memory, "_set_allocator_settings", None)
         if setter is not None:
             setter("expandable_segments:True")
+
+
+def resolve_compile(choice, device):
+    """Whether to torch.compile for the --compile setting `choice` on `device`."""
+    if choice in (True, "always"):
+        return True
+    if choice in (False, None, "never"):
+        return False
+    return device.type == "cuda"
+
+
+def supports_bfloat16(device):
+    """Whether `device` runs bfloat16 natively, rather than by emulation."""
+    if device.type != "cuda":
+        return False
+    try:
+        return torch.cuda.is_bf16_supported(including_emulation=False)
+    except TypeError:
+        # Older torch has no including_emulation, and reports emulation too
+        return torch.cuda.get_device_capability(device)[0] >= 8
+
+
+def resolve_precision(choice, device):
+    """The precision for the --precision setting `choice` on `device`."""
+    if choice == "auto":
+        return "bfloat16" if supports_bfloat16(device) else "float32"
+    return choice

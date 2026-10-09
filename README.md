@@ -40,6 +40,12 @@ explicitly (`cpu`, `cuda:1`, `mps`). See what torch can see with
 abismal --list-devices
 ```
 
+On a CUDA GPU abismal compiles its training step with `torch.compile`, which
+takes about half a minute before the first epoch, and on GPUs with native
+bfloat16 (Ampere and newer) runs the scale model's networks in bfloat16.
+Together they train about twice as fast in roughly half the GPU memory, with the
+same merged data. Turn them off with `--compile never` and `--precision float32`.
+
 On a machine with no GPU, the CUDA build is several gigabytes that never get
 used. Take the CPU build instead by adding PyTorch's CPU index to the install:
 

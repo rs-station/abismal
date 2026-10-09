@@ -8,10 +8,12 @@ def main(args=None):
     parser = parser.parse_args(args)
 
     import torch
-    from abismal.device import select_device, configure
+    from abismal.device import select_device, configure, resolve_compile, resolve_precision
 
     device = select_device(parser.gpu_id, parser.device)
     configure(device)
+    precision = resolve_precision(parser.precision, device)
+    compile_model = resolve_compile(parser.compile, device)
     if parser.seed is not None:
         torch.manual_seed(parser.seed)
 
@@ -58,7 +60,7 @@ def main(args=None):
     logger.info("Running with the following options... ")
     logger.info(msg)
 
-    logger.info(f"Training on {device}")
+    logger.info(f"Training on {device}, compile={compile_model}, precision={precision}")
     logger.info("Configuring data input")
     dm = DataManager.from_parser(parser)
     train, test = dm.get_train_test_splits()
@@ -244,7 +246,7 @@ def main(args=None):
         dropout=parser.dropout,
         batch_normalize=parser.batch_normalize,
         metadata_noise_factor=parser.metadata_noise_factor,
-        precision=parser.precision,
+        precision=precision,
         share_weights=True,
     )
 
@@ -410,7 +412,7 @@ def main(args=None):
     opt = Optimizer(parameter_groups(model), **optimizer_kwargs)
 
     compile_options = None
-    if parser.compile:
+    if compile_model:
         logger.info("Compiling model")
         compile_options = {"dynamic": True}
 

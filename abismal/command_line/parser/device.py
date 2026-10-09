@@ -40,21 +40,29 @@ args_and_kwargs = (
             "--compile",
             "--jit-compile",
         ),{
-            "help": "Compile the model's forward pass with torch.compile. The first steps "
-                    "are slow while it compiles, after which steps run faster.",
-            "action" : "store_true",
-            "dest" : "compile",
+            "help": "Compile the training step with torch.compile: 'auto' (the default) "
+                    "compiles on CUDA GPUs and not elsewhere, 'always' or 'never' override "
+                    "that, and a bare --compile means 'always'. Compiling takes about half "
+                    "a minute up front and then trains roughly a third faster in less GPU "
+                    "memory.",
+            "nargs": "?",
+            "const": "always",
+            "default": "auto",
+            "choices": ["auto", "always", "never"],
+            "dest": "compile",
         }
     ),
     (
         (
             "--precision",
         ),{
-            "help": "Numerical precision of the scale model's networks: float32 (the "
-                    "default) or bfloat16, which runs them about twice as fast on GPUs "
-                    "with bfloat16 tensor cores. Everything else stays float32.",
-            "default": "float32",
-            "choices": ["float32", "bfloat16"],
+            "help": "Numerical precision of the scale model's networks. 'auto' (the "
+                    "default) uses bfloat16 on CUDA GPUs with native bfloat16 support "
+                    "(Ampere and newer) and float32 everywhere else. bfloat16 runs the "
+                    "networks about twice as fast in less memory; everything outside "
+                    "them stays float32.",
+            "default": "auto",
+            "choices": ["auto", "float32", "bfloat16"],
         }
     ),
     (
