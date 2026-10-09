@@ -3,6 +3,7 @@ from abismal import serialization
 from abismal import tracking
 from abismal.symmetry import Op
 from abismal.layers.normalization import StandardizeIntensities,StandardizeMetadata
+from abismal.scaling.scaling import row_weights
 
 
 def _per_image_sum(values, image_id, num_images):
@@ -148,6 +149,8 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
         """
         Used for posteriors in which different miller indices are statistically dependent such as the MultivariateNormalPosterior
         """
+        if getattr(inputs, "context_weight", None) is not None or getattr(inputs, "loss_weight", None) is not None:
+            raise NotImplementedError("Row weights are only implemented for independent posteriors")
         if mc_samples is None:
             mc_samples = self.mc_samples
 
@@ -236,10 +239,14 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
             training=training,
         )
 
-        ll = None
+        context, loss_weight = row_weights(inputs)
+
+        score = None
         ipred = None
         hkl = None
         kl_div = None
+        ll = None
+        valid = None
 
         for op in self.reindexing_ops:
             _hkl = op(hkl_in)
@@ -259,25 +266,39 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
 
             _valid = self.surrogate_posterior.rac.valid(asu_id, _hkl)
             _kl_div = _kl_div * _valid.to(_kl_div.dtype)
-            _ll = self._image_log_likelihood(_ll, _valid, image_id, num_images)
+            # Each image's operator is chosen on the reflections that inform it
+            _score = self._image_log_likelihood(
+                _ll, _valid & (context > 0)[:, None], image_id, num_images
+            )
 
-            idx = None if ll is None else _ll > ll
+            idx = None if score is None else _score > score
             ipred = self._select(ipred, idx, image_id, _ipred)
             hkl = self._select(hkl, idx, image_id, _hkl)
             kl_div = self._select(kl_div, idx, image_id, _kl_div)
-            ll = _ll if ll is None else torch.where(idx, _ll, ll)
+            ll = self._select(ll, idx, image_id, _ll)
+            valid = self._select(valid, idx, image_id, _valid)
+            score = _score if score is None else torch.where(idx, _score, score)
 
         if training:
             self.surrogate_posterior.register_seen(asu_id, hkl)
 
-        self.likelihood.register_metrics(ipred, iobs, sigiobs)
+        self.likelihood.register_metrics(ipred, iobs, sigiobs, weight=loss_weight)
 
-        ll = ll.mean()
+        # The objective: each image's mean log likelihood over its counted
+        # reflections and the Monte Carlo samples, averaged over images. An
+        # image with nothing to count (none valid, or all of its reflections
+        # given loss weight 0) is left out of the average.
+        w = valid[:, 0].to(ll.dtype) * loss_weight
+        counted = _per_image_sum(w, image_id, num_images)
+        total = _per_image_sum(ll.sum(-1) * w, image_id, num_images)
+        image_ll = total / (counted * ll.shape[-1]).clamp_min(1.)
+        has = (counted > 0).to(ll.dtype)
+        ll = (image_ll * has).sum() / has.sum().clamp_min(1.)
 
         tracking.add_metric(-ll, name='NLL')
         tracking.add_loss(-ll)
 
-        kl_div = kl_div.mean()
+        kl_div = (kl_div[:, 0] * loss_weight).sum() / loss_weight.sum().clamp_min(1.)
         tracking.add_metric(kl_div, name='KL')
         tracking.add_loss(self.kl_weight * kl_div)
 

@@ -55,16 +55,22 @@ class LocationScale(torch.nn.Module, serialization.Serializable):
         )
 
     @torch.no_grad()
-    def register_metrics(self, ipred, iobs, sigiobs):
-        # ipred is (reflections, mc samples) and iobs, sigiobs are (reflections, 1)
+    def register_metrics(self, ipred, iobs, sigiobs, weight=None):
+        """
+        Correlations between observed and predicted intensities.
+
+        ipred is (reflections, mc samples); iobs, sigiobs are (reflections, 1).
+        `weight`, (reflections,), restricts them to the rows with nonzero weight.
+        """
         iobs = iobs * torch.ones_like(ipred)
         sigiobs = sigiobs * torch.ones_like(ipred)
-        w = torch.reciprocal(torch.square(sigiobs))
+        rows = torch.ones_like(ipred) if weight is None else weight[:, None] * torch.ones_like(ipred)
+        w = rows * torch.reciprocal(torch.square(sigiobs))
 
         cc = weighted_pearsonr(iobs, ipred, w, axis=(-2, -1))
         tracking.add_metric(cc, 'wCCpred')
 
-        cc = weighted_pearsonr(iobs, ipred, axis=(-2, -1))
+        cc = weighted_pearsonr(iobs, ipred, rows, axis=(-2, -1))
         tracking.add_metric(cc, 'CCpred')
 
     def forward(self, ipred, iobs, sigiobs):

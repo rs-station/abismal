@@ -21,6 +21,7 @@ without a framework. The properties that matter to training are kept:
 """
 import queue
 import threading
+import zlib
 from itertools import islice
 
 import numpy as np
@@ -196,6 +197,23 @@ def reservoir_shuffle(iterable, buffer_size, rng=None):
             buffer.pop()
 
 
+def holdout_mask(image, fraction, seed=0):
+    """
+    Which of an image's reflections to hold out for validation.
+
+    A fixed fraction, drawn at random but seeded from the image's own miller
+    indices, so the same reflections are held out on every pass without the
+    image having to carry an id. At least one reflection always stays in
+    training, so every image keeps a representation for the scale model.
+    """
+    hkl = np.ascontiguousarray(image[1])
+    rng = np.random.default_rng([zlib.crc32(hkl.tobytes()), seed])
+    mask = rng.random(len(hkl)) < fraction
+    if mask.all():
+        mask[rng.integers(len(mask))] = False
+    return mask
+
+
 def batched(iterable, batch_size):
     """Collate consecutive images into `Batch`es of `batch_size` images.
 
@@ -210,6 +228,26 @@ def batched(iterable, batch_size):
         if not images:
             return
         yield Batch.collate(images)
+
+
+def _drop_held_out(image, fraction):
+    keep = ~holdout_mask(image, fraction)
+    return tuple(a[keep] for a in image)
+
+
+def _batched_held_out(iterable, batch_size, fraction):
+    """
+    Batches of whole images in which only the held-out reflections count:
+    they get loss weight 1 and no part in the image's shared context, and the
+    rest of each image the reverse.
+    """
+    it = iter(iterable)
+    while True:
+        images = list(islice(it, batch_size))
+        if not images:
+            return
+        held = [holdout_mask(im, fraction) for im in images]
+        yield Batch.collate(images, context_weight=[~h for h in held], loss_weight=held)
 
 
 class prefetch:
@@ -335,7 +373,18 @@ class BatchStream:
     every run, as tf.data's unseeded shuffle did. Either way each new iterator
     draws a new order.
     """
-    def __init__(self, cache, split='train', batch_size=100, shuffle_buffer_size=0, repeat=False, seed=None):
+    def __init__(self, cache, split='train', batch_size=100, shuffle_buffer_size=0, repeat=False, seed=None,
+                 holdout_fraction=None, holdout_role=None):
+        """
+        `holdout_fraction` and `holdout_role` hold out a fraction of every
+        image's reflections (see `holdout_mask`). With the role 'train' those
+        reflections are dropped; with 'validate' every reflection is kept and
+        only the held-out ones count (see `abismal.io.Batch` for the weights).
+        """
+        if holdout_role not in (None, 'train', 'validate'):
+            raise ValueError(f"holdout_role must be 'train' or 'validate', not {holdout_role!r}")
+        self.holdout_fraction = holdout_fraction
+        self.holdout_role = holdout_role
         self.cache = cache
         self.split = split
         self.batch_size = batch_size
@@ -351,6 +400,10 @@ class BatchStream:
 
     def batches(self):
         images = reservoir_shuffle(self.images(), self.shuffle_buffer_size, self.rng)
+        if self.holdout_role == 'train':
+            images = (_drop_held_out(im, self.holdout_fraction) for im in images)
+        elif self.holdout_role == 'validate':
+            return _batched_held_out(images, self.batch_size, self.holdout_fraction)
         return batched(images, self.batch_size)
 
     def __iter__(self):

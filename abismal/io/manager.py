@@ -54,7 +54,7 @@ class DataManager:
             num_cpus=None, separate=False, wavelength=None, ray_log_level="ERROR",
             test_fraction=0., separate_friedel_mates=False, cell_tol=None, isigi_cutoff=None, 
             shuffle_buffer_size=0, batch_size=100, steps_per_epoch=None, validation_steps=None,
-            epochs=30, ambiguate=False, mtz_metadata=None, seed=None,
+            epochs=30, ambiguate=False, mtz_metadata=None, holdout_reflections=None, seed=None,
         ):
         if separate_friedel_mates and separate:
             raise ValueError("Cannot combine --separate-friedel-mates and --separate")
@@ -83,6 +83,7 @@ class DataManager:
         self.validation_steps = validation_steps
         self.epochs = epochs
         self.ambiguate = ambiguate
+        self.holdout_reflections = holdout_reflections
         # Seeds the shuffle buffers only. None gives a new order every run, as
         # the unseeded tf.data shuffle did. The train/test split and the
         # ambiguation are deterministic regardless.
@@ -109,6 +110,7 @@ class DataManager:
             'epochs' : self.epochs,
             'ambiguate' : self.ambiguate,
             'mtz_metadata' : self.mtz_metadata,
+            'holdout_reflections' : self.holdout_reflections,
             'seed' : self.seed,
         }
         return conf
@@ -142,6 +144,7 @@ class DataManager:
             validation_steps = parser.validation_steps,
             epochs = parser.epochs,
             ambiguate = parser.enable_index_ambiguation,
+            holdout_reflections = parser.holdout_reflections,
             seed = getattr(parser, 'seed', None),
         )
 
@@ -316,6 +319,9 @@ class DataManager:
         if self.separate_friedel_mates:
             data = self.friedelize(data)
 
+        if self.holdout_reflections:
+            return self._reflection_holdout_splits(data, repeat_test, repeat_train)
+
         cache = ImageCache(data, test_fraction=test_fraction)
         # Distinct seeds so the two shuffles are not the same sequence.
         train_seed = test_seed = None
@@ -334,6 +340,30 @@ class DataManager:
                 shuffle_buffer_size=self.shuffle_buffer_size,
                 repeat=repeat_test, seed=test_seed,
             )
+        return train, test
+
+    def _reflection_holdout_splits(self, data, repeat_test, repeat_train):
+        """
+        Validate on a fraction of every image's reflections rather than on held
+        out images. Every image trains on the rest of its reflections, so no
+        image is lost to validation, and each held-out observation is of a
+        structure factor and an image the model has otherwise seen.
+        """
+        cache = ImageCache(data, test_fraction=0.)
+        train_seed = test_seed = None
+        if self.seed is not None:
+            train_seed, test_seed = [self.seed, 0], [self.seed, 1]
+        train = BatchStream(
+            cache, 'train', batch_size=self.batch_size,
+            shuffle_buffer_size=self.shuffle_buffer_size,
+            repeat=repeat_train, seed=train_seed,
+            holdout_fraction=self.holdout_reflections, holdout_role='train',
+        )
+        test = BatchStream(
+            cache, 'train', batch_size=self.batch_size,
+            repeat=repeat_test, seed=test_seed,
+            holdout_fraction=self.holdout_reflections, holdout_role='validate',
+        )
         return train, test
 
     def get_half_datasets(self):

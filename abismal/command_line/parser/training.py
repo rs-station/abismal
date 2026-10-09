@@ -112,4 +112,15 @@ args_and_kwargs = (
         }
     ),
 
+    (
+        (
+            "--holdout-reflections",
+        ),{
+            "help": "Experimental. Validate on this fraction of every image's reflections, "
+                    "held out of training, instead of on --test-fraction held-out images. "
+                    "Every image then contributes to the merge.",
+            "default": None,
+            "type": float,
+        }
+    ),
 )

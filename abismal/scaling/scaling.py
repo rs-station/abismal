@@ -14,14 +14,39 @@ def _normalize(x, axis, epsilon=1e-3):
     )
     return out
 
-def batch_normalize(x, epsilon=1e-3):
-    return _normalize(x, 0, epsilon)
+def batch_normalize(x, epsilon=1e-3, weight=None):
+    """
+    Standardize the columns of `x` with moments over its rows, or over the rows
+    with nonzero `weight` -- applied to every row either way.
+    """
+    if weight is None:
+        return _normalize(x, 0, epsilon)
+    w = weight[:, None]
+    n = w.sum()
+    mean = (w * x).sum(0, keepdim=True) / n
+    std = torch.sqrt((w * (x - mean).square()).sum(0, keepdim=True) / n)
+    return (x - mean) / (std + epsilon)
 
 def instance_normalize(x, epsilon=1e-3):
     return _normalize(x, -2, epsilon)
 
 def layer_normalize(x, epsilon=1e-3):
     return _normalize(x, -1, epsilon)
+
+def row_weights(inputs):
+    """
+    The batch's (context_weight, loss_weight) as float tensors, ones where the
+    batch carries none. See abismal.io.Batch.
+    """
+    ones = None
+    out = []
+    for w in (getattr(inputs, "context_weight", None), getattr(inputs, "loss_weight", None)):
+        if w is None:
+            if ones is None:
+                ones = inputs.iobs.new_ones(inputs.iobs.shape[0])
+            w = ones
+        out.append(w.to(inputs.iobs.dtype))
+    return tuple(out)
 
 class DeltaDistribution():
     def __init__(self, loc):
@@ -398,7 +423,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         return self.posterior_dict[self.posterior_name](output, self.bijector_function)
 
     @staticmethod
-    def pool(image, image_id, num_images):
+    def pool(image, image_id, num_images, weight=None):
         """
         Leave-one-out mean of `image` over the reflections of each image.
 
@@ -409,13 +434,20 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         image_id : torch.Tensor
             Which image each reflection belongs to, shape (reflections,)
         num_images : int
+        weight : torch.Tensor (optional)
+            Shape (reflections,): 1 for the reflections to pool over, 0 for the
+            rest; all of them by default. Every reflection gets the mean over
+            the others; one with weight 0 is simply not among them.
         """
-        sums = image.new_zeros((num_images, image.shape[-1])).index_add_(0, image_id, image)
+        if weight is None:
+            weight = image.new_ones(image.shape[0])
         # index_add rather than bincount, whose output length depends on the
         # data and so breaks the graph under torch.compile.
-        counts = image.new_zeros(num_images).index_add_(0, image_id, image.new_ones(image_id.shape))
-        num = sums[image_id] - image
-        den = (counts[image_id] - 1.).clamp_min(1.)
+        w = weight.to(image.dtype)
+        sums = image.new_zeros((num_images, image.shape[-1])).index_add_(0, image_id, image * w[:, None])
+        counts = image.new_zeros(num_images).index_add_(0, image_id, w)
+        num = sums[image_id] - image * w[:, None]
+        den = (counts[image_id] - w).clamp_min(1.)
         return num / den[:, None]
 
     def forward(self, inputs, mc_samples=32, training=None):
@@ -438,6 +470,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         sigiobs = inputs.sigiobs
         image_id = inputs.image_id
         num_images = inputs.num_images
+        context = row_weights(inputs)[0]
 
         if training and self.metadata_noise_factor > 0.:
             metadata = metadata + self.metadata_noise_factor * torch.randn_like(metadata)
@@ -448,7 +481,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
 
         image = torch.cat(image, dim=-1)
         if self.batch_normalize:
-            image = batch_normalize(image)
+            image = batch_normalize(image, weight=context)
 
         # The scale branch sees the (normalized) metadata columns only.
         scale = image[..., :self.metadata_length]
@@ -458,7 +491,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             image = self.image_network(unpooled_image)
         # Pool and sum in float32: the leave-one-out mean subtracts each
         # reflection from its image's total, which bfloat16 cannot resolve.
-        image = self.pool(image.float(), image_id, num_images)
+        image = self.pool(image.float(), image_id, num_images, context)
 
         with self._autocast(image):
             scale_in = self.input_scale(scale) + image

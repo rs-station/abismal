@@ -24,22 +24,37 @@ class Batch(NamedTuple):
     sigiobs: Any     # [N,1] float32
     image_id: Any    # [N]   int64
     num_images: int  # B
+    # Optional per-row weights, [N] float32; None means all ones. Rows with
+    # context_weight 0 take no part in what an image's reflections share (the
+    # normalization, the pooled image representation, the choice of reindexing
+    # operator). Rows with loss_weight 0 do not count toward the objective or
+    # the metrics. See abismal.io.pipeline.holdout_mask for a use of both.
+    context_weight: Any = None
+    loss_weight: Any = None
 
     def map(self, fn):
         """Apply `fn` to every array field, keeping `num_images`."""
-        return Batch(*(fn(a) for a in self[:8]), self.num_images)
+        weights = [None if w is None else fn(w) for w in (self.context_weight, self.loss_weight)]
+        return Batch(*(fn(a) for a in self[:8]), self.num_images, *weights)
 
     @property
     def inputs(self):
         return tuple(self[:7])
 
     @classmethod
-    def collate(cls, images):
-        """Concatenate a list of per-image 7-tuples into one Batch."""
+    def collate(cls, images, context_weight=None, loss_weight=None):
+        """
+        Concatenate a list of per-image 7-tuples into one Batch, with optional
+        per-image lists of row weights.
+        """
         images = list(images)
         if len(images) == 0:
             raise ValueError("Cannot collate an empty list of images")
         fields = [np.concatenate(f, axis=0) for f in zip(*images)]
         lengths = [len(image[0]) for image in images]
         image_id = np.repeat(np.arange(len(images), dtype=np.int64), lengths)
-        return cls(*fields, image_id, len(images))
+        weights = [
+            None if w is None else np.concatenate(w).astype(np.float32)
+            for w in (context_weight, loss_weight)
+        ]
+        return cls(*fields, image_id, len(images), *weights)
