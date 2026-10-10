@@ -250,7 +250,13 @@ def main(args=None):
         share_weights=True,
     )
 
-    if parser.studentt_dof is not None:
+    if parser.error_model == 'ev11':
+        from abismal.likelihood import CalibratedLikelihood
+        likelihood = CalibratedLikelihood(parser.studentt_dof, learn=True, sdfac=1., sdb=0.01, sdadd=0.05)
+    elif parser.error_model == 'mm24':
+        from abismal.likelihood import CalibratedLikelihood
+        likelihood = CalibratedLikelihood(parser.studentt_dof, learn=False, sdfac=1., sdb=0., sdadd=0.05)
+    elif parser.studentt_dof is not None:
         likelihood = StudentTLikelihood(parser.studentt_dof)
     else:
         likelihood = NormalLikelihood()
@@ -317,6 +323,9 @@ def main(args=None):
         mode = 'max'
     early_stopping = EarlyStopping(monitor=monitor, patience=parser.early_stopping_patience, mode=mode)
     callbacks.append(early_stopping)
+    if parser.error_model == 'mm24':
+        from abismal.callbacks import Mm24Calibrator
+        callbacks.append(Mm24Calibrator(train, out_dir=out_dir))
 
     if parser.eff_files is not None:
         for i, eff_file in enumerate(map(str, parser.eff_files)):

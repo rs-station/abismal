@@ -6,3 +6,4 @@ from .peak_finder import AnomalousPeakFinder
 from .weight_saver import WeightSaver
 from .standardization_freezer import StandardizationFreezer
 from .difference_map import DifferenceMap
+from .mm24 import Mm24Calibrator

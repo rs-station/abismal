@@ -16,4 +16,16 @@ args_and_kwargs=(
             "default": 32.,
         }
     ),
+    (
+        (
+            "--error-model",
+        ),{
+            "help": "Inflate the reported uncertainties, sigma'^2 = SdFac^2 (sigma^2 + SdB mu + (SdAdd mu)^2). "
+                    "'ev11' learns SdFac, SdB and SdAdd with the model. 'mm24' fits SdFac and SdAdd "
+                    "before training and after each epoch to pairwise differences of scaled, "
+                    "equivalent observations. The default, 'none', uses the reported uncertainties.",
+            "default": "none",
+            "choices": ["none", "ev11", "mm24"],
+        }
+    ),
 )
