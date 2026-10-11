@@ -337,6 +337,8 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         # Probe: stop the background head's gradient from reaching the shared network.
         import os
         self.background_detach = os.environ.get('ABISMAL_BG_DETACH', '') == '1'
+        # Probe: layer-normalize the (detached) features the background head reads.
+        self.background_layernorm = os.environ.get('ABISMAL_BG_LN', '') == '1'
 
         input_bias=False
 
@@ -516,6 +518,8 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             latent = q_latent.float()
             if self.background_detach:
                 latent = latent.detach()
+            if self.background_layernorm:
+                latent = torch.nn.functional.layer_norm(latent, latent.shape[-1:])
             background = self.background_dense(latent)
 
         q = self.distribution_function(q_params)

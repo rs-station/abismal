@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn.functional as F
 from abismal import serialization
@@ -278,6 +279,9 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
                 b = tau * (m + s * torch.randn(m.shape[0], mc_samples, device=m.device, dtype=m.dtype))
                 kl_b = (0.5 * (m * m + s * s - 1.) - torch.log(s))[:, 0]
                 tracking.add_metric(s.mean(), 'B_s')
+            if os.environ.get('ABISMAL_BG_GHOST', '') == '1' and self.background != 'tau':
+                # Probe: b carries gradient to the network but adds nothing to ipred.
+                b = b - b.detach()
             if self.background != 'tau':
                 bmean = b.mean(-1) if b.dim() > 1 and b.shape[-1] > 1 else b[:, 0]
                 tracking.add_metric((bmean / sigiobs[:, 0]).mean(), 'B/σ')
