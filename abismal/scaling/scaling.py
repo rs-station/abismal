@@ -334,6 +334,9 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             raise ValueError(f"precision must be 'float32' or 'bfloat16', not {precision!r}")
         self.precision = precision
         self.background_outputs = background_outputs
+        # Probe: stop the background head's gradient from reaching the shared network.
+        import os
+        self.background_detach = os.environ.get('ABISMAL_BG_DETACH', '') == '1'
 
         input_bias=False
 
@@ -510,7 +513,10 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         q_params = q_params.float()
         background = None
         if self.background_outputs:
-            background = self.background_dense(q_latent.float())
+            latent = q_latent.float()
+            if self.background_detach:
+                latent = latent.detach()
+            background = self.background_dense(latent)
 
         q = self.distribution_function(q_params)
 
