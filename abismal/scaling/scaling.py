@@ -334,6 +334,15 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             raise ValueError(f"precision must be 'float32' or 'bfloat16', not {precision!r}")
         self.precision = precision
         self.background_outputs = background_outputs
+        # Experiment: metadata columns (comma-separated indices) that only the
+        # pooling branch sees, like Iobs and SigIobs; the per-reflection pass
+        # gets the rest.
+        import os as _os
+        self.pool_only = sorted({int(i) for i in _os.environ.get('ABISMAL_POOL_ONLY', '').split(',') if i.strip()})
+        self.scale_keep = [i for i in range(metadata_length) if i not in self.pool_only]
+        if self.pool_only:
+            print(f"ImageScaler: metadata columns {self.pool_only} go to the pooling branch only; "
+                  f"per-reflection pass gets {self.scale_keep} of {metadata_length}", flush=True)
         # Probe: stop the background head's gradient from reaching the shared network.
         import os
         self.background_detach = os.environ.get('ABISMAL_BG_DETACH', '') == '1'
@@ -362,7 +371,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
                 self.output_prior = linear(mlp_width, 2, output_bias, kernel_initializer)
 
             self.input_image = linear(dimage, mlp_width, input_bias, kernel_initializer)
-            self.input_scale = linear(metadata_length, mlp_width, input_bias, kernel_initializer) #Should use_bias?
+            self.input_scale = linear(len(self.scale_keep), mlp_width, input_bias, kernel_initializer) #Should use_bias?
 
             FF = GLUFeedForward if gated else FeedForward
 
@@ -499,7 +508,10 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             image = batch_normalize(image, weight=context)
 
         # The scale branch sees the (normalized) metadata columns only.
-        scale = image[..., :self.metadata_length]
+        if self.pool_only:
+            scale = image[..., self.scale_keep]
+        else:
+            scale = image[..., :self.metadata_length]
 
         with self._autocast(image):
             unpooled_image = self.input_image(image)
