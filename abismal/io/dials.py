@@ -173,6 +173,12 @@ class StillsLoader(DataLoader):
                 np.sqrt(np.array(table['background.sum.variance'], dtype='float32'))[:,None],
             ), axis=-1,
         )
+        # Experiment (background model): the uncertainty of the background
+        # *estimate* under the peak, tau^2 = Var(bg sum) * n_fg / n_bg, which
+        # DIALS leaves out of intensity.sum.variance. Always the last column.
+        n_fg = np.array(table['num_pixels.foreground'], dtype='float32')
+        n_bg = np.maximum(np.array(table['num_pixels.background_used'], dtype='float32'), 1.)
+        tau = np.sqrt(np.array(table['background.sum.variance'], dtype='float32') * n_fg / n_bg)[:, None]
 
         I  = np.array(table['intensity.sum.value'], dtype='float32')
         SigI  = np.array(np.sqrt(table['intensity.sum.variance']), dtype='float32')
@@ -200,6 +206,7 @@ class StillsLoader(DataLoader):
         I = I[idx, None]
         SigI = SigI[idx, None]
         bg = bg[idx]
+        tau = tau[idx]
 
         #metadata = [xy, bg, hkl]
         metadata = [xy, bg]
@@ -207,6 +214,7 @@ class StillsLoader(DataLoader):
             metadata.extend([
                 delpsical, dQ,
             ])
+        metadata.append(tau)
         metadata = np.concatenate(metadata, axis=-1)
 
         # Images are numbered in table order and the table is grouped by

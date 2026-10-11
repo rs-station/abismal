@@ -251,6 +251,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             batch_normalize=True,
             metadata_noise_factor=0.1,
             precision="float32",
+            background_outputs=0,
         ):
         """
         This function has a lot of overrides, but comes with sensible defaults built in.
@@ -332,6 +333,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         if precision not in ("float32", "bfloat16"):
             raise ValueError(f"precision must be 'float32' or 'bfloat16', not {precision!r}")
         self.precision = precision
+        self.background_outputs = background_outputs
 
         input_bias=False
 
@@ -382,6 +384,13 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             else:
                 self.output_dense = linear(mlp_width, 2, output_bias, kernel_initializer)
 
+            # Experiment (background model): per-reflection background
+            # parameters from the same latent, starting at exactly zero.
+            if background_outputs:
+                self.background_dense = torch.nn.Linear(mlp_width, background_outputs, bias=True)
+                torch.nn.init.zeros_(self.background_dense.weight)
+                torch.nn.init.zeros_(self.background_dense.bias)
+
     def get_config(self):
         config = {
             'metadata_length' : self.metadata_length,
@@ -406,6 +415,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             'batch_normalize' : self.batch_normalize,
             'metadata_noise_factor' : self.metadata_noise_factor,
             'precision' : self.precision,
+            'background_outputs' : self.background_outputs,
         }
         return config
 
@@ -498,6 +508,9 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             q_latent = self.scale_network(scale_in)
             q_params = self.output_dense(q_latent)
         q_params = q_params.float()
+        background = None
+        if self.background_outputs:
+            background = self.background_dense(q_latent.float())
 
         q = self.distribution_function(q_params)
 
@@ -522,4 +535,6 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
 
         tracking.add_metric(z.mean(), name='Σ_mean')
         tracking.add_metric(z.std(correction=0), name='Σ_std')
+        if self.background_outputs:
+            return z, background
         return z

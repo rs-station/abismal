@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import os
 
 def main(args=None):
     from time import time
@@ -248,6 +249,7 @@ def main(args=None):
         metadata_noise_factor=parser.metadata_noise_factor,
         precision=precision,
         share_weights=True,
+        background_outputs={'analytic': 1, 'latent': 2}.get(os.environ.get('ABISMAL_BACKGROUND'), 0),
     )
 
     if parser.studentt_dof is not None:
@@ -264,6 +266,7 @@ def main(args=None):
         kl_weight=parser.kl_weight,
         reindexing_ops=reindexing_ops,
         standardize=standardize_inputs,
+        background=os.environ.get('ABISMAL_BACKGROUND') or None,
     )
 
     if parser.learning_rate_final is not None:

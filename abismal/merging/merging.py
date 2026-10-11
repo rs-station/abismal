@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from abismal import serialization
 from abismal import tracking
 from abismal.symmetry import Op
@@ -25,6 +26,7 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
             epsilon=1e-6,
             reindexing_ops=None,
             standardize=False,
+            background=None,
         ):
         super().__init__()
         self.epsilon = epsilon
@@ -38,6 +40,16 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
             reindexing_ops = ["x,y,z"]
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
         self.standardize = standardize
+        # Experiment (background model). None, or
+        #   'tau'      : sigma^2 -> sigma^2 + tau^2
+        #   'analytic' : ipred += tau * u, u from the scale network, penalty u^2/2,
+        #                and sigma^2 -> sigma^2 + tau^2
+        #   'latent'   : ipred += B ~ q = N(tau m, tau s), (m, s) from the scale
+        #                network, KL(q || N(0, tau^2)); sigma unchanged
+        # tau is the last metadata column, in counts.
+        if background not in (None, 'tau', 'analytic', 'latent'):
+            raise ValueError(f"unknown background mode {background!r}")
+        self.background = background
         if standardize:
             self.standardize_intensity = StandardizeIntensities()
             self.standardize_metadata = StandardizeMetadata(scale_model.metadata_length)
@@ -56,6 +68,7 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
             'epsilon' : self.epsilon,
             'reindexing_ops' : [op.triplet() for op in self.reindexing_ops],
             'standardize' : self.standardize,
+            'background' : self.background,
         }
         return config
 
@@ -224,6 +237,10 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
         if mc_samples is None:
             mc_samples = self.mc_samples
 
+        tau = None
+        if self.background is not None:
+            tau = inputs.metadata[:, -1:].float()
+
         inputs = self.standardize_inputs(inputs, training=training)
 
         asu_id = inputs.asu_id
@@ -238,8 +255,33 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
             mc_samples=mc_samples,
             training=training,
         )
+        bg_params = None
+        if isinstance(scale, tuple):
+            scale, bg_params = scale
 
         context, loss_weight = row_weights(inputs)
+
+        b, kl_b, sig_ll = 0., None, sigiobs
+        if self.background is not None:
+            if self.standardize_intensity is not None:
+                tau = self.standardize_intensity.standardize(tau)
+            if self.background in ('tau', 'analytic'):
+                sig_ll = torch.sqrt(sigiobs * sigiobs + tau * tau)
+            if self.background == 'analytic':
+                u = bg_params[:, :1]
+                b = tau * u
+                kl_b = 0.5 * u[:, 0] ** 2
+            elif self.background == 'latent':
+                m = bg_params[:, :1]
+                # softplus(0.5413) = 1: q starts equal to the prior
+                s = F.softplus(bg_params[:, 1:2] + 0.5413) + 1e-4
+                b = tau * (m + s * torch.randn(m.shape[0], mc_samples, device=m.device, dtype=m.dtype))
+                kl_b = (0.5 * (m * m + s * s - 1.) - torch.log(s))[:, 0]
+                tracking.add_metric(s.mean(), 'B_s')
+            if self.background != 'tau':
+                bmean = b.mean(-1) if b.dim() > 1 and b.shape[-1] > 1 else b[:, 0]
+                tracking.add_metric((bmean / sigiobs[:, 0]).mean(), 'B/σ')
+                tracking.add_metric((bmean / sigiobs[:, 0]).abs().mean(), '|B|/σ')
 
         score = None
         ipred = None
@@ -260,9 +302,9 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
 
             if self.surrogate_posterior.parameterization == 'structure_factor':
                 _ipred = torch.square(_ipred)
-            _ipred = _ipred * scale
+            _ipred = _ipred * scale + b
 
-            _ll = self.likelihood(_ipred, iobs, sigiobs)
+            _ll = self.likelihood(_ipred, iobs, sig_ll)
 
             _valid = self.surrogate_posterior.rac.valid(asu_id, _hkl)
             _kl_div = _kl_div * _valid.to(_kl_div.dtype)
@@ -301,6 +343,11 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
         kl_div = (kl_div[:, 0] * loss_weight).sum() / loss_weight.sum().clamp_min(1.)
         tracking.add_metric(kl_div, name='KL')
         tracking.add_loss(self.kl_weight * kl_div)
+
+        if kl_b is not None:
+            kl_b = (kl_b * w).sum() / w.sum().clamp_min(1.)
+            tracking.add_metric(kl_b, name='KL_B')
+            tracking.add_loss(kl_b)
 
         ipred_avg = ipred.mean(-1)
         return ipred_avg
