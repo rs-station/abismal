@@ -390,6 +390,10 @@ def main(args=None):
         logger.info(f"Initializing the scale model from {parser.scale_init_file}")
         ref_model = load_model(str(parser.scale_init_file))
         model.scale_model.load_state_dict(ref_model.scale_model.state_dict())
+        # The scale model expects inputs standardized as during its own training
+        for name in ('standardize_intensity', 'standardize_metadata'):
+            if getattr(model, name, None) is not None and getattr(ref_model, name, None) is not None:
+                getattr(model, name).load_state_dict(getattr(ref_model, name).state_dict())
 
     if parser.posterior_init_file is not None:
         logger.info(
