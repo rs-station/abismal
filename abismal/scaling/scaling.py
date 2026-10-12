@@ -472,9 +472,6 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         num_images = inputs.num_images
         context = row_weights(inputs)[0]
 
-        if training and self.metadata_noise_factor > 0.:
-            metadata = metadata + self.metadata_noise_factor * torch.randn_like(metadata)
-
         image = [metadata, iobs, sigiobs]
         if self.hkl_to_imodel:
             image.append(0.02 * hkl.to(metadata.dtype))
@@ -485,6 +482,8 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
 
         # The scale branch sees the (normalized) metadata columns only.
         scale = image[..., :self.metadata_length]
+        if training and self.metadata_noise_factor > 0.:
+            scale = scale + self.metadata_noise_factor * torch.randn_like(scale)
 
         with self._autocast(image):
             unpooled_image = self.input_image(image)
