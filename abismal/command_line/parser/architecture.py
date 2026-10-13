@@ -100,6 +100,15 @@ args_and_kwargs = (
         },
     ),
     (
+        ("--deep-context",),
+        {
+            "help": "Pool the image track after every layer (leave-one-out) and add each pool, "
+            "through its own projection, to the scale track ahead of the layer of the same depth. "
+            "By default the image track is pooled once, at the end, into the scale track's input.",
+            "action": "store_true",
+        },
+    ),
+    (
         ("--posterior-features",),
         {
             "help": "Give the scale model's pooling branch the current posterior mean and "

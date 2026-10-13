@@ -249,6 +249,7 @@ def main(args=None):
         precision=precision,
         share_weights=True,
         posterior_features=2 if parser.posterior_features else 0,
+        deep_context=parser.deep_context,
     )
 
     if parser.studentt_dof is not None:

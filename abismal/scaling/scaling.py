@@ -244,6 +244,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             pre_activation=None,
             hkl_to_imodel=False,
             posterior_features=0,
+            deep_context=False,
             gated=False,
             output_bias=True,
             optimize_prior_scale=False,
@@ -323,6 +324,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         self.pre_activation = pre_activation
         self.hkl_to_imodel = hkl_to_imodel
         self.posterior_features = posterior_features
+        self.deep_context = deep_context
         self.gated = gated
         self.output_bias = output_bias
         self.hidden_units = hidden_units
@@ -375,6 +377,11 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
                     ) for _ in range(mlp_depth)])
 
             self.image_network = network()
+            if deep_context:
+                # One projection per layer for the pooled image features
+                # injected into the scale branch.
+                self.context_projections = torch.nn.ModuleList([
+                    linear(mlp_width, mlp_width, False, kernel_initializer) for _ in range(mlp_depth)])
             if share_weights:
                 self.scale_network = self.image_network
             else:
@@ -402,6 +409,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             'pre_activation' : self.pre_activation,
             'hkl_to_imodel' : self.hkl_to_imodel,
             'posterior_features' : self.posterior_features,
+            'deep_context' : self.deep_context,
             'gated' : self.gated,
             'output_bias' : self.output_bias,
             'optimize_prior_scale': self.optimize_prior_scale,
@@ -494,17 +502,36 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         # The scale branch sees the (normalized) metadata columns only.
         scale = image[..., :self.metadata_length]
 
-        with self._autocast(image):
-            unpooled_image = self.input_image(image)
-            image = self.image_network(unpooled_image)
-        # Pool and sum in float32: the leave-one-out mean subtracts each
-        # reflection from its image's total, which bfloat16 cannot resolve.
-        image = self.pool(image.float(), image_id, num_images, context)
+        if self.deep_context:
+            # Two tracks in step: after each layer of the image track, its
+            # leave-one-out pool is projected into the scale track ahead of the
+            # scale track's layer of the same depth. Each reflection's image
+            # features depend on that reflection alone, so every pool still
+            # leaves the reflection itself out.
+            with self._autocast(image):
+                h = self.input_image(image)
+                s = self.input_scale(scale)
+            for f_image, f_scale, project in zip(self.image_network, self.scale_network, self.context_projections):
+                with self._autocast(h):
+                    h = f_image(h)
+                image = self.pool(h.float(), image_id, num_images, context)
+                with self._autocast(image):
+                    s = f_scale(s + project(image))
+            with self._autocast(s):
+                q_latent = s
+                q_params = self.output_dense(q_latent)
+        else:
+            with self._autocast(image):
+                unpooled_image = self.input_image(image)
+                image = self.image_network(unpooled_image)
+            # Pool and sum in float32: the leave-one-out mean subtracts each
+            # reflection from its image's total, which bfloat16 cannot resolve.
+            image = self.pool(image.float(), image_id, num_images, context)
 
-        with self._autocast(image):
-            scale_in = self.input_scale(scale) + image
-            q_latent = self.scale_network(scale_in)
-            q_params = self.output_dense(q_latent)
+            with self._autocast(image):
+                scale_in = self.input_scale(scale) + image
+                q_latent = self.scale_network(scale_in)
+                q_params = self.output_dense(q_latent)
         q_params = q_params.float()
 
         q = self.distribution_function(q_params)
