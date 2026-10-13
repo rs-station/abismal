@@ -243,6 +243,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             bijector_name='softplus',
             pre_activation=None,
             hkl_to_imodel=False,
+            posterior_features=0,
             gated=False,
             output_bias=True,
             optimize_prior_scale=False,
@@ -321,6 +322,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         self.bijector_name = bijector_name
         self.pre_activation = pre_activation
         self.hkl_to_imodel = hkl_to_imodel
+        self.posterior_features = posterior_features
         self.gated = gated
         self.output_bias = output_bias
         self.hidden_units = hidden_units
@@ -350,6 +352,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             dimage = metadata_length + n
             if hkl_to_imodel:
                 dimage = dimage + 3
+            dimage = dimage + posterior_features
 
             if optimize_prior_scale:
                 self.output_prior = linear(mlp_width, 2, output_bias, kernel_initializer)
@@ -398,6 +401,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
             'bijector_name' : self.bijector_name,
             'pre_activation' : self.pre_activation,
             'hkl_to_imodel' : self.hkl_to_imodel,
+            'posterior_features' : self.posterior_features,
             'gated' : self.gated,
             'output_bias' : self.output_bias,
             'optimize_prior_scale': self.optimize_prior_scale,
@@ -450,7 +454,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         den = (counts[image_id] - w).clamp_min(1.)
         return num / den[:, None]
 
-    def forward(self, inputs, mc_samples=32, training=None):
+    def forward(self, inputs, mc_samples=32, training=None, features=None):
         """
         Parameters
         ----------
@@ -478,6 +482,10 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         image = [metadata, iobs, sigiobs]
         if self.hkl_to_imodel:
             image.append(0.02 * hkl.to(metadata.dtype))
+        if self.posterior_features:
+            # Per-reflection summaries of the current structure factor estimates;
+            # they reach only the (leave-one-out) pooling branch.
+            image.append(features.to(metadata.dtype))
 
         image = torch.cat(image, dim=-1)
         if self.batch_normalize:

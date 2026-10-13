@@ -151,6 +151,8 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
         """
         if getattr(inputs, "context_weight", None) is not None or getattr(inputs, "loss_weight", None) is not None:
             raise NotImplementedError("Row weights are only implemented for independent posteriors")
+        if getattr(self.scale_model, 'posterior_features', 0):
+            raise NotImplementedError("Posterior features are only implemented for independent posteriors")
         if mc_samples is None:
             mc_samples = self.mc_samples
 
@@ -233,10 +235,21 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
         image_id = inputs.image_id
         num_images = inputs.num_images
 
+        features = None
+        if getattr(self.scale_model, 'posterior_features', 0):
+            # The current posterior mean and standard deviation under the
+            # identity operator, without gradient: the scale model reads the
+            # estimates but does not move them.
+            with torch.no_grad():
+                q0 = self.surrogate_posterior.distribution(asu_id, hkl_in)
+                v0 = self.surrogate_posterior.rac.valid(asu_id, hkl_in).reshape(-1, 1).to(iobs.dtype)
+                features = torch.stack([q0.mean, q0.stddev], -1).reshape(-1, 2).to(iobs.dtype) * v0
+
         scale = self.scale_model(
             inputs,
             mc_samples=mc_samples,
             training=training,
+            features=features,
         )
 
         context, loss_weight = row_weights(inputs)

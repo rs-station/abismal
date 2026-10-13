@@ -248,6 +248,7 @@ def main(args=None):
         metadata_noise_factor=parser.metadata_noise_factor,
         precision=precision,
         share_weights=True,
+        posterior_features=2 if parser.posterior_features else 0,
     )
 
     if parser.studentt_dof is not None:

@@ -100,6 +100,14 @@ args_and_kwargs = (
         },
     ),
     (
+        ("--posterior-features",),
+        {
+            "help": "Give the scale model's pooling branch the current posterior mean and "
+            "standard deviation of each reflection's structure factor (no gradient).",
+            "action": "store_true",
+        },
+    ),
+    (
         ("--ff-epsilon",),
         {
             "help": "Epsilon used by the feed forward layers' --pre-activation, when that "
