@@ -277,7 +277,7 @@ system (`module avail`, `nvidia-smi` on a GPU node). The notes below are from me
 3. **Environment:** use a conda env (`module load conda`, or micromamba) with Python 3.12.
    - Install a CUDA-12 torch wheel that matches the GPU nodes' driver, then `pip install -e <abismal> -e <TorchRef> pytest`.
    - Run `python -m pytest -q tests --ignore=tests/gui` on the login node and expect 686 passed.
-   - The workstation versions are in the old section 9 text below, for reference.
+   - The workstation's package versions are listed at the end of this file, for reference.
 4. **Smoke test on a GPU:** get a short interactive allocation (e.g. `salloc -A <acct> -C gpu -q interactive -N 1 --gpus 1 -t 30`).
    - Train 2 epochs on `tests/data/stills.{expt,refl}` (`-d 2.0 --epochs 2 --steps-per-epoch 20`).
    - Run one torchref refinement on the output MTZ, with the worker command in section 4.
@@ -294,8 +294,9 @@ system (`module avail`, `nvidia-smi` on a GPU node). The notes below are from me
    - Use `-C gpu -q regular` for multi-hour sweeps and the shared QOS for single-GPU jobs.
    - Monitor with `squeue`/`sacct` from the login node. Never train on the login node.
 7. **Then start the work:** item 1 of section 7, analysing `results/posterior_features`. If the bundle
-   was built before those refinements finished, their maps are missing; re-run the refinements from
-   the MTZs the bundle doesn't have, or re-run the four arms on Perlmutter.
+   was built before those refinements finished, their results are missing (it doesn't carry MTZs).
+   Ask the user for a fresh bundle, or re-run the four arms on Perlmutter (`results/posterior_features/run.sh`,
+   code on the `posterior-features` branch).
 
 Report setup progress to the user in a few lines at each milestone.
 
