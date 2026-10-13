@@ -255,26 +255,51 @@ Report artifact covering items 8 and 10–14 (built by `results/reports/2026-10-
   kill it to free the GPU.
 - The history CSV also logs GPU memory columns; metric columns follow them.
 
-## 9. Moving to Perlmutter
+## 9. Setup on Perlmutter (the agent does this)
 
-On the workstation:
-```
-cd /media/kmdalton/3bd97678-a8fe-47cb-bdd2-b2fdcc5569b1/data/xtal/abismal-benchmarks
-./make_handoff_bundle.sh            # about 0.5 GB: data, scripts, summaries, baseline histories/refinements
-scp abismal_handoff_*.tar.gz perlmutter.nersc.gov:$SCRATCH/   # or CFS for persistence
-```
-The experiment branches and this file (branch `handoff`) are on GitHub.
+The user copies the bundle (`abismal_handoff_YYYY-MM-DD.tar.gz`, built by `make_handoff_bundle.sh` on
+branch `perlmutter-handoff` of abismal-benchmarks) to Perlmutter and starts you in a clone of abismal
+on the `handoff` branch. Everything else is yours. Ask the user only for what you can't find out:
+- where the bundle is, if it isn't obvious (`ls $SCRATCH /global/cfs/cdirs/*/ 2>/dev/null`);
+- the NERSC account to charge (`-A`). `sacctmgr show assoc user=$USER format=account%20` may list it;
+- whether results should live on `$SCRATCH` (fast, purged) or CFS (persistent).
 
-On Perlmutter (verify module names and QOS against current NERSC docs):
-- Login nodes are for editing and `sbatch` only. Training runs in Slurm jobs. A GPU node has
-  4 × A100 (40 GB; `-C gpu&hbm80g` for 80 GB) and 64 CPU cores.
-- Environment: a conda/micromamba env with Python 3.12, CUDA-12 torch wheels, then
-  `pip install -e abismal` (the `torch` branch) and `pip install -e TorchRef`. ray, reciprocalspaceship
-  and gemmi come in with abismal.
-  - The workstation env had torch 2.13.0+cu130, ray 2.57.0, reciprocalspaceship 1.0.7, gemmi 0.7.3,
-    numpy 2.3.5 and TorchRef 0.6.3.
-  - Check the CUDA version supported by Perlmutter's driver before choosing the wheel.
-- Put data and results on `$SCRATCH`, which is purged, so keep anything you need on CFS. Every
-  `run.sh` hard-codes `B=/media/.../abismal-benchmarks`; rewrite that to the new root.
-- One node can run four trainings at once, one per GPU (`CUDA_VISIBLE_DEVICES=0..3`), with
-  refinement on the spare CPU cores. Single-GPU jobs can use the shared QOS.
+Check module names, QOS names, GPU constraints and CUDA versions against NERSC's docs and the live
+system (`module avail`, `nvidia-smi` on a GPU node). The notes below are from memory.
+
+1. **Unpack the bundle** into `$SCRATCH/abismal-benchmarks`. It contains `data/` and `results/`,
+   whose paths match those used throughout this file. Copy `results/HANDOFF.md` aside; it is this file.
+2. **Get the code:**
+   - abismal: this clone. `git fetch` to get all branches. The experiment branches are on origin.
+   - TorchRef: `git clone https://github.com/HatPdotS/TorchRef` next to abismal and check out 0053149
+     (or newer if the user agrees).
+   - abismal-benchmarks itself isn't needed to run experiments. The bundle has everything under `results/`.
+3. **Environment:** use a conda env (`module load conda`, or micromamba) with Python 3.12.
+   - Install a CUDA-12 torch wheel that matches the GPU nodes' driver, then `pip install -e <abismal> -e <TorchRef> pytest`.
+   - Run `python -m pytest -q tests --ignore=tests/gui` on the login node and expect 686 passed.
+   - The workstation versions are in the old section 9 text below, for reference.
+4. **Smoke test on a GPU:** get a short interactive allocation (e.g. `salloc -A <acct> -C gpu -q interactive -N 1 --gpus 1 -t 30`).
+   - Train 2 epochs on `tests/data/stills.{expt,refl}` (`-d 2.0 --epochs 2 --steps-per-epoch 20`).
+   - Run one torchref refinement on the output MTZ, with the worker command in section 4.
+5. **Repoint the experiment scripts.** Every `results/*/run.sh` hard-codes three things:
+   - `B=/media/kmdalton/...` → the new benchmarks root;
+   - `PY=` → the new env's python;
+   - `PYTHONPATH=` → pinned worktrees (`~/opt/sandbox/abismal-*`). Recreate the pins you need with
+     `git worktree add ../abismal-<name> <commit>`. The commits are in each script's header comment.
+   - Do this with a script, not by hand. Keep the originals.
+6. **Write a Slurm launcher** for the harness, saved under `results/` with a short README:
+   - One GPU node has 4 A100s and 64 CPU cores. Run four training arms per node, one per GPU with
+     `CUDA_VISIBLE_DEVICES=i`.
+   - Then refine on the node's CPUs (`CUDA_VISIBLE_DEVICES=`, 4 threads per worker, about 8 workers).
+   - Use `-C gpu -q regular` for multi-hour sweeps and the shared QOS for single-GPU jobs.
+   - Monitor with `squeue`/`sacct` from the login node. Never train on the login node.
+7. **Then start the work:** item 1 of section 7, analysing `results/posterior_features`. If the bundle
+   was built before those refinements finished, their maps are missing; re-run the refinements from
+   the MTZs the bundle doesn't have, or re-run the four arms on Perlmutter.
+
+Report setup progress to the user in a few lines at each milestone.
+
+### Reference: workstation environment
+
+The workstation env had torch 2.13.0+cu130, ray 2.57.0, reciprocalspaceship 1.0.7, gemmi 0.7.3,
+numpy 2.3.5 and TorchRef 0.6.3. It had one RTX A6000 (48 GB).
