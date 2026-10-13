@@ -13,7 +13,7 @@ It covers the TensorFlow → PyTorch port and the benchmark experiments since th
   On CUDA, `torch.compile` and bfloat16 are on by default.
 - The user leans towards **l2 pre-activation + swish activation as the default "when time isn't an issue"**.
   Nothing has been changed on `torch` yet; that is the user's call.
-- An experiment was still finishing at handoff: `results/posterior_features/` (section 6.15).
+- The newest results are `results/posterior_features/` (section 6.15). The first Perlmutter job is the `deep-context` test (section 7).
 
 ## 2. Repositories and branches
 
@@ -216,8 +216,14 @@ All are in `results/<name>/` with a `run.sh`, usually an `analyze.py`, and a `su
       identity operator, zero for invalid reflections, no rescaling) to the **pooling-branch** input only.
     - Arms: relu and l2 + swish at width 256, on both datasets. Baselines are `dof_32`, `lr_x1` and
       `width_l2_sweep/*_l2swish_256`.
-    - Training so far: val NLL is 0.3–0.75 lower from epoch 5 on in all four runs. The CCpred gain is small.
-    - **Refined Zn/S and Rfree were not yet in. Analyse them first.**
+    - **Result (finished 2026-10-13):** val NLL is lower at the end in all four runs (cxidb relu 12.50
+      vs 13.11, cxidb l2 + swish 10.66 vs 11.80, HEWL relu 2.34 vs 2.69, HEWL l2 + swish 1.68 vs 2.06).
+    - **Maps:**
+      - l2 + swish improves on both datasets: cxidb Zn 23.70 vs 23.35, ahead at every epoch from 5;
+        HEWL S 18.07 vs 17.74, ahead from epoch 30. Rfree is unchanged.
+      - relu only speeds up the first ~10 epochs (cxidb Zn 19.7 vs 18.8 at epoch 5), then ends level
+        or slightly worse (cxidb Zn 23.24 vs 23.51, Rfree 0.2158 vs 0.2148).
+    - Single seed; the differences are near seed noise, but the l2 + swish sign is consistent over many epochs.
 
 Report artifact covering items 8 and 10–14 (built by `results/reports/2026-10-12/build.py` from
 `data.py` → `data.json` + `template.html`): https://claude.ai/artifact/24Uern4xY7nUwkq7TWsx6y
@@ -241,11 +247,25 @@ Report artifact covering items 8 and 10–14 (built by `results/reports/2026-10-
 - Refine cxidb at epochs 2, 5, 10, 20, ..., 100 and HEWL every 5 or 10.
 - Compare Zn/Ca/S, Rfree and train/val NLL by epoch, and the time per epoch.
 - The user also asked about a **bidirectional** version, where the pooled context feeds back into the
-  per-reflection track. That breaks leave-one-out after two hops. The design discussion is in the
-  previous agent's final messages; don't implement it before the user decides.
+  per-reflection track. Don't implement it before the user decides. The design discussed:
+  - **Why it leaks:** after round 1 every other reflection's state contains *r*'s data through its own
+    leave-one-out context, so round 2's pool returns *r*'s data to *r*.
+  - Exact per-reflection exclusion costs O(n²). Keeping all cross-reflection paths linear is exact but
+    no more expressive than one-way.
+  - **Proposed: cross-fitting with random folds.**
+    - Each step, split each image's reflections at random into K folds (K = 2).
+    - The context for fold *a* comes from bidirectional message passing over the other folds only, so
+      no amount of hops can return *r*'s data.
+    - Implement by tiling the batch K times with virtual image ids (image, excluded fold), pooling
+      weight 0 for the excluded fold, and `num_images × K` pool segments.
+    - At inference, average over a few fold draws.
+    - The same leave-one-out test applies.
+  - The motivation is learned iterative scaling: rough scale, then residuals against Σ·E[F]² using
+    the posterior features, then a refined scale.
+  - The user noted that reflection subsampling, which this resembles, never helped overfitting in the past.
 
 
-1. Analyse `posterior_features` (maps vs baselines; NLL curves). If it helps, try it with l2 + swish at width 512–1024.
+1. `posterior_features` is analysed (section 6.15). It helps l2 + swish, so test it at width 512–1024 and with a second seed.
 2. Decide the defaults with the user: l2 pre-activation (cheap) and/or l2 + swish. Before changing
    any default, run a **second seed** at width 256, relu vs l2 + relu, on both datasets, plus a longer
    HEWL run (≥ 100 epochs) for l2 + swish.
