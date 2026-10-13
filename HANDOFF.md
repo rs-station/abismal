@@ -62,7 +62,7 @@ b2153d5 Weight rows of a batch for context and loss; optionally validate on held
   workstation, at `/media/kmdalton/3bd97678-a8fe-47cb-bdd2-b2fdcc5569b1/data/xtal/abismal-benchmarks/results/`.
   `make_handoff_bundle.sh` packs the portable part (on branch `perlmutter-handoff` of the benchmarks repo); see section 9.
 
-### TorchRef (`ssh://git@github.com/kmdalton/TorchRef`, 0.6.3, local HEAD 0053149)
+### TorchRef (`https://github.com/HatPdotS/TorchRef`, 0.6.3, commit 0053149 on its `main`; the kmdalton fork's `main` is behind)
 
 Used for refinement through `abismal/callbacks/_torchref_worker.py`, always run on the CPU in a
 separate process.
