@@ -25,6 +25,7 @@ It covers the TensorFlow → PyTorch port and the benchmark experiments since th
 | `fix-rice-seed` | 2d32398 | no (merged into torch) | Rice sampler drew both normals from one seed |
 | `split-half` | d62ace2 | yes | fit half datasets by default and write them every epoch (2 ahead of torch) |
 | `posterior-features` | 55db98e | yes | `--posterior-features` (section 6.15) |
+| `deep-context` | d09f8d8 | yes | `posterior-features` + `--deep-context` (section 7, first test) |
 | `frozen-scale-probe` | e9d9592 | yes | `--scale-init-file` also loads the standardization layers |
 | `noise-scale-only` | 69cd5eb | yes | metadata noise added to the scale branch only |
 | `background-model` | 53f5f5a | yes | background latent B, env flags `ABISMAL_BACKGROUND`, `ABISMAL_BG_*`, `ABISMAL_POOL_ONLY` (shelved) |
@@ -222,6 +223,27 @@ Report artifact covering items 8 and 10–14 (built by `results/reports/2026-10-
 `data.py` → `data.json` + `template.html`): https://claude.ai/artifact/24Uern4xY7nUwkq7TWsx6y
 
 ## 7. Open threads, roughly in priority order
+
+**First test on Perlmutter (requested by the user): one-way deep context.**
+- Branch `deep-context` (d09f8d8) adds `--deep-context`:
+  - The scaler's two tracks run in step. After every image-track layer, its leave-one-out pool is
+    added, through a per-layer linear projection, to the scale track ahead of the layer of the same depth.
+  - By default the image track is pooled once, at the end, into the scale track's input.
+  - With the CLI default `share_weights=True` the two tracks share their feed-forward layers.
+  - `tests/merging/test_deep_context.py` checks that a reflection's own Iobs, SigIobs and posterior
+    features never reach its own scale. A mutation check confirmed it catches a leaky pool.
+- Run it on both datasets, width 256, `--pre-activation l2 --activation swish --posterior-features`,
+  with and without `--deep-context`, **seeds 1 and 2**. That's 8 runs, i.e. 2 GPU nodes at 4 runs each.
+- Settings otherwise canonical: ν 32, noise 0.1, lr 1e-3; cxidb 100 epochs, HEWL 100 epochs, so that
+  l2 + swish isn't undertrained.
+- Re-run the without-deep-context arms on Perlmutter rather than reusing the workstation baselines:
+  the A100 and bfloat16 numerics differ.
+- Refine cxidb at epochs 2, 5, 10, 20, ..., 100 and HEWL every 5 or 10.
+- Compare Zn/Ca/S, Rfree and train/val NLL by epoch, and the time per epoch.
+- The user also asked about a **bidirectional** version, where the pooled context feeds back into the
+  per-reflection track. That breaks leave-one-out after two hops. The design discussion is in the
+  previous agent's final messages; don't implement it before the user decides.
+
 
 1. Analyse `posterior_features` (maps vs baselines; NLL curves). If it helps, try it with l2 + swish at width 512–1024.
 2. Decide the defaults with the user: l2 pre-activation (cheap) and/or l2 + swish. Before changing
