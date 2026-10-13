@@ -230,7 +230,18 @@ Report artifact covering items 8 and 10–14 (built by `results/reports/2026-10-
 
 ## 7. Open threads, roughly in priority order
 
-**First test on Perlmutter (requested by the user): one-way deep context.**
+**Deep context: done on the workstation on 2026-10-13 (`results/deep_context/`, plots `maps.png` and `nll.png`), so it no longer needs to run first on Perlmutter.**
+- Two seeds per arm, both datasets: l2 + swish + posterior features, width 256, with and without `--deep-context`.
+- **The maps improve with deep context:**
+  - It converges faster. HEWL reaches the baseline's epoch-40 S and Rfree by about epoch 20. cxidb Zn is
+    +0.5 to +1.5 over epochs 10–30, and Rfree is lower at nearly every epoch on both seeds.
+  - It ends equal or better: cxidb Zn 23.80 / 24.15 vs 23.70 / 23.54, Rfree 0.2138 / 0.2140 vs
+    0.2143 / 0.2148. HEWL ends level.
+- **Image-level validation NLL disagreed.** Deep context's validation NLL rises after about epoch 20
+  while train NLL keeps falling, yet the maps keep improving. Don't use image-level val NLL to judge
+  architecture changes.
+- The cost is about +15–17% time per epoch and +1% GPU memory.
+- Original plan, kept for reference:
 - Branch `deep-context` (d09f8d8) adds `--deep-context`:
   - The scaler's two tracks run in step. After every image-track layer, its leave-one-out pool is
     added, through a per-layer linear projection, to the scale track ahead of the layer of the same depth.
