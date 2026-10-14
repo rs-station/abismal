@@ -17,8 +17,8 @@ class FoldedNormalPosteriorBase(object):
         if scale_init is None:
             scale_init = 0.01 * torch.ones(rac.asu_size)
 
-        self.loc = PositiveParameter(loc_init)
-        self.scale = PositiveParameter(scale_init, shift=epsilon)
+        self.loc = self.positive(loc_init)
+        self.scale = self.positive(scale_init, shift=epsilon)
 
     def _distribution(self, loc, scale, low):
         f = FoldedNormal(

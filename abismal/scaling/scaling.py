@@ -4,6 +4,7 @@ from torch import distributions as td
 from abismal import serialization
 from abismal import tracking
 from abismal.distributions import FoldedNormal,Rice
+from abismal.bijectors import squareplus
 from abismal.layers.feed_forward import FeedForward, GLUFeedForward, linear, variance_scaling_
 
 def _normalize(x, axis, epsilon=1e-3):
@@ -204,6 +205,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         'elup1' : lambda x : F.elu(x) + 1.,
         'exp' : torch.exp,
         'elog' : elog,
+        'squareplus' : squareplus,
     }
     posterior_dict = {
         'normal' : normal_posterior,

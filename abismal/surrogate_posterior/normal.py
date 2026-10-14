@@ -16,8 +16,8 @@ class NormalPosteriorBase(object):
         if scale_init is None:
             scale_init = 0.01 * torch.ones(rac.asu_size)
 
-        self.loc = PositiveParameter(loc_init)
-        self.scale = PositiveParameter(scale_init, shift=epsilon)
+        self.loc = self.positive(loc_init)
+        self.scale = self.positive(scale_init, shift=epsilon)
 
     def _distribution(self, loc, scale):
         q = td.Normal(
@@ -48,9 +48,9 @@ class MultivariateNormalPosteriorBase(object):
         if scale_init is None:
             scale_init = 0.01 * torch.ones(rac.asu_size)
 
-        self.loc = PositiveParameter(loc_init)
+        self.loc = self.positive(loc_init)
 
-        self._scale = PositiveParameter(
+        self._scale = self.positive(
             torch.as_tensor(scale_init, dtype=torch.float32).mean(),
             shift=epsilon,
         )

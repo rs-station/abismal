@@ -22,10 +22,10 @@ class GammaPosteriorBase(object):
         conc_init = torch.square(loc_init / scale_init)
         rate_init = conc_init / loc_init
 
-        self.rate = PositiveParameter(rate_init, shift=epsilon)
+        self.rate = self.positive(rate_init, shift=epsilon)
 
         #Concentration should remain above one to prevent change in curvature
-        self.concentration = PositiveParameter(conc_init, shift=concentration_min + epsilon)
+        self.concentration = self.positive(conc_init, shift=concentration_min + epsilon)
 
     def get_config(self):
         config = super().get_config()

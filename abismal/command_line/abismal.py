@@ -163,6 +163,7 @@ def main(args=None):
         "loc_init": loc_init,
         "scale_init": scale_init,
         "epsilon": parser.epsilon,
+        "bijector": parser.posterior_bijector,
     })
 
     if parser.posterior_type == "intensity":
@@ -399,6 +400,14 @@ def main(args=None):
         model.surrogate_posterior.load_state_dict(
             ref_model.surrogate_posterior.state_dict()
         )
+        # The raw values mean different things under different bijectors; carry
+        # the constrained values over instead.
+        from abismal.surrogate_posterior.surrogate_posterior import PositiveParameter
+        ref_params = dict(ref_model.surrogate_posterior.named_modules())
+        for name, param in model.surrogate_posterior.named_modules():
+            ref = ref_params.get(name)
+            if isinstance(param, PositiveParameter) and isinstance(ref, PositiveParameter) and param.bijector != ref.bijector:
+                param.set_values(ref())
 
     if parser.freeze_scales:
         logger.info("Freezing the scale model")

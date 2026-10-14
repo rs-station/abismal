@@ -2,6 +2,7 @@ import numpy as np
 import reciprocalspaceship as rs
 import torch
 from abismal import serialization
+from abismal.bijectors import BIJECTORS
 
 
 def _numpy(x):
@@ -12,21 +13,33 @@ def _numpy(x):
 
 class PositiveParameter(torch.nn.Module):
     """
-    A trainable vector constrained to (shift, inf) as ``exp(raw) + shift``.
+    A trainable vector constrained to (shift, inf) as ``bijector(raw) + shift``.
 
-    This replaces TFP's ``TransformedVariable(x, Chain([Shift(shift), Exp()]))``.
-    Calling the module returns the constrained values; `gather` looks the raw
-    values up first and transforms only those, which keeps the per-step cost in
-    the number of observed reflections rather than the size of the ASU.
+    With the default bijector, ``exp``, this replaces TFP's
+    ``TransformedVariable(x, Chain([Shift(shift), Exp()]))``. ``squareplus`` (see
+    `abismal.bijectors`) approaches the shift algebraically instead of
+    exponentially. Calling the module returns the constrained values; `gather`
+    looks the raw values up first and transforms only those, which keeps the
+    per-step cost in the number of observed reflections rather than the size of
+    the ASU.
     """
-    def __init__(self, init, shift=0.):
+    def __init__(self, init, shift=0., bijector='exp'):
         super().__init__()
+        if bijector not in BIJECTORS:
+            raise ValueError(f"bijector must be one of {sorted(BIJECTORS)}, not {bijector!r}")
         self.shift = shift
+        self.bijector = bijector
+        self._forward, inverse = BIJECTORS[bijector]
         init = torch.as_tensor(init, dtype=torch.float32)
-        self.raw = torch.nn.Parameter(torch.log(init - shift))
+        self.raw = torch.nn.Parameter(inverse(init - shift))
 
     def transform(self, raw):
-        return torch.exp(raw) + self.shift
+        return self._forward(raw) + self.shift
+
+    @torch.no_grad()
+    def set_values(self, values):
+        """Set the raw parameter so that the constrained values equal `values`."""
+        self.raw.copy_(BIJECTORS[self.bijector][1](torch.as_tensor(values, dtype=self.raw.dtype) - self.shift))
 
     def forward(self):
         return self.transform(self.raw)
@@ -54,21 +67,30 @@ class PosteriorBase(torch.nn.Module, serialization.Serializable):
     # optimizer updates all of them lazily -- see abismal.optimizers.
     lazy = True
 
-    def __init__(self, rac, epsilon=1e-12, independent=True, **kwargs):
+    def __init__(self, rac, epsilon=1e-12, independent=True, bijector='exp', **kwargs):
         """
         rac : ReciprocalASUCollection
+        bijector : str
+            How the positive parameters are kept positive: 'exp' (the default)
+            or 'squareplus'. See `PositiveParameter`.
         """
         super().__init__()
         self.independent = independent
         self.epsilon = epsilon
+        self.bijector = bijector
         self.rac = rac
         self.register_buffer('seen', torch.zeros(self.rac.asu_size, dtype=torch.bool))
+
+    def positive(self, init, shift=0.):
+        """A `PositiveParameter` that uses this posterior's bijector."""
+        return PositiveParameter(init, shift=shift, bijector=self.bijector)
 
     def get_config(self):
         config = {
             'rac' : serialization.serialize(self.rac),
             'epsilon' : self.epsilon,
             'independent' : self.independent,
+            'bijector' : self.bijector,
         }
         return config
 

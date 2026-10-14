@@ -60,7 +60,7 @@ class LogNormalPosteriorBase(object):
         # loc is the mean of a normal, so it is unconstrained and is stored
         # directly rather than through a bijector.
         self.loc = torch.nn.Parameter(torch.log(mean) - 0.5 * scale_sq)
-        self.scale = PositiveParameter(torch.sqrt(scale_sq), shift=epsilon)
+        self.scale = self.positive(torch.sqrt(scale_sq), shift=epsilon)
 
     def _distribution(self, loc, scale):
         return td.LogNormal(loc, scale)

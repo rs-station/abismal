@@ -74,6 +74,19 @@ args_and_kwargs = (
 
     (
         (
+            "--posterior-bijector",
+        ),{
+            "help": "How the structure factor or intensity posterior's positive parameters are kept "
+            "positive: 'exp' (the default) or 'squareplus', which approaches zero algebraically "
+            "(about 1/|x|) rather than exponentially.",
+            "type": str.lower,
+            "default" : "exp",
+            "choices" : ["exp", "squareplus"],
+        }
+    ),
+
+    (
+        (
             "--scale-posterior-bijector",
         ),{
             "help": "Define the bijector used to enforce positivity of surrogate parameters. ",
