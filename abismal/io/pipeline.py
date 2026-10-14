@@ -13,8 +13,12 @@ without a framework. The properties that matter to training are kept:
   - Parsed images are kept in memory, and every later pass replays them.
   - Train/test membership is a fixed function of each image's position in the
     input (`abismal.io.utils.is_test_index`).
-  - `reservoir_shuffle` has the semantics of tf.data's `shuffle`, and sits
-    after the repeat, so with `repeat=True` the buffer spans pass boundaries.
+  - Shuffling is by pass. A pass that starts while parsing is still under way
+    follows the parser, in input order; a pass that starts once every image is
+    parsed visits them in a fresh random permutation, so each image appears
+    exactly once per pass. (abismal 1.x shuffled through a sliding tf.data
+    buffer instead, which with a buffer larger than the data repeats images
+    within a batch.)
   - Batches are B whole images (`Batch.collate`); the last one may be short.
   - `prefetch` runs the whole chain, plus an optional device transfer, in a
     background thread.
@@ -125,6 +129,11 @@ class ImageCache:
                     return _END
                 self._cond.wait()
 
+    def images(self, split):
+        """A snapshot of the images of `split` parsed so far, in input order."""
+        with self._cond:
+            return list(self._images[split])
+
     def first_image(self):
         """The first parsed image of either split, waiting only for that one.
 
@@ -162,39 +171,6 @@ class ImageCache:
                 position += 1
             if not repeat or position == 0:
                 return
-
-
-def reservoir_shuffle(iterable, buffer_size, rng=None):
-    """Shuffle a stream through a sliding buffer, as tf.data's `shuffle` does.
-
-    The buffer is filled with the first `buffer_size` elements. Then each
-    output is a uniformly chosen buffer slot, refilled from the input. When the
-    input runs out, the remaining buffer is drained in random order. An element
-    can therefore move at most about `buffer_size` places earlier, and a buffer
-    at least as large as the data gives a uniform permutation.
-
-    `buffer_size <= 0` (or 1) passes the input through unchanged.
-    `rng` is a `numpy.random.Generator`; None draws a fresh, unseeded one.
-    """
-    if buffer_size is None or buffer_size <= 1:
-        yield from iterable
-        return
-    if rng is None:
-        rng = np.random.default_rng()
-    it = iter(iterable)
-    buffer = list(islice(it, buffer_size))
-    while buffer:
-        j = int(rng.integers(len(buffer)))
-        item = buffer[j]
-        # Emit before reading the next element, as tf.data does, so the
-        # consumer is never held up by the producer for an element it could
-        # already have had.
-        yield item
-        try:
-            buffer[j] = next(it)
-        except StopIteration:
-            buffer[j] = buffer[-1]
-            buffer.pop()
 
 
 def holdout_mask(image, fraction, seed=0):
@@ -358,9 +334,11 @@ _prefetch = prefetch
 class BatchStream:
     """Batches of one split of an `ImageCache`, as the trainer consumes them.
 
-    Iterating gives a fresh iterator of `Batch`es each time: the split's images
-    (the first pass waits on parsing as needed), reshuffled through a
-    `shuffle_buffer_size` reservoir and collated `batch_size` images at a time.
+    Iterating gives a fresh iterator of `Batch`es each time: the split's images,
+    collated `batch_size` images at a time. With `shuffle=True` each pass that
+    starts after parsing is complete visits the images in a fresh random
+    permutation; a pass that starts while parsing is under way follows the
+    parser in input order (and waits on it as needed).
     With `repeat=True` the iterator never ends, and one iterator should be kept
     across epochs, taking `steps_per_epoch` batches from it each time; that is
     how Keras consumed the repeated tf.data pipeline.
@@ -370,10 +348,9 @@ class BatchStream:
     ahead in a background thread. Plain iteration does no prefetching.
 
     `seed` seeds the shuffle; None, the default, gives a different order on
-    every run, as tf.data's unseeded shuffle did. Either way each new iterator
-    draws a new order.
+    every run. Either way every pass draws a new permutation.
     """
-    def __init__(self, cache, split='train', batch_size=100, shuffle_buffer_size=0, repeat=False, seed=None,
+    def __init__(self, cache, split='train', batch_size=100, shuffle=False, repeat=False, seed=None,
                  holdout_fraction=None, holdout_role=None):
         """
         `holdout_fraction` and `holdout_role` hold out a fraction of every
@@ -388,18 +365,37 @@ class BatchStream:
         self.cache = cache
         self.split = split
         self.batch_size = batch_size
-        self.shuffle_buffer_size = shuffle_buffer_size
+        self.shuffle = shuffle
         self.repeat = repeat
         self.rng = np.random.default_rng(seed)
 
+    def _one_pass(self):
+        if self.shuffle and self.cache.done:
+            self.cache.wait()  # re-raises a parsing error, if there was one
+            images = self.cache.images(self.split)
+            for i in self.rng.permutation(len(images)):
+                yield images[i]
+        else:
+            yield from self.cache.iterate(self.split, repeat=False)
+
     def images(self, repeat=None):
-        """The split's images, unshuffled and unbatched."""
+        """The split's images, unbatched, pass after pass with `repeat=True`.
+
+        A pass is in input order, or with `shuffle=True` and every image parsed,
+        a fresh random permutation.
+        """
         if repeat is None:
             repeat = self.repeat
-        return self.cache.iterate(self.split, repeat=repeat)
+        while True:
+            n = 0
+            for image in self._one_pass():
+                n += 1
+                yield image
+            if not repeat or n == 0:
+                return
 
     def batches(self):
-        images = reservoir_shuffle(self.images(), self.shuffle_buffer_size, self.rng)
+        images = self.images()
         if self.holdout_role == 'train':
             images = (_drop_held_out(im, self.holdout_fraction) for im in images)
         elif self.holdout_role == 'validate':

@@ -58,7 +58,9 @@ args_and_kwargs = (
         (
             "--shuffle-buffer-size",
         ),{
-            "help": "The size of the shuffle buffer which randomizes the training data with default 10_000.",
+            "help": "Shuffle the images when greater than zero (the default), or keep them in input "
+            "order when 0. Each pass after the first visits every image once, in a fresh random "
+            "permutation; the first pass follows the parser. The size itself is no longer used.",
             "default": 10_000,
             "type": int,
         }

@@ -10,7 +10,7 @@ authors=[
 description = "Stochastic merging for diffraction data."
 readme = "README.md"
 dynamic = ["version"]
-# 3.10, not 3.9: 3.9 is end of life, and torch >=2.9, ray and torchref have all
+# 3.10, not 3.9: 3.9 is end of life, and torch >=2.9 and torchref have
 # dropped it. No ceiling -- every dependency has wheels through 3.14.
 requires-python = ">= 3.10"
 dependencies = [
@@ -26,7 +26,6 @@ dependencies = [
     "rs-booster",
     # Imported lazily by the torchref peak finder (_torchref_worker).
     "scikit-image",
-    "ray",
 ]
 
 license={text = "MIT"}
@@ -37,7 +36,7 @@ dev = [
     "pytest-cov",
     "pytest-xdist",
     # A hang here is not hypothetical: a stuck worker once ran for 46 hours,
-    # holding the GPU and 264 GB of ray spill, because nothing stopped it.
+    # holding the GPU and 264 GB of spilled data, because nothing stopped it.
     "pytest-timeout",
     # tests/test_convert.py reads the abismal 1.x fixtures; see [convert].
     "h5py",

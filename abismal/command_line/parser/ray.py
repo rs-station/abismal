@@ -6,7 +6,7 @@ args_and_kwargs = (
         (
             "--ray-log-level",
         ),{
-            "help": "Ray log level which defaults to 'ERROR'.",
+            "help": "Ignored. Kept so that older command lines and configs still parse (abismal no longer uses ray).",
             "default": 'ERROR',
             "type": str,
         }

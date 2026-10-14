@@ -2,8 +2,8 @@
 import mmap
 import numpy as np
 import gemmi
-from abismal.io.common import check_for_ray,ray_context
-from abismal.io.crystfel import StreamLoaderBase
+from abismal.io.crystfel import StreamLoaderBase, _parse_chunk_group
+from abismal.io.parallel import ordered_map
 from abismal.io.loader import make_record
 from reciprocalspaceship.decorators import spacegroupify,cellify
 
@@ -104,7 +104,7 @@ class StreamLoader(StreamLoaderBase):
 
         Returns a generator of 7-tuples of numpy arrays (see `DataLoader`).
         Nothing is read until it is iterated; with `num_cpus > 1` the first
-        `next` starts ray and submits every chunk.
+        `next` starts a pool of parsing processes (see `abismal.io.parallel`).
         """
 
         if peak_list_columns is None:
@@ -125,7 +125,7 @@ class StreamLoader(StreamLoaderBase):
         )
 
         # Chunks come back in file order, each as soon as it is parsed, so a
-        # consumer can start on the first images while ray works on the rest.
+        # consumer can start on the first images while the rest are parsed.
         for chunk in chunks:
             for peak_list in chunk:
                 yield peak_list
@@ -141,9 +141,9 @@ class StreamLoader(StreamLoaderBase):
         **ray_kwargs,
     ) -> list:
         """
-        Parse a CrystFEL stream file using multiple processors. Parallelization depends on the ray library (https://www.ray.io/).
-        If ray is unavailable, this method falls back to serial processing on one CPU. Ray is not a dependency of reciprocalspaceship
-        and will not be installed automatically. Users must manually install it prior to calling this method.
+        Parse a CrystFEL stream file, chunks in groups, in a pool of processes when
+        `num_cpus > 1` (see `abismal.io.parallel`), yielding chunks in file order
+        as they are parsed. Other keyword arguments are accepted and ignored.
 
         PARAMETERS
         ----------
@@ -158,12 +158,10 @@ class StreamLoader(StreamLoaderBase):
         peak_list_columns : list
             A list of columns to include in the peak list numpy arrays.
             A list of possible column names is stored as stream_loader.available_column_names.
-        use_ray : bool(optional)
-            Whether or not to use ray for parallelization.
         num_cpus : int (optional)
-            The number of cpus for ray to use.
-        ray_kwargs : optional
-            Additional keyword arguments to pass to [ray.init](https://docs.ray.io/en/latest/ray-core/api/doc/ray.init.html#ray.init).
+            The number of parsing processes; one (serial) by default.
+        use_ray, address, ray_kwargs : optional
+            Accepted for compatibility and ignored.
 
         RETURNS
         -------
@@ -176,48 +174,8 @@ class StreamLoader(StreamLoaderBase):
         if peak_list_columns is not None:
             peak_list_columns = [self.peak_list_columns[s] for s in peak_list_columns]
 
-        # Check whether ray is available
-        use_ray = False
-        if num_cpus is not None and num_cpus > 1:
-            use_ray = check_for_ray()
-
-        with open(self.filename, "r") as f:
-            memfile = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-            beginnings_and_ends = zip(
-                self.block_regex_bytes["chunk_begin"].finditer(memfile),
-                self.block_regex_bytes["chunk_end"].finditer(memfile),
-            )
-            if use_ray:
-                with ray_context(num_cpus=num_cpus, **ray_kwargs) as ray:
-
-                    @ray.remote
-                    def parse_chunk(loader: StreamLoaderBase, *args):
-                        return loader._parse_chunk(*args)
-
-                    result_ids = []
-                    for begin, end in beginnings_and_ends:
-                        result_ids.append(
-                            parse_chunk.remote(
-                                self,
-                                begin.start(),
-                                end.end(),
-                                wavelength,
-                                chunk_metadata_keys,
-                                crystal_metadata_keys,
-                                peak_list_columns,
-                            )
-                        )
-
-                    for result_id in result_ids:
-                        yield ray.get(result_id)
-
-            else:
-                for begin, end in beginnings_and_ends:
-                    yield self._parse_chunk(
-                        begin.start(),
-                        end.end(),
-                        wavelength,
-                        chunk_metadata_keys,
-                        crystal_metadata_keys,
-                        peak_list_columns,
-                    )
+        workers = num_cpus if num_cpus is not None and num_cpus > 1 else 1
+        tasks = [(self, spans, wavelength, chunk_metadata_keys, crystal_metadata_keys, peak_list_columns)
+                 for spans in self._chunk_groups(workers)]
+        for group in ordered_map(_parse_chunk_group, tasks, num_workers=workers):
+            yield from group

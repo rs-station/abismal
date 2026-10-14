@@ -21,7 +21,7 @@ def _images(model, n, seed=0):
 
 def _streams(model, n=30, test_fraction=0.3, repeat=False, batch_size=4):
     cache = ImageCache(_images(model, n), test_fraction=test_fraction)
-    train = BatchStream(cache, 'train', batch_size=batch_size, shuffle_buffer_size=8, repeat=repeat, seed=0)
+    train = BatchStream(cache, 'train', batch_size=batch_size, shuffle=True, repeat=repeat, seed=0)
     test = BatchStream(cache, 'test', batch_size=batch_size, repeat=False)
     return train, test
 
