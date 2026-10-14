@@ -402,3 +402,83 @@ Report setup progress to the user in a few lines at each milestone.
 
 The workstation env had torch 2.13.0+cu130, ray 2.57.0, reciprocalspaceship 1.0.7, gemmi 0.7.3,
 numpy 2.3.5 and TorchRef 0.6.3. It had one RTX A6000 (48 GB).
+
+## 10. Requests from the user (2026-10-14), do these next on Perlmutter
+
+### 10a. Test the fix for CPU contention between runs on one node
+
+**What was wrong.** Each abismal process started its own ray cluster for parsing, with `--num-cpus`
+defaulting to every CPU it could see. Several runs on one node oversubscribed the CPUs and fought
+over ray's shared resources.
+
+**The fix**, on branch **`io-redesign`** (351e7e3, off `torch`):
+- ray is gone. Parsing runs in a standard-library process pool (`abismal/io/parallel.py`) sized by the
+  CPU affinity mask, i.e. what `srun -c N --cpu-bind=cores` grants.
+- No pool at all for a single input file, so cxidb_81_small and HEWL parse in-process.
+- Pool workers are spawned, with no GPU and one BLAS thread each.
+- Torch already sizes its own thread and compile pools from the affinity mask (checked with `taskset`),
+  so no thread variables are needed once runs are bound.
+- Shuffling is now a fresh permutation of all images each pass after the first, replacing the
+  10k-image buffer; at batch 1000 the buffer repeated 14–29% of the images in each batch.
+  `--shuffle-buffer-size` now only turns shuffling on (>0) or off (0); `--ray-log-level` is ignored.
+
+**How to test it:**
+1. Launch each run as its own bound job step (see the script in 10b): `srun -n1 -c <cpus> --cpu-bind=cores
+   --gpus-per-task=1 --exact ...`. Don't pass `--num-cpus`; the default now follows the binding.
+2. Check that four concurrent runs on one node each train at close to single-run speed (compare
+   `Time (s)` in `history.csv`), and that no `raylet` or `ray::` processes exist.
+3. Parallel parsing of a many-file dataset: full cxidb_81 has 46 `.expt/.refl` pairs, but it isn't in
+   the bundle, so ask the user. Run under `-c 32`; the pool should use 32 workers or fewer. If the
+   `torch` branch (ray) is still installed somewhere, compare parse wall time.
+4. Report any failure with its exact error text.
+
+### 10b. Run the narrow batch-1000 experiment on Perlmutter (also a test of the queue)
+
+**Code:** branch **`perlmutter-narrow`** (a6ca1c4) = `deep-context` (75bd190: posterior features and
+deep context) + `io-redesign`. Pin it in a worktree. Tests pass on the workstation.
+
+**Settings** (as `results/batch1000_narrow/run.sh` on the workstation, but stopped at 30k steps):
+- Start from `build_args.py` on `results/adam_nonoise/{cxidb_81_small,hewl}/abismal.log`.
+- Strip `--torchref*`, `--r-free-mtz`, `--studentt-dof`, `--metadata-noise-factor`, `--seed`, `--epochs`,
+  `--batch-size`, `--steps-per-epoch`, `--d-model`, `--layers`, `--activation`, `--pre-activation`,
+  `--early-stopping-patience`, then add:
+  ```
+  --d-model 32 --layers 20 --pre-activation l2 --activation swish --posterior-features
+  --batch-size 1000 --steps-per-epoch 200 --epochs 150 --early-stopping-patience 100000
+  --metadata-noise-factor 0.1 --studentt-dof 32 --seed {1,2}   [--deep-context projected]
+  ```
+  150 epochs × 200 steps = 30k optimizer steps. The workstation's wide batch-1000 run peaked by about 20k.
+- Arms: {no deep context, `--deep-context projected`} × seeds {1, 2} × {cxidb_81_small, HEWL}. That's
+  8 runs, i.e. 2 nodes × 4 GPUs.
+- Refine afterwards on the CPU (`CUDA_VISIBLE_DEVICES=`, `OMP_NUM_THREADS=4`), at epochs
+  1, 2, 5, 10, 25, 50, 100 and 150, with the worker command in section 4.
+
+**For comparison:** the workstation ran seed 1 of the same arms (with the old shuffle and the ray
+code) in `results/batch1000_narrow/`, which isn't in the bundle; ask the user for its summary.
+Differences are expected from the new shuffle and the A100 numerics. The comparison of interest is
+batch 1000 against the batch-100 narrow runs (`results/deep_context_narrow/`, in the bundle).
+
+**Slurm sketch.** Check the account, QOS, constraint names and CPU counts. A Perlmutter GPU node has
+4 A100s and 64 physical cores (128 hardware threads); `-c` counts hardware threads.
+```bash
+#!/bin/bash
+#SBATCH -A <account> -C gpu -q regular -N 1 --ntasks-per-node=4 -c 32 --gpus-per-node=4 -t 04:00:00
+#SBATCH -J narrow_b1000_<dataset>_s<seed>
+source <env activation>
+B=$SCRATCH/abismal-benchmarks; O=$B/results/batch1000_narrow_pm; mkdir -p $O
+export PYTHONPATH=<worktree of perlmutter-narrow>
+BASE=$(python $B/results/torch_port/build_args.py $B/results/adam_nonoise/<dataset>/abismal.log OUTDIR | <strip as above>)
+COMMON="--d-model 32 --layers 20 --pre-activation l2 --activation swish --posterior-features \
+  --batch-size 1000 --steps-per-epoch 200 --epochs 150 --early-stopping-patience 100000 \
+  --metadata-noise-factor 0.1 --studentt-dof 32"
+i=0
+for seed in 1 2; do for arm in base deep; do
+  extra=""; [ $arm = deep ] && extra="--deep-context projected"
+  name=<dataset>_${arm}_s$seed; ARGS=${BASE//OUTDIR/$O\/$name}
+  srun -n1 -c 32 --cpu-bind=cores --gpus-per-task=1 --exact \
+    python -c 'import sys; from abismal.command_line.abismal import main; main(sys.argv[1:])' \
+    $ARGS $COMMON --seed $seed $extra > $O/$name.log 2>&1 &
+done; done
+wait
+```
+Submit one job per dataset, then refine. A separate CPU job (`-C cpu`) is fine for refinement.
