@@ -84,9 +84,8 @@ class DataManager:
         self.epochs = epochs
         self.ambiguate = ambiguate
         self.holdout_reflections = holdout_reflections
-        # Seeds the shuffle buffers only. None gives a new order every run, as
-        # the unseeded tf.data shuffle did. The train/test split and the
-        # ambiguation are deterministic regardless.
+        # Seeds the shuffles only. None gives a new order every run. The
+        # train/test split and the ambiguation are deterministic regardless.
         self.seed = seed
 
     def get_config(self):
@@ -193,7 +192,6 @@ class DataManager:
                     cell_tol=self.cell_tol,
                 )
                 if self.separate:
-                    self.num_cpus = 1 #multiprocessing with ray can't be done on multiple files at once
                     asu_id += 1
                 if self.cell is None:
                     self.cell = loader.cell
@@ -330,14 +328,14 @@ class DataManager:
 
         train = BatchStream(
             cache, 'train', batch_size=self.batch_size,
-            shuffle_buffer_size=self.shuffle_buffer_size,
+            shuffle=self.shuffle_buffer_size > 0,
             repeat=repeat_train, seed=train_seed,
         )
         test = None
         if test_fraction > 0.:
             test = BatchStream(
                 cache, 'test', batch_size=self.batch_size,
-                shuffle_buffer_size=self.shuffle_buffer_size,
+                shuffle=self.shuffle_buffer_size > 0,
                 repeat=repeat_test, seed=test_seed,
             )
         return train, test
@@ -355,7 +353,7 @@ class DataManager:
             train_seed, test_seed = [self.seed, 0], [self.seed, 1]
         train = BatchStream(
             cache, 'train', batch_size=self.batch_size,
-            shuffle_buffer_size=self.shuffle_buffer_size,
+            shuffle=self.shuffle_buffer_size > 0,
             repeat=repeat_train, seed=train_seed,
             holdout_fraction=self.holdout_reflections, holdout_role='train',
         )

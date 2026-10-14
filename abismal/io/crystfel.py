@@ -6,7 +6,7 @@ import gemmi
 import numpy as np
 
 from reciprocalspaceship import DataSet, concat
-from abismal.io.common import check_for_ray, ray_context
+from abismal.io.parallel import ordered_map
 from reciprocalspaceship.utils import angle_between, eV2Angstroms
 
 # See Rupp Table 5-2
@@ -256,9 +256,8 @@ class StreamLoaderBase(object):
         **ray_kwargs,
     ) -> list:
         """
-        Parse a CrystFEL stream file using multiple processors. Parallelization depends on the ray library (https://www.ray.io/).
-        If ray is unavailable, this method falls back to serial processing on one CPU. Ray is not a dependency of reciprocalspaceship
-        and will not be installed automatically. Users must manually install it prior to calling this method.
+        Parse a CrystFEL stream file, in a pool of processes when `use_ray` is true
+        (the name is historical) and `num_cpus > 1` (see `abismal.io.parallel`).
 
         PARAMETERS
         ----------
@@ -274,11 +273,11 @@ class StreamLoaderBase(object):
             A list of columns to include in the peak list numpy arrays.
             A list of possible column names is stored as stream_loader.available_column_names.
         use_ray : bool(optional)
-            Whether or not to use ray for parallelization.
+            Whether to parse in parallel (the name is historical).
         num_cpus : int (optional)
-            The number of cpus for ray to use.
-        ray_kwargs : optional
-            Additional keyword arguments to pass to [ray.init](https://docs.ray.io/en/latest/ray-core/api/doc/ray.init.html#ray.init).
+            The number of parsing processes.
+        address, ray_kwargs : optional
+            Accepted for compatibility and ignored.
 
         RETURNS
         -------
@@ -291,55 +290,34 @@ class StreamLoaderBase(object):
         if peak_list_columns is not None:
             peak_list_columns = [self.peak_list_columns[s] for s in peak_list_columns]
 
-        # Check whether ray is available
-        if use_ray:
-            use_ray = check_for_ray()
+        tasks = [(self, spans, wavelength, chunk_metadata_keys, crystal_metadata_keys, peak_list_columns)
+                 for spans in self._chunk_groups(num_cpus if use_ray else 1)]
+        results = []
+        for group in ordered_map(_parse_chunk_group, tasks, num_workers=num_cpus if use_ray else 1):
+            results.extend(group)
+        return results
 
+    def _chunk_spans(self):
+        """The byte (start, end) of every chunk in the file, in file order."""
         with open(self.filename, "r") as f:
             memfile = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-            beginnings_and_ends = zip(
-                self.block_regex_bytes["chunk_begin"].finditer(memfile),
-                self.block_regex_bytes["chunk_end"].finditer(memfile),
-            )
-            if use_ray:
-                with ray_context(num_cpus=num_cpus, **ray_kwargs) as ray:
+            return [
+                (begin.start(), end.end()) for begin, end in zip(
+                    self.block_regex_bytes["chunk_begin"].finditer(memfile),
+                    self.block_regex_bytes["chunk_end"].finditer(memfile),
+                )
+            ]
 
-                    @ray.remote
-                    def parse_chunk(loader: StreamLoaderBase, *args):
-                        return loader._parse_chunk(*args)
-
-                    result_ids = []
-                    for begin, end in beginnings_and_ends:
-                        result_ids.append(
-                            parse_chunk.remote(
-                                self,
-                                begin.start(),
-                                end.end(),
-                                wavelength,
-                                chunk_metadata_keys,
-                                crystal_metadata_keys,
-                                peak_list_columns,
-                            )
-                        )
-
-                    results = ray.get(result_ids)
-
-                return results
-
-            else:
-                results = []
-                for begin, end in beginnings_and_ends:
-                    results.append(
-                        self._parse_chunk(
-                            begin.start(),
-                            end.end(),
-                            wavelength,
-                            chunk_metadata_keys,
-                            crystal_metadata_keys,
-                            peak_list_columns,
-                        )
-                    )
-        return results
+    def _chunk_groups(self, num_cpus):
+        """
+        The chunk spans in consecutive groups, one parsing task each: about eight
+        tasks per worker, so the work balances, and at most 1000 chunks a task,
+        so results come back steadily.
+        """
+        spans = self._chunk_spans()
+        workers = max(1, num_cpus or 1)
+        size = max(1, min(1000, -(-len(spans) // (8 * workers))))
+        return [spans[i:i + size] for i in range(0, len(spans), size)]
 
     def _extract_chunk_metadata(self, chunk_text, metadata_keys=None):
         if metadata_keys is None:
@@ -605,3 +583,8 @@ def read_crystfel(
     ds.set_index(["H", "K", "L"], inplace=True)
 
     return ds
+
+
+def _parse_chunk_group(loader, spans, *args):
+    """Parse the chunks at byte `spans` of `loader`'s file (run in a worker process)."""
+    return [loader._parse_chunk(start, end, *args) for start, end in spans]

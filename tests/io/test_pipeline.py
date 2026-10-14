@@ -2,8 +2,9 @@
 
 These pin the behaviour abismal had with tf.data: asynchronous parsing with
 training starting during the first pass, an in-memory cache replayed on later
-passes, a deterministic train/test split, a sliding shuffle buffer placed after
-the repeat, and ragged batches of whole images.
+passes, a deterministic train/test split, and ragged batches of whole images.
+Shuffling departs from tf.data on purpose: the first pass follows the parser,
+and every pass that starts with all images parsed is a fresh permutation.
 """
 import threading
 import time
@@ -14,7 +15,7 @@ import pytest
 
 from abismal.io.batch import Batch
 from abismal.io.pipeline import (
-    BatchStream, ImageCache, batched, prefetch, reservoir_shuffle,
+    BatchStream, ImageCache, batched, prefetch,
 )
 from abismal.io.utils import index_uniform, is_test_index
 
@@ -118,7 +119,7 @@ def test_cache_repeat_of_empty_split_ends():
 def test_epoch_one_overlaps_parsing():
     """ A batch is ready long before the slow source is exhausted """
     cache = ImageCache(slow_source(50, 0.02))
-    stream = BatchStream(cache, batch_size=2, shuffle_buffer_size=0)
+    stream = BatchStream(cache, batch_size=2, shuffle=True)
     t = time.time()
     first = next(iter(stream))
     assert isinstance(first, Batch)
@@ -134,7 +135,7 @@ def test_epoch_one_overlaps_parsing():
 
 def test_epoch_one_overlap_with_prefetch_and_shuffle():
     cache = ImageCache(slow_source(60, 0.02))
-    stream = BatchStream(cache, batch_size=4, shuffle_buffer_size=8, repeat=True, seed=0)
+    stream = BatchStream(cache, batch_size=4, shuffle=True, repeat=True, seed=0)
     with stream.iterate(prefetch=2) as it:
         b = next(it)
         assert b.num_images == 4
@@ -204,71 +205,64 @@ def test_producer_exception_through_prefetch():
 
 # ---------------------------------------------------------------- shuffle
 
-def test_shuffle_is_a_permutation():
-    rng = np.random.default_rng(0)
-    out = list(reservoir_shuffle(range(1000), 100, rng))
-    assert sorted(out) == list(range(1000))
-    assert out != list(range(1000))
+def first_ids(stream, count=None):
+    it = iter(stream) if count is None else islice(iter(stream), count)
+    return [batch_ids(b)[0] for b in it]
 
 
-@pytest.mark.parametrize("size", [0, 1, None, -5])
-def test_shuffle_small_buffer_is_identity(size):
-    assert list(reservoir_shuffle(range(100), size)) == list(range(100))
+def test_first_pass_follows_the_parser_in_input_order():
+    """ A pass that starts while parsing is under way is in input order """
+    cache = ImageCache(slow_source(30, 0.005))
+    stream = BatchStream(cache, batch_size=1, shuffle=True, seed=0)
+    assert first_ids(stream) == list(range(30))
 
 
-def test_shuffle_is_local():
-    """ A sliding buffer of K only lets an element move ~K places earlier """
-    K = 10
-    out = list(reservoir_shuffle(range(1000), K, np.random.default_rng(1)))
-    for position, x in enumerate(out):
-        # x was read once at least x - K + 1 elements had been emitted
-        assert position >= x - K
-    # ...but later is unbounded and a large buffer mixes thoroughly
-    big = list(reservoir_shuffle(range(1000), 2000, np.random.default_rng(1)))
-    assert abs(np.corrcoef(big, range(1000))[0, 1]) < 0.2
-
-
-def test_shuffle_first_element_is_uniform_over_buffer():
-    """ tf.data semantics: the first output is uniform over the first K inputs """
-    K = 5
-    rng = np.random.default_rng(2)
-    first = [next(reservoir_shuffle(range(100), K, rng)) for _ in range(5000)]
-    counts = np.bincount(first, minlength=K)
-    assert len(counts) == K
-    assert counts.min() > 800
-
-
-def test_shuffle_seed():
-    a = list(reservoir_shuffle(range(100), 50, np.random.default_rng(3)))
-    b = list(reservoir_shuffle(range(100), 50, np.random.default_rng(3)))
-    assert a == b
-
-
-def test_stream_reshuffles_every_pass():
-    cache = ImageCache(image(i) for i in range(50))
-    stream = BatchStream(cache, batch_size=1, shuffle_buffer_size=50, seed=0)
-    passes = [[batch_ids(b)[0] for b in stream] for _ in range(3)]
+def test_passes_over_a_complete_cache_are_fresh_permutations():
+    n = 50
+    cache = ImageCache(image(i) for i in range(n))
+    cache.wait()
+    stream = BatchStream(cache, batch_size=1, shuffle=True, seed=0)
+    passes = [first_ids(stream) for _ in range(3)]
     for p in passes:
-        assert sorted(p) == list(range(50))
+        assert sorted(p) == list(range(n))   # every image exactly once
+    assert passes[0] != list(range(n))
     assert passes[0] != passes[1] != passes[2]
 
     # Seeded streams are reproducible
-    again = BatchStream(cache, batch_size=1, shuffle_buffer_size=50, seed=0)
-    assert [batch_ids(b)[0] for b in again] == passes[0]
+    again = BatchStream(cache, batch_size=1, shuffle=True, seed=0)
+    assert first_ids(again) == passes[0]
 
 
-def test_shuffle_buffer_spans_passes_when_repeating():
-    """ The buffer sits after the repeat, as in tf.data, so passes mix """
+def test_repeating_stream_permutes_every_pass_after_the_first():
+    """ With repeat=True: input order while parsing, then one permutation per pass """
     n = 20
+    cache = ImageCache(slow_source(n, 0.005))
+    stream = BatchStream(cache, batch_size=1, shuffle=True, repeat=True, seed=4)
+    out = first_ids(stream, 6 * n)
+    assert out[:n] == list(range(n))
+    windows = [out[k:k + n] for k in range(n, len(out), n)]
+    for w in windows:
+        assert sorted(w) == list(range(n))   # each later pass sees every image once
+    assert len({tuple(w) for w in windows}) == len(windows)
+
+
+def test_no_image_repeats_within_a_batch():
+    """ Unlike a buffer larger than the data, a permutation never repeats an image """
+    n = 40
     cache = ImageCache(image(i) for i in range(n))
-    stream = BatchStream(cache, batch_size=1, shuffle_buffer_size=n, repeat=True, seed=4)
-    out = [batch_ids(b)[0] for b in islice(iter(stream), 20 * n)]
-    windows = [sorted(out[k:k + n]) for k in range(0, len(out), n)]
-    # If passes did not mix, every window of n outputs would be one exact pass
-    assert any(w != list(range(n)) for w in windows)
-    # Nothing is lost or duplicated overall
-    counts = np.bincount(out, minlength=n)
-    assert counts.max() - counts.min() <= 2 * n
+    cache.wait()
+    stream = BatchStream(cache, batch_size=n, shuffle=True, repeat=True, seed=1)
+    for b in islice(iter(stream), 10):
+        ids = batch_ids(b)
+        assert len(ids) == len(set(ids)) == n
+
+
+def test_shuffle_off_keeps_input_order():
+    cache = ImageCache(image(i) for i in range(25))
+    cache.wait()
+    stream = BatchStream(cache, batch_size=1, shuffle=False)
+    assert first_ids(stream) == list(range(25))
+    assert first_ids(stream) == list(range(25))
 
 
 # ---------------------------------------------------------------- batching
