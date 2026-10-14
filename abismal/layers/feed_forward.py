@@ -184,7 +184,8 @@ class FeedForward(torch.nn.Module, serialization.Serializable):
         self.ff1 = linear(self.units, self.hidden_units, self.use_bias, kernel_initializer)
         self.ff2 = linear(self.hidden_units, self.units, self.use_bias, "zeros")
 
-    def forward(self, X):
+    def branch(self, X):
+        """The residual branch alone: `forward(X) == X + branch(X)`."""
         out = X
         out = self.pre_activation(out)
         out = self.ff1(out)
@@ -196,9 +197,10 @@ class FeedForward(torch.nn.Module, serialization.Serializable):
 
         if self.scale_factor is not None:
             out = out * self.scale_factor
-
-        out = out + X
         return out
+
+    def forward(self, X):
+        return self.branch(X) + X
 
 
 @serialization.register
@@ -212,7 +214,7 @@ class GLUFeedForward(FeedForward):
         self.ff2 = linear(self.units, self.hidden_units, self.use_bias, kernel_initializer)
         self.ff3 = linear(self.hidden_units, self.units, self.use_bias, "zeros")
 
-    def forward(self, X):
+    def branch(self, X):
         out = X
         out = self.pre_activation(out)
 
@@ -224,7 +226,4 @@ class GLUFeedForward(FeedForward):
 
         if self.scale_factor is not None:
             out = out * self.scale_factor
-
-        out = out + X
-
         return out

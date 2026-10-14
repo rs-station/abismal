@@ -324,6 +324,13 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         self.pre_activation = pre_activation
         self.hkl_to_imodel = hkl_to_imodel
         self.posterior_features = posterior_features
+        # Older configs stored a bool; True meant what is now 'projected'.
+        if deep_context is True:
+            deep_context = 'projected'
+        if not deep_context:
+            deep_context = None
+        if deep_context not in (None, 'projected', 'raw', 'delta'):
+            raise ValueError(f"deep_context must be None, 'projected', 'raw' or 'delta', not {deep_context!r}")
         self.deep_context = deep_context
         self.gated = gated
         self.output_bias = output_bias
@@ -377,7 +384,7 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
                     ) for _ in range(mlp_depth)])
 
             self.image_network = network()
-            if deep_context:
+            if self.deep_context == 'projected':
                 # One projection per layer for the pooled image features
                 # injected into the scale branch.
                 self.context_projections = torch.nn.ModuleList([
@@ -503,20 +510,39 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
         scale = image[..., :self.metadata_length]
 
         if self.deep_context:
-            # Two tracks in step: after each layer of the image track, its
-            # leave-one-out pool is projected into the scale track ahead of the
+            # Two tracks in step: after each layer of the image track, a
+            # leave-one-out pool of it goes into the scale track ahead of the
             # scale track's layer of the same depth. Each reflection's image
             # features depend on that reflection alone, so every pool still
-            # leaves the reflection itself out.
+            # leaves the reflection itself out. What is pooled and added:
+            #   projected: W_k pool(h_k), a learned projection per layer
+            #   raw:       pool(h_k), the image track's residual stream
+            #   delta:     pool(h_k - h_{k-1}), the image track's increment,
+            #              plus pool(h_0) once at the start, so the scale track
+            #              receives pool(h_L) in total, as without deep context
             with self._autocast(image):
                 h = self.input_image(image)
                 s = self.input_scale(scale)
-            for f_image, f_scale, project in zip(self.image_network, self.scale_network, self.context_projections):
+            if self.deep_context == 'delta':
+                pooled = self.pool(h.float(), image_id, num_images, context)
+                with self._autocast(pooled):
+                    s = s + pooled
+            for k, (f_image, f_scale) in enumerate(zip(self.image_network, self.scale_network)):
                 with self._autocast(h):
-                    h = f_image(h)
-                image = self.pool(h.float(), image_id, num_images, context)
+                    if self.deep_context == 'delta':
+                        # The block's residual branch alone, so the increment
+                        # is not lost to rounding in h_k - h_{k-1}
+                        increment = f_image.branch(h)
+                        h = h + increment
+                    else:
+                        h = f_image(h)
+                image = self.pool((increment if self.deep_context == 'delta' else h).float(), image_id, num_images, context)
                 with self._autocast(image):
-                    s = f_scale(s + project(image))
+                    inject = self.context_projections[k](image) if self.deep_context == 'projected' else image
+                    s = f_scale(s + inject)
+            if self.deep_context != 'projected':
+                # The last pool, as used by the optional learned scale prior
+                image = self.pool(h.float(), image_id, num_images, context)
             with self._autocast(s):
                 q_latent = s
                 q_params = self.output_dense(q_latent)

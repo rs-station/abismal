@@ -102,10 +102,15 @@ args_and_kwargs = (
     (
         ("--deep-context",),
         {
-            "help": "Pool the image track after every layer (leave-one-out) and add each pool, "
-            "through its own projection, to the scale track ahead of the layer of the same depth. "
-            "By default the image track is pooled once, at the end, into the scale track's input.",
-            "action": "store_true",
+            "help": "Pool the image track after every layer (leave-one-out) into the scale track, ahead "
+            "of the layer of the same depth. 'projected' (the default when the flag is given) adds a "
+            "learned projection of the pooled residual stream, 'raw' the pooled residual stream itself, "
+            "'delta' the pooled increment of each layer. Without the flag the image track is pooled "
+            "once, at the end, into the scale track's input.",
+            "nargs": "?",
+            "const": "projected",
+            "default": None,
+            "choices": ["projected", "raw", "delta"],
         },
     ),
     (
