@@ -317,10 +317,22 @@ Report artifact covering items 8 and 10–14 (built by `results/reports/2026-10-
    - Options in the code: F posterior normal, foldednormal, rice, gamma, nakagami, truncatednormal,
      lognormal; scale posterior normal, gamma, foldednormal, rice, lognormal, delta, posnormal;
      bijectors softplus, elup1, exp, elog.
-5. A data-derived metadata-noise scale, tested on a dataset with a very different spot density.
-6. Use Perlmutter for **multi-seed** versions of the close calls, and for the larger datasets
+5. **Why large batches converge faster** (the user agrees with the hypothesis; revisit when the queue is free).
+   - Hypothesis: per-structure-factor multiplicity per batch. On cxidb_81_small that's about 1 at batch
+     100 and about 11 at batch 1000. Gradient SNR grows about as √multiplicity, and Adam's step per
+     parameter (mean/RMS × lr) only reaches lr when the gradient's sign is consistent. Larger batches
+     let Adam take full steps.
+   - It explains why a higher posterior lr didn't help (`posterior_lr`), the frozen-scale run's
+     20k-step floor, and the post-peak decline at constant lr (less implicit noise regularization).
+   - Tests:
+     - log the per-F Adam mean/RMS ratio at batch 100 vs 1000;
+     - posterior β₁ 0.99 at batch 100 as a cheap substitute;
+     - mc_samples 64/128, to separate Monte Carlo noise from observation noise;
+     - frozen scales at batch 1000.
+6. A data-derived metadata-noise scale, tested on a dataset with a very different spot density.
+7. Use Perlmutter for **multi-seed** versions of the close calls, and for the larger datasets
    (full cxidb_81, cxidb_61, cxidb_62), which were too slow locally.
-7. Housekeeping the user hasn't decided:
+8. Housekeeping the user hasn't decided:
    - cleaning up old pinned worktrees on the workstation;
    - the `--studentt-dof inf` warning;
    - a TorchRefRunner thread cap.
