@@ -241,9 +241,25 @@ Report artifact covering items 8 and 10–14 (built by `results/reports/2026-10-
   while train NLL keeps falling, yet the maps keep improving. Don't use image-level val NLL to judge
   architecture changes.
 - The cost is about +15–17% time per epoch and +1% GPU memory.
-- **Narrow-deep follow-up** (`results/deep_context_narrow/`, width 32, depth 20, same stack, 2 seeds,
-  both datasets): running on the workstation at handoff. Early validation NLL favoured deep context
-  on both datasets. The time cost is only about 3–13% at this width. Check the maps there first.
+- **Narrow-deep follow-up** (width 32, depth 20, same stack, 2 seeds, both datasets; `results/deep_context_narrow/`
+  and `results/deep_context_modes/`, code `deep-context` 75bd190):
+  - `--deep-context` now takes a mode:
+    - `projected`: the default when the flag is given;
+    - `raw`: the pooled residual stream;
+    - `delta`: each layer's pooled increment plus the pooled input once. No extra parameters, and it
+      equals single pooling at initialization.
+  - Every mode beats no deep context somewhere; none wins on both datasets.
+    - cxidb: raw is fastest (Zn 19.5 vs 18.2 at epoch 20); delta ≈ none.
+    - HEWL: runs plateau at S ≈ 16, then jump to about 17.8 — projected around epoch 30, delta around 45,
+      raw and none not within 50 epochs. The narrow network is undertrained at 50 HEWL epochs.
+  - The narrow network stays well below width 256 either way.
+- **Batch 1000** (`results/batch1000/`, baseline config, seed 1, same optimizer steps as batch 100):
+  - It leads at every matched step count and peaks higher than any batch-100 run of that architecture
+    (cxidb Zn 24.4 at 20k steps vs 23.5 at 100k; HEWL S 18.65 vs 18.34), then declines slowly.
+  - It's ahead per unit of GPU time too; a step costs about 6× a batch-100 step, with 7.3 GB of memory.
+  - HEWL stopped at epoch 222 of 250 because the default early stopping (patience 100 epochs) fired;
+    a batch-1000 epoch was only 200 steps.
+  - Next: batch 1000 with the full stack, an lr sweep and decay schedule, and batch size as a dial.
 - Original plan, kept for reference:
 - Branch `deep-context` (d09f8d8) adds `--deep-context`:
   - The scaler's two tracks run in step. After every image-track layer, its leave-one-out pool is
