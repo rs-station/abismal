@@ -241,6 +241,9 @@ Report artifact covering items 8 and 10–14 (built by `results/reports/2026-10-
   while train NLL keeps falling, yet the maps keep improving. Don't use image-level val NLL to judge
   architecture changes.
 - The cost is about +15–17% time per epoch and +1% GPU memory.
+- **Narrow-deep follow-up** (`results/deep_context_narrow/`, width 32, depth 20, same stack, 2 seeds,
+  both datasets): running on the workstation at handoff. Early validation NLL favoured deep context
+  on both datasets. The time cost is only about 3–13% at this width. Check the maps there first.
 - Original plan, kept for reference:
 - Branch `deep-context` (d09f8d8) adds `--deep-context`:
   - The scaler's two tracks run in step. After every image-track layer, its leave-one-out pool is
@@ -284,10 +287,24 @@ Report artifact covering items 8 and 10–14 (built by `results/reports/2026-10-
    - a separate, higher learning rate for the scale network;
    - warm starts;
    - width-1024 relu with lr scaled by 256/width, to separate width from step size in the collapse.
-4. A data-derived metadata-noise scale, tested on a dataset with a very different spot density.
-5. Use Perlmutter for **multi-seed** versions of the close calls, and for the larger datasets
+4. **Posterior parameterization**, which the user never settled (FoldedNormal vs LogNormal).
+   - Factorial on the current best stack (l2 + swish, posterior features, deep context, width 256):
+     scale posterior {FoldedNormal + softplus, LogNormal} × structure-factor posterior
+     {FoldedNormal, LogNormal}, 2 seeds × 2 datasets = 16 runs. Judge on refined maps by epoch.
+   - Rationale: scale-network learning is the bottleneck. A LogNormal scale posterior makes Adam's
+     steps relative changes in Σ, which suits image scales spanning orders of magnitude on stills,
+     and its KL to the LogNormal scale prior is exact. A LogNormal scale posterior with KL also
+     prevented the normal-likelihood collapse (`normal_collapse`).
+   - LogNormal F can't approach zero (weak and centric reflections), and its KL to Wilson is
+     Monte Carlo; expect less there. Rice vs FoldedNormal F was already a wash (`rice_posterior`).
+   - Cheap follow-up: scale bijector softplus vs exp for the FoldedNormal scale posterior.
+   - Options in the code: F posterior normal, foldednormal, rice, gamma, nakagami, truncatednormal,
+     lognormal; scale posterior normal, gamma, foldednormal, rice, lognormal, delta, posnormal;
+     bijectors softplus, elup1, exp, elog.
+5. A data-derived metadata-noise scale, tested on a dataset with a very different spot density.
+6. Use Perlmutter for **multi-seed** versions of the close calls, and for the larger datasets
    (full cxidb_81, cxidb_61, cxidb_62), which were too slow locally.
-6. Housekeeping the user hasn't decided:
+7. Housekeeping the user hasn't decided:
    - cleaning up old pinned worktrees on the workstation;
    - the `--studentt-dof inf` warning;
    - a TorchRefRunner thread cap.
