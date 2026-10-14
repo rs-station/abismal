@@ -434,7 +434,7 @@ over ray's shared resources.
 
 ### 10b. Run the narrow batch-1000 experiment on Perlmutter (also a test of the queue)
 
-**Code:** branch **`perlmutter-narrow`** (a6ca1c4) = `deep-context` (75bd190: posterior features and
+**Code:** branch **`perlmutter-narrow`** (40043e3) = `deep-context` (75bd190: posterior features and
 deep context) + `io-redesign`. Pin it in a worktree. Tests pass on the workstation.
 
 **Settings** (as `results/batch1000_narrow/run.sh` on the workstation, but stopped at 30k steps):
