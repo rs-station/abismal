@@ -211,7 +211,7 @@ All are in `results/<name>/` with a `run.sh`, usually an `analyze.py`, and a `su
       epoch 20, then degrades slowly. **Learning the scale network is the rate limiter.**
     - `--init-scale` 0.01–1.0 has no effect; the posterior width is set by the data within about 10 epochs.
     - Independent converged runs agree to an anomalous-difference CC of about 0.92.
-15. **posterior_features** (in progress at handoff, `posterior-features` branch):
+15. **posterior_features** (`posterior-features` branch):
     - `--posterior-features` appends each reflection's current posterior E[F] and SD[F] (no gradient,
       identity operator, zero for invalid reflections, no rescaling) to the **pooling-branch** input only.
     - Arms: relu and l2 + swish at width 256, on both datasets. Baselines are `dof_32`, `lr_x1` and
@@ -225,10 +225,45 @@ All are in `results/<name>/` with a `run.sh`, usually an `analyze.py`, and a `su
         or slightly worse (cxidb Zn 23.24 vs 23.51, Rfree 0.2158 vs 0.2148).
     - Single seed; the differences are near seed noise, but the l2 + swish sign is consistent over many epochs.
 
-Report artifact covering items 8 and 10–14 (built by `results/reports/2026-10-12/build.py` from
+16. **deep_context / deep_context_narrow / deep_context_modes:** see section 7. Per-layer context speeds
+    convergence at width 256 (two seeds). On the narrow network every mode helps somewhere, but none on both datasets.
+17. **batch1000 / batch1000_narrow / batch1000_narrow_relu** (seed 1, matched optimizer steps):
+    - **Wide relu at batch 1000 is the best configuration so far:** cxidb Zn 24.4 by 20k steps (batch 100:
+      23.5 at 100k), HEWL S 18.65. It then declines slowly at constant lr, so stop near the peak or decay the lr.
+    - Narrow (32 × 20) l2 + swish gains little from batch 1000: about +1 Zn on cxidb, nothing on HEWL.
+    - **Narrow plain relu** (no l2, swish, features or deep context) is far better than narrow l2 + swish:
+      +2.4 Zn and +1.9 S at 30k. It nearly matches wide on HEWL (S 18.1, best HEWL Rfree 0.1442) but
+      stays below on cxidb (Zn 22.8 vs 24.4). Confound: the relu run had no posterior features.
+    - These used the old pipeline, which repeated 14% (cxidb) and 29% (HEWL) of images within each batch.
+18. **The zero-scale collapse and squareplus** (`locfree_1024`, `bijector_1024`, `squareplus`; code on branch
+    `squareplus` 554b95f, plus `scale-loc-nofloor` 571e831 for the probes):
+    - **Mechanism:** the scale posterior's location and scale both go through softplus + 1e-12. Softplus
+      tails off exponentially, so both pin at the floor (collapsed Σ_mean is exactly 1.1666e-12) and the
+      gradient vanishes, including the KL pull back to the prior. Removing the floor on the location
+      alone did not help: it collapsed onto the scale's floor instead.
+    - **Squareplus** ((x + √(x² + 4))/2, written cancellation-free for x < 0) tails off as 1/|x|. With it,
+      width-1024 relu trains normally with no optimizer change. A LogNormal scale posterior also trains,
+      after a KL transient.
+    - **At width 256** (two seeds, both datasets): on the **structure factors** it is clearly harmful
+      (−2 to −2.7 Zn, −1 S, Rfree +0.003–0.005), because exp gives Adam relative steps in F. On the
+      **scales** it is roughly neutral (HEWL Rfree slightly better, cxidb Zn 0.7–0.9 lower). The user's
+      idea of making it the default for all posteriors is not supported; a scale-only default is a
+      possible safety choice.
+19. **Data pipeline** (`io-redesign`, see section 10a): ray replaced by a process pool sized to the CPU
+    binding, plus a fresh permutation each pass. Tests pass; a parse-time benchmark (full cxidb_81, 46
+    files) and a training comparison are still to do.
+
+Report artifact covering items 8 and 10–18 (built by `results/reports/2026-10-12/build.py` from
 `data.py` → `data.json` + `template.html`): https://claude.ai/artifact/24Uern4xY7nUwkq7TWsx6y
 
 ## 7. Open threads, roughly in priority order
+
+**Newest (2026-10-14), ahead of the list below:**
+- Wide relu at batch 1000 with squareplus scales, two seeds; an lr sweep and a decaying schedule at batch 1000.
+- A narrow relu batch-1000 run *with* posterior features, to separate swish from the features.
+- The batch-size mechanism tests (item 5 below).
+- The `io-redesign` parse benchmark and training comparison, then merging it into `torch` if they hold up.
+
 
 **Deep context: done on the workstation on 2026-10-13 (`results/deep_context/`, plots `maps.png` and `nll.png`), so it no longer needs to run first on Perlmutter.**
 - Two seeds per arm, both datasets: l2 + swish + posterior features, width 256, with and without `--deep-context`.
