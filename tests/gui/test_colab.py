@@ -401,7 +401,10 @@ def test_the_gui_extra_carries_no_frontend():
     Every package an install need not change is one that cannot break the kernel
     it is changing.
     """
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10
+        import tomli as tomllib
 
     pyproject = Path(__file__).parents[2] / "pyproject.toml"
     if not pyproject.is_file():
@@ -420,7 +423,10 @@ def test_torch_is_a_floor_not_a_pin():
     needs a restart. The same lesson was learned the hard way with
     `tensorflow==2.18.0`, which made abismal uninstallable on Colab outright.
     """
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10
+        import tomli as tomllib
     from packaging.requirements import Requirement
 
     pyproject = Path(__file__).parents[2] / "pyproject.toml"
@@ -500,7 +506,10 @@ def test_ipywidgets_7_is_supported():
     108 Text and 102 HTML widgets is a blank cell. On 7 everything carries
     DescriptionStyleModel or ButtonStyleModel, which Colab has always rendered.
     """
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10
+        import tomli as tomllib
 
     pyproject = Path(__file__).parents[2] / "pyproject.toml"
     if not pyproject.is_file():
@@ -565,7 +574,10 @@ def test_colabs_python_is_supported_and_skimage_always_applies():
     torchref peak finder, so losing it would surface halfway through a
     refinement, not at install time.
     """
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10
+        import tomli as tomllib
     from packaging.requirements import Requirement
     from packaging.specifiers import SpecifierSet
 
