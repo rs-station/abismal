@@ -67,15 +67,6 @@ args_and_kwargs = (
     ),
     (
         (
-            "--run-eagerly",
-        ),{
-            "help": "Accepted for compatibility with abismal 1.x and ignored: PyTorch runs "
-                    "eagerly unless --compile is given.",
-            "action" : "store_true",
-        }
-    ),
-    (
-        (
             "--seed",
         ),{
             "help": "Seed PyTorch's random number generator, which draws the Monte Carlo "

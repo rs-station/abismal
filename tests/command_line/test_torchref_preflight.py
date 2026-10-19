@@ -21,7 +21,6 @@ base_flags = (
     "--batch-size=3",
     "--d-model=4",
     "--layers=2",
-    "--run-eagerly",
     "--shuffle-buffer-size=10",
     "--steps-per-epoch=2",
     "--num-cpus=1",

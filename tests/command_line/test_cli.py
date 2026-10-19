@@ -21,7 +21,6 @@ base_flags = (
     "--batch-size=3",
     "--d-model=4",
     "--layers=2",
-    "--run-eagerly",
     "--shuffle-buffer-size=10",
     "--steps-per-epoch=10",
     "--num-cpus=1",
@@ -66,7 +65,7 @@ def _run_abismal(flags, files, additional_asserts=()):
         rs.read_mtz("asu_0_epoch_1.mtz")
         rs.read_mtz("asu_0_epoch_2.mtz")
 
-        args = " epoch_2.pt --run-eagerly --sf-init epoch_0.pt "
+        args = " epoch_2.pt --sf-init epoch_0.pt "
         cchalf_main(args.split())
         assert exists('abismal_xval.mtz')
         assert_cchalf_optimized()

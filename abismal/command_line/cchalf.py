@@ -30,9 +30,6 @@ def main(args=None):
         "--reference-mtz", type= str, default=None, help='A reference mtz file which will be used to determine the reindexing operator.',
     )
     parser.add_argument(
-        "--run-eagerly", help="Accepted for compatibility with abismal 1.x and ignored.", action='store_true',
-    )
-    parser.add_argument(
         "--gpu-id", help="The numerical id of the GPU to use. Ignored when no GPU is available.", type=int, default=0,
     )
     parser.add_argument(

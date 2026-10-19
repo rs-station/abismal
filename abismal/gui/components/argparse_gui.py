@@ -107,7 +107,6 @@ class ArgparseGUIBase:
     skipped_actions = [
         "help",
         "list_devices",
-        "run_eagerly",
         "debug",
         "embed",
         "verbosity",
