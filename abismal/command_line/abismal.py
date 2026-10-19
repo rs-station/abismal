@@ -198,10 +198,6 @@ def main(args=None):
             from abismal.surrogate_posterior.structure_factor.folded_normal import (
                 FoldedNormalPosterior as Posterior,
             )
-        elif parser.posterior_distribution == "truncatednormal":
-            from abismal.surrogate_posterior.structure_factor.truncated_normal import (
-                TruncatedNormalPosterior as Posterior,
-            )
         elif parser.posterior_distribution == "rice":
             from abismal.surrogate_posterior.structure_factor.rice import (
                 RicePosterior as Posterior,

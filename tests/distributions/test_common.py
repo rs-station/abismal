@@ -11,7 +11,6 @@ from abismal.distributions import (
     FoldedNormal,
     Nakagami,
     Rice,
-    TruncatedNormal,
 )
 
 # Each factory takes the two learnable parameters (a location-like and a
@@ -20,7 +19,6 @@ FACTORIES = {
     "FoldedNormal": FoldedNormal,
     "Rice": Rice,
     "Nakagami": Nakagami,
-    "TruncatedNormal": lambda a, b: TruncatedNormal(a + 1e-12, b, 1e-12, 1e10),
 }
 
 

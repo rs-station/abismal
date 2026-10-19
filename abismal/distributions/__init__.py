@@ -1,7 +1,6 @@
 from .folded_normal import FoldedNormal
 from .nakagami import Nakagami
 from .rice import Rice
-from .truncated_normal import TruncatedNormal
 from .special import log_gamma_half_ratio, log_gamma_half_ratio_excess
 
 # torch checks every distribution's parameters on construction unless told not
