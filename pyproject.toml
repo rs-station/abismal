@@ -39,17 +39,6 @@ dev = [
     # A hang here is not hypothetical: a stuck worker once ran for 46 hours,
     # holding the GPU and 264 GB of ray spill, because nothing stopped it.
     "pytest-timeout",
-    # tests/test_convert.py reads the abismal 1.x fixtures; see [convert].
-    "h5py",
-]
-# Converting abismal 1.x models (.keras) to the current format, with the
-# `abismal.convert` command or by passing a .keras file wherever a model is
-# loaded. The weights inside a .keras file are HDF5, and h5py is the only way
-# to read them without TensorFlow. Optional because it is needed once per old
-# model and never by a merge, and abismal.convert imports it lazily and says
-# how to install it when it is missing.
-convert = [
-    "h5py",
 ]
 # Per-epoch refinement via --torchref-pdb. Optional because torchref brings
 # numba and pyarrow, and caps numpy, scipy, pandas and torch below their latest
@@ -123,8 +112,6 @@ abismal = "abismal.command_line.abismal:main"
 "abismal.cchalf" = "abismal.command_line.cchalf:main"
 "abismal.friedelize" = "abismal.command_line.friedelize:main"
 "abismal.plot_history" = "abismal.command_line.plot_history:main"
-# Converts abismal 1.x .keras model files to the .pt format.
-"abismal.convert" = "abismal.convert:main"
 # Copies the packaged notebook into the current directory and starts JupyterLab
 # on it, so there is no path to know and nothing to symlink.
 "abismal.gui" = "abismal.command_line.gui:main"

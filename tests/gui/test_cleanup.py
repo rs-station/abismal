@@ -20,7 +20,7 @@ from abismal.gui.cleanup import (
 def populated(tmp_path):
     """One of everything abismal writes, plus decoys that must survive."""
     for name in ("abismal.log", "console.log", "abismal.pid", "datamanager.yml",
-                 "history.csv", "epoch_0.keras", "epoch_10.keras", "asu_0_epoch_1.mtz"):
+                 "history.csv", "epoch_0.pt", "epoch_10.pt", "asu_0_epoch_1.mtz"):
         (tmp_path / name).write_text("x")
     for name in ("eff_0_asu_0_epoch_1", "diffmaps_0"):
         (tmp_path / name).mkdir()
@@ -38,7 +38,7 @@ def test_finds_every_known_output(populated):
     found = {os.path.basename(p) for p in find_abismal_outputs(populated)}
     assert "abismal.log" in found
     assert "history.csv" in found
-    assert "epoch_0.keras" in found and "epoch_10.keras" in found
+    assert "epoch_0.pt" in found and "epoch_10.pt" in found
     assert "asu_0_epoch_1.mtz" in found
     assert "eff_0_asu_0_epoch_1" in found
     assert "diffmaps_0" in found

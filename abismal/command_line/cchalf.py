@@ -18,10 +18,10 @@ def main(args=None):
         "datamanager_yml", help="A .yml file from an abismal run", default="datamanager.yml"
     )
     parser.add_argument(
-        "model_file", help="A .pt file from an abismal run. An abismal 1.x .keras file is converted on the fly.",
+        "model_file", help="A .pt file from an abismal run.",
     )
     parser.add_argument(
-        "--sf-init", help="An optional .pt (or abismal 1.x .keras) file from an abismal run from which to initialize the structure factors", default=None, required=False
+        "--sf-init", help="An optional .pt file from an abismal run from which to initialize the structure factors", default=None, required=False
     )
     parser.add_argument(
         "--repeats", help="Number of random repeats to conduct. Default is one.", type=int, default=1, required=False

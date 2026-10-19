@@ -13,8 +13,6 @@ _FILE_PATTERNS = (
     'datamanager.yml',
     'history.csv',
     'epoch_*.pt',
-    # Checkpoints from abismal 1.x, which an out_dir may still hold.
-    'epoch_*.keras',
     'asu_*.mtz',
 )
 _DIR_PATTERNS = (
