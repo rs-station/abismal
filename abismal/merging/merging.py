@@ -148,7 +148,7 @@ class VariationalMergingModel(torch.nn.Module):
         q = self.surrogate_posterior.flat_distribution()
         z = q.rsample((mc_samples,))
 
-        p = self.prior(inputs, flat=True)
+        p = self.prior.flat_distribution()
         kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
 
         for op in self.reindexing_ops:
@@ -220,7 +220,7 @@ class VariationalMergingModel(torch.nn.Module):
         for op in self.reindexing_ops:
             _hkl = op(hkl_in)
             q = self.surrogate_posterior.distribution(asu_id, _hkl)
-            p = self.prior(inputs._replace(hkl=_hkl), flat=False)
+            p = self.prior.distribution(asu_id, _hkl)
             z = q.rsample((mc_samples,))
             _kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
 

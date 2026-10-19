@@ -123,10 +123,7 @@ class AutoWilsonPriorBase(WilsonPriorBase):
 
     @property
     def sigma(self):
-        sigma = torch.exp(-self.b * torch.reciprocal(torch.square(self.rac.dHKL)) + self._k)
-        return sigma
-
-    def forward(self, inputs, flat):
         tracking.add_metric(self.k, 'WilsonK')
         tracking.add_metric(self.b, 'WilsonB')
-        return super().forward(inputs, flat)
+        sigma = torch.exp(-self.b * torch.reciprocal(torch.square(self.rac.dHKL)) + self._k)
+        return sigma
