@@ -11,7 +11,6 @@ from abismal.distributions import (
     FoldedNormal,
     Nakagami,
     Rice,
-    RiceWoolfson,
     TruncatedNormal,
 )
 
@@ -22,10 +21,6 @@ FACTORIES = {
     "Rice": Rice,
     "Nakagami": Nakagami,
     "TruncatedNormal": lambda a, b: TruncatedNormal(a + 1e-12, b, 1e-12, 1e10),
-    # Alternating centric flags along the last batch dimension.
-    "RiceWoolfson": lambda a, b: RiceWoolfson(
-        a, b, torch.arange(torch.broadcast_shapes(a.shape, b.shape)[-1], device=a.device) % 2 == 0
-    ),
 }
 
 
