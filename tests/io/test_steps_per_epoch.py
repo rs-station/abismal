@@ -35,24 +35,6 @@ def test_zero_means_one_pass(
     assert dm.repeat_train is expected_repeat
 
 
-@pytest.mark.parametrize("steps_per_epoch", [0, None, 250])
-def test_survives_a_config_round_trip(conventional_mtz, steps_per_epoch):
-    """A datamanager.yml written with 0 must reload as one-pass, not as 0.
-
-    This also covers files written before the default changed, which recorded
-    null for what is now spelled 0.
-    """
-    dm = _manager(
-        conventional_mtz,
-        cell=(10, 10, 10, 90, 90, 90),
-        spacegroup=1,
-        steps_per_epoch=steps_per_epoch,
-    )
-    reloaded = DataManager.from_config(dm.get_config())
-    assert reloaded.steps_per_epoch == dm.steps_per_epoch
-    assert reloaded.repeat_train == dm.repeat_train
-
-
 def test_cli_default_is_1000(conventional_mtz):
     from abismal.command_line.parser import parser
 

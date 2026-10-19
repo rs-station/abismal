@@ -3,26 +3,21 @@
 def main(args=None):
     from time import time
     start_time = time()
-    from abismal.ragged import quiet
     from abismal.command_line.parser import parser
 
     parser = parser.parse_args(args)
 
-    from abismal.io.tf_settings import set_log_level, set_gpu
+    import torch
+    from abismal.device import select_device, configure, resolve_compile, resolve_precision
 
-    set_log_level(parser.tf_log_level)
-    set_gpu(parser.gpu_id)
+    device = select_device(parser.gpu_id, parser.device)
+    configure(device)
+    precision = resolve_precision(parser.precision, device)
+    compile_model = resolve_compile(parser.compile, device)
+    if parser.seed is not None:
+        torch.manual_seed(parser.seed)
 
-    import tensorflow as tf
-    import tf_keras as tfk
     from abismal import __version__ as version
-    from abismal.symmetry import (
-        ReciprocalASU,
-        ReciprocalASUCollection,
-        ReciprocalASUGraph,
-        merge_dmin,
-    )
-    from abismal.merging import VariationalMergingModel
     from abismal.callbacks import (
         HistorySaver,
         MtzSaver,
@@ -34,22 +29,19 @@ def main(args=None):
         StandardizationFreezer,
         DifferenceMap,
     )
-    from abismal.io import set_gpu
-    from abismal.scaling import ImageScaler
-    from tf_keras.callbacks import EarlyStopping
-    import gemmi
+    from abismal.training import Trainer, EarlyStopping
+    from abismal.saving import load_weights
     import logging
     from os.path import exists
     from os import mkdir
-    from abismal.likelihood import StudentTLikelihood
-    from abismal.likelihood import NormalLikelihood
 
     if not exists(parser.out_dir):
         mkdir(parser.out_dir)
 
     from abismal.io.manager import DataManager
 
-    log_file = parser.out_dir + "/abismal.log"
+    out_dir = str(parser.out_dir)
+    log_file = out_dir + "/abismal.log"
     logger = logging.getLogger(__name__)
     logging.basicConfig(filename=log_file, level=logging.DEBUG)
     logger.info(f"Starting abismal, version {version}")
@@ -57,242 +49,23 @@ def main(args=None):
     logger.info("Running with the following options... ")
     logger.info(msg)
 
+    logger.info(f"Training on {device}, compile={compile_model}, precision={precision}")
     logger.info("Configuring data input")
     dm = DataManager.from_parser(parser)
     train, test = dm.get_train_test_splits()
-    dm_file = parser.out_dir + "/datamanager.yml"
-    dm.to_file(dm_file)
-    logger.info(f"Data manager config written to: {dm_file}")
     if test is not None:
         logger.info("There is a test set for validation")
 
-    reindexing_ops = ["x,y,z"]
-    if not parser.disable_index_disambiguation:
-        ops = gemmi.find_twin_laws(dm.cell, dm.spacegroup, 3.0, False)
-        reindexing_ops = reindexing_ops + [op.triplet() for op in ops]
-        logger.info(f"Adding disambiguation operators: {reindexing_ops}")
-
-    # A pseudo-symmetric reindexing operator moves reflections in resolution, so
-    # the outermost ones map past dmin and out of the ASU. Build the ASU to
-    # wherever the operators can reach and truncate back to dmin when saving.
-    # This is a no-op for the identity and for true lattice symmetries.
-    merge_dmin_ = merge_dmin(dm.cell, reindexing_ops, dm.dmin)
-    if merge_dmin_ < dm.dmin:
-        logger.info(
-            f"Reindexing operators reach {merge_dmin_:.4f} A from a dmin of "
-            f"{dm.dmin} A; merging at {merge_dmin_:.4f} A and truncating to "
-            f"{dm.dmin} A on output."
-        )
-
-    rasu = []
-    anomalous = False if parser.separate_friedel_mates else parser.anomalous
-    logger.info(f"Data are anomalous (True/False): {anomalous}")
-    for i in range(dm.num_asus):
-        logger.info(f"Adding asu ID: {i}")
-        rasu.append(
-            ReciprocalASU(
-                dm.cell,
-                dm.spacegroup,
-                merge_dmin_,
-                anomalous=anomalous,
-            )
-        )
-
-    logger.info("Combining reciprocal ASUs as collection")
-    rac = ReciprocalASUGraph(
-        *rasu,
-        parents=parser.parents,
-        reindexing_ops=parser.reindexing_ops,
-    )
-
-    posterior_kwargs = {}
-
-    standardize_inputs = True
-    if parser.prior_distribution in ["wilson", "empirical_wilson"]:
-        if parser.parents is not None:
-            from abismal.prior.structure_factor.wilson import MultiWilsonPrior
-
-            prior = MultiWilsonPrior(
-                rac,
-                parser.prior_correlation,
-            )
-            posterior_kwargs['independent'] = False
-        elif parser.posterior_type == "intensity":
-            from abismal.prior.intensity.wilson import WilsonPrior
-            if parser.prior_distribution == 'empirical_wilson':
-                prior = WilsonPrior.with_empirical_sigma(rac, train, standardize=standardize_inputs)
-            else:
-                prior = WilsonPrior(rac)
-        else:
-            from abismal.prior.structure_factor.wilson import WilsonPrior
-            if parser.prior_distribution == 'empirical_wilson':
-                prior = WilsonPrior.with_empirical_sigma(rac, train, standardize=standardize_inputs)
-            else:
-                prior = WilsonPrior(rac)
-        loc_init = prior.flat_distribution().mean()
-        #scale_init = parser.init_scale * loc_init
-        scale_init = prior.flat_distribution().stddev()
-        scale_init = parser.init_scale * scale_init
-    elif parser.prior_distribution == 'auto_wilson':
-        from abismal.prior.structure_factor.wilson import AutoWilsonPrior
-        prior = AutoWilsonPrior(rac)
-        loc_init = prior.flat_distribution().mean()
-        scale_init = parser.init_scale * loc_init
-    elif parser.prior_distribution == "normal":
-        from abismal.prior.normal import NormalPrior
-
-        prior = NormalPrior(rac)
-        loc_init = tf.ones_like(prior.flat_distribution().mean())
-        scale_init = parser.init_scale * loc_init
-        if parser.posterior_rank > 1:
-            from abismal.prior.normal import MultivariateNormalPrior
-
-            prior = MultivariateNormalPrior(rac)
-    elif parser.prior_distribution == "halfnormal":
-        from abismal.prior.normal import HalfNormalPrior
-        prior = HalfNormalPrior(rac)
-        loc_init = tf.ones_like(prior.flat_distribution().mean())
-        scale_init = parser.init_scale * loc_init
-
-    posterior_kwargs.update({
-        "rac": rac,
-        "loc_init": loc_init,
-        "scale_init": scale_init,
-        "epsilon": parser.epsilon,
-    })
-
-    if parser.posterior_type == "intensity":
-        if parser.posterior_distribution == "foldednormal":
-            from abismal.surrogate_posterior.intensity import (
-                FoldedNormalPosterior as Posterior,
-            )
-        elif parser.posterior_distribution == "rice":
-            raise ValueError("Rice distributed intensity posteriors are not supported.")
-        elif parser.posterior_distribution == "gamma":
-            from abismal.surrogate_posterior.intensity.gamma import (
-                GammaPosterior as Posterior,
-            )
-        elif parser.posterior_distribution == "lognormal":
-            from abismal.surrogate_posterior.intensity.lognormal import (
-                LogNormalPosterior as Posterior,
-            )
-        elif parser.posterior_distribution == "nakagami":
-            raise ValueError("Nakagami distributed intensity posteriors are not supported.")
-        elif parser.posterior_distribution == "normal":
-            if parser.posterior_rank == 1:
-                from abismal.surrogate_posterior.intensity.normal import (
-                    NormalPosterior as Posterior,
-                )
-            else:
-                from abismal.surrogate_posterior.intensity.normal import (
-                    MultivariateNormalPosterior as Posterior,
-                )
-
-                posterior_kwargs["rank"] = parser.posterior_rank
-    elif parser.posterior_type == "structure_factor":
-        if parser.posterior_distribution == "foldednormal":
-            from abismal.surrogate_posterior.structure_factor.folded_normal import (
-                FoldedNormalPosterior as Posterior,
-            )
-        elif parser.posterior_distribution == "truncatednormal":
-            from abismal.surrogate_posterior.structure_factor.truncated_normal import (
-                TruncatedNormalPosterior as Posterior,
-            )
-        elif parser.posterior_distribution == "rice":
-            from abismal.surrogate_posterior.structure_factor.rice import (
-                RicePosterior as Posterior,
-            )
-        elif parser.posterior_distribution == "nakagami":
-            from abismal.surrogate_posterior.structure_factor.nakagami import (
-                NakagamiPosterior as Posterior,
-            )
-        elif parser.posterior_distribution == "lognormal":
-            from abismal.surrogate_posterior.structure_factor.lognormal import (
-                LogNormalPosterior as Posterior,
-            )
-        elif parser.posterior_distribution == "normal":
-            if parser.posterior_rank == 1:
-                from abismal.surrogate_posterior.structure_factor.normal import (
-                    NormalPosterior as Posterior,
-                )
-            else:
-                from abismal.surrogate_posterior.structure_factor.normal import (
-                    MultivariateNormalPosterior as Posterior,
-                )
-
-                posterior_kwargs["rank"] = parser.posterior_rank
-
-    surrogate_posterior = Posterior(**posterior_kwargs)
-
-    scale_model = ImageScaler(
-        mlp_width=parser.d_model,
-        mlp_depth=parser.layers,
-        hidden_units=parser.d_model * 2,
-        activation=parser.activation,
-        kl_weight=parser.scale_kl_weight,
-        epsilon=parser.epsilon,
-        ff_epsilon=parser.ff_epsilon,
-        num_image_samples=parser.sample_reflections_per_image,
-        prior_name=parser.scale_prior_distribution,
-        posterior_name=parser.scale_posterior_distribution,
-        bijector_name=parser.scale_posterior_bijector,
-        pre_activation=parser.pre_activation,
-        gated=parser.gated,
-        optimize_prior_scale=parser.optimize_scale_prior,
-        dropout=parser.dropout,
-        batch_normalize=parser.batch_normalize,
-        metadata_noise_factor=parser.metadata_noise_factor,
-        share_weights=True,
-    )
-
-    if parser.studentt_dof is not None:
-        likelihood = StudentTLikelihood(parser.studentt_dof)
-    else:
-        likelihood = NormalLikelihood()
-
-    model = VariationalMergingModel(
-        scale_model,
-        surrogate_posterior,
-        prior=prior,
-        likelihood=likelihood,
-        mc_samples=parser.mc_samples,
-        kl_weight=parser.kl_weight,
-        reindexing_ops=reindexing_ops,
-        standardize=standardize_inputs,
-    )
-
-    if parser.learning_rate_final is not None:
-        from tf_keras.optimizers.schedules import PiecewiseConstantDecay
-        boundaries = [parser.burnin]
-        values = [parser.learning_rate, parser.learning_rate_final]
-        learning_rate = PiecewiseConstantDecay(boundaries, values)
-    else:
-        learning_rate = parser.learning_rate
-
-    optimizer_kwargs = {
-        "learning_rate": parser.learning_rate,
-        "beta_1": parser.beta_1,
-        "beta_2": parser.beta_2,
-        "epsilon": parser.adam_epsilon,
-        "clipnorm": parser.clipnorm,
-        "clipvalue": parser.clip,
-        "global_clipnorm": parser.global_clipnorm,
-        "lazy_vars" : [v._unique_id for v in surrogate_posterior.trainable_variables],
-    }
-    from abismal.optimizers.optimizer_dict import optimizer_dict
-
-    if 'tfk' in parser.optimizer:
-        optimizer_kwargs.pop('lazy_vars')
-    Optimizer = optimizer_dict[parser.optimizer]
-    opt = Optimizer(**optimizer_kwargs)
+    from abismal.build import build_model, build_optimizer, facts_from
+    model = build_model(parser, facts_from(dm, train), data=train, precision=precision)
 
     if parser.separate_friedel_mates:
-        mtz_saver = FriedelMtzSaver(parser.out_dir, dmin=dm.dmin)
+        mtz_saver = FriedelMtzSaver(out_dir, dmin=dm.dmin)
     else:
-        mtz_saver = MtzSaver(parser.out_dir, parser.reference_mtz, dmin=dm.dmin)
+        mtz_saver = MtzSaver(out_dir, parser.reference_mtz, dmin=dm.dmin)
 
-    history_saver = HistorySaver(parser.out_dir, gpu_id=parser.gpu_id, start_time=start_time)
-    weight_saver = WeightSaver(parser.out_dir)
+    history_saver = HistorySaver(out_dir, gpu_id=parser.gpu_id, start_time=start_time)
+    weight_saver = WeightSaver(out_dir)
     freezer = StandardizationFreezer()
 
     callbacks = [
@@ -307,14 +80,15 @@ def main(args=None):
         mode = 'max'
     if 'KL' in monitor:
         mode = 'max'
-    callbacks.append(EarlyStopping(monitor=monitor, patience=parser.early_stopping_patience, mode=mode))
+    early_stopping = EarlyStopping(monitor=monitor, patience=parser.early_stopping_patience, mode=mode)
+    callbacks.append(early_stopping)
 
     if parser.eff_files is not None:
-        for i, eff_file in enumerate(parser.eff_files.split(",")):
+        for i, eff_file in enumerate(map(str, parser.eff_files)):
             pfx = f"eff_{i}"
             if parser.anomalous:
                 phenix_runner = AnomalousPeakFinder(
-                    parser.out_dir,
+                    out_dir,
                     eff_file,
                     epoch_stride=parser.phenix_frequency,
                     asu_id=0,
@@ -322,7 +96,7 @@ def main(args=None):
                 )
             elif parser.separate:
                 phenix_runner = DifferenceMap(
-                    parser.out_dir,
+                    out_dir,
                     eff_file,
                     epoch_stride=parser.phenix_frequency,
                     asu_id=0,
@@ -330,7 +104,7 @@ def main(args=None):
                 )
             else:
                 phenix_runner = PhenixRunner(
-                    parser.out_dir,
+                    out_dir,
                     eff_file,
                     epoch_stride=parser.phenix_frequency,
                     asu_id=0,
@@ -339,9 +113,27 @@ def main(args=None):
             callbacks.append(phenix_runner)
 
     if parser.torchref_pdb is not None:
-        for i, pdb_file in enumerate(parser.torchref_pdb.split(",")):
+        # The worker imports torchref in a detached subprocess whose stderr is a
+        # file nobody reads, so a missing install does not stop anything -- it
+        # produces a run that trains to completion and silently refines nothing.
+        # Checked here, while there is still someone watching the terminal.
+        #
+        # find_spec rather than an import: importing torchref is slow (numba) and
+        # this process never uses it. Asking whether it could be imported is the
+        # whole question, so ask only that.
+        from importlib.util import find_spec
+
+        if find_spec("torchref") is None:
+            raise SystemExit(
+                "--torchref-pdb was given but the torchref package is not "
+                "installed, so every refinement would fail in a subprocess whose "
+                "output you would never see.\n"
+                "    pip install 'abismal[torchref]'"
+            )
+
+        for i, pdb_file in enumerate(map(str, parser.torchref_pdb)):
             torchref_runner = TorchRefRunner(
-                parser.out_dir,
+                out_dir,
                 pdb_file,
                 epoch_stride=parser.torchref_frequency,
                 asu_id=0,
@@ -359,40 +151,41 @@ def main(args=None):
             )
             callbacks.append(torchref_runner)
 
-    need_to_build = False
-    need_to_build |= parser.debug
-    need_to_build |= parser.scale_init_file is not None
-    need_to_build |= parser.posterior_init_file is not None
-    if need_to_build:
-        logger.info(f"Initializing weights")
-        for x, y in train:
-            model(x)
-            break
-
     if parser.scale_init_file is not None:
         logger.info(f"Initializing the scale model from {parser.scale_init_file}")
-        ref_model = tfk.saving.load_model(parser.scale_init_file)
-        model.scale_model.set_weights(ref_model.scale_model.get_weights())
+        load_weights(str(parser.scale_init_file), model.scale_model, "scale_model")
 
     if parser.posterior_init_file is not None:
         logger.info(
             f"Initializing the surrogate posterior from {parser.posterior_init_file}"
         )
-        ref_model = tfk.saving.load_model(parser.posterior_init_file)
-        model.surrogate_posterior.set_weights(
-            ref_model.surrogate_posterior.get_weights()
-        )
+        load_weights(str(parser.posterior_init_file), model.surrogate_posterior, "surrogate_posterior")
 
     if parser.freeze_scales:
         logger.info("Freezing the scale model")
-        model.scale_model.trainable = False
+        model.scale_model.requires_grad_(False)
 
     if parser.freeze_posterior:
         logger.info("Freezing the surrogate posterior")
-        model.surrogate_posterior.trainable = False
+        model.surrogate_posterior.requires_grad_(False)
 
-    logger.info("Compiling model")
-    model.compile(opt, run_eagerly=parser.run_eagerly, jit_compile=parser.jit_compile)
+    model.to(device)
+    opt = build_optimizer(parser, model)
+
+    compile_options = None
+    if compile_model:
+        logger.info("Compiling model")
+        compile_options = {"dynamic": True}
+
+    trainer = Trainer(
+        model,
+        opt,
+        device=device,
+        callbacks=callbacks,
+        verbose=parser.verbosity,
+        compile=compile_options,
+    )
+
     if parser.embed:
         logger.info("Embed selected, entering interactive, IPython shell.")
         from IPython import embed
@@ -400,14 +193,12 @@ def main(args=None):
 
 
     logger.info("Starting training...")
-    history = model.fit(
-        x=train,
+    history = trainer.fit(
+        train,
         epochs=parser.epochs,
         steps_per_epoch=dm.steps_per_epoch,
-        validation_steps=parser.validation_steps,
-        callbacks=callbacks,
         validation_data=test,
-        verbose=parser.keras_verbosity,
+        validation_steps=parser.validation_steps,
     )
 
     logger.info("Finished training.")

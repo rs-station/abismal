@@ -1,6 +1,5 @@
-from tensorflow_probability import distributions as tfd
-from tensorflow_probability import bijectors as tfb
-from abismal.distributions.rice import Rice
+from abismal.distributions import Rice
+from abismal.surrogate_posterior._shift import Shifted
 from abismal.surrogate_posterior.folded_normal import FoldedNormalPosteriorBase
 
 
@@ -15,10 +14,5 @@ class RicePosteriorBase(FoldedNormalPosteriorBase):
             loc, 
             scale, 
         )
-        q = tfd.TransformedDistribution(
-            f, 
-            tfb.Shift(low),
-        )
+        q = Shifted(f, low)
         return q
-
-

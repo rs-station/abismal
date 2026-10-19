@@ -1,0 +1,26 @@
+Epoch 1/12
+1000/1000 - 35s - loss: 34.6143 - NLL: 30.9167 - KL: 0.6009 - wCCpred: 0.4231 - CCpred: 0.3712 - KL_Σ: 3.0966 - Σ_mean: 0.1569 - Σ_std: 0.0960 - |∇s|: 2.0462 - |∇q|: 9.1757e-04 - val_loss: 27.6564 - val_NLL: 22.9896 - val_KL: 1.3566 - val_wCCpred: 0.7309 - val_CCpred: 0.6421 - val_KL_Σ: 3.3102 - val_Σ_mean: 0.2055 - val_Σ_std: 0.1183 - 35s/epoch - 35ms/step
+Freezing intensity standardization layer...
+Freezing metadata standardization layer...
+Epoch 2/12
+1000/1000 - 23s - loss: 21.7564 - NLL: 15.5912 - KL: 2.4381 - wCCpred: 0.8754 - CCpred: 0.8385 - KL_Σ: 3.7270 - Σ_mean: 0.1793 - Σ_std: 0.1058 - |∇s|: 7.3628 - |∇q|: 0.0018 - val_loss: 18.1742 - val_NLL: 11.2057 - val_KL: 3.0517 - val_wCCpred: 0.9375 - val_CCpred: 0.9264 - val_KL_Σ: 3.9168 - val_Σ_mean: 0.1753 - val_Σ_std: 0.1007 - 23s/epoch - 23ms/step
+Epoch 3/12
+1000/1000 - 23s - loss: 15.9339 - NLL: 8.7855 - KL: 3.1404 - wCCpred: 0.9544 - CCpred: 0.9507 - KL_Σ: 4.0080 - Σ_mean: 0.1890 - Σ_std: 0.1064 - |∇s|: 1.1585 - |∇q|: 0.0023 - val_loss: 14.6999 - val_NLL: 7.5010 - val_KL: 3.1518 - val_wCCpred: 0.9637 - val_CCpred: 0.9605 - val_KL_Σ: 4.0472 - val_Σ_mean: 0.2068 - val_Σ_std: 0.1138 - 23s/epoch - 23ms/step
+Epoch 4/12
+1000/1000 - 24s - loss: 13.3401 - NLL: 6.2135 - KL: 3.1144 - wCCpred: 0.9677 - CCpred: 0.9682 - KL_Σ: 4.0122 - Σ_mean: 0.2187 - Σ_std: 0.1202 - |∇s|: 4.9402 - |∇q|: 0.0029 - val_loss: 12.7305 - val_NLL: 5.7043 - val_KL: 3.0724 - val_wCCpred: 0.9713 - val_CCpred: 0.9703 - val_KL_Σ: 3.9538 - val_Σ_mean: 0.2261 - val_Σ_std: 0.1247 - 24s/epoch - 24ms/step
+Epoch 5/12
+1000/1000 - 24s - loss: 11.9142 - NLL: 4.9177 - KL: 3.0437 - wCCpred: 0.9723 - CCpred: 0.9743 - KL_Σ: 3.9528 - Σ_mean: 0.2527 - Σ_std: 0.1348 - |∇s|: 2.0872 - |∇q|: 0.0031 - val_loss: 11.6686 - val_NLL: 4.7564 - val_KL: 3.0108 - val_wCCpred: 0.9728 - val_CCpred: 0.9745 - val_KL_Σ: 3.9014 - val_Σ_mean: 0.2692 - val_Σ_std: 0.1420 - 24s/epoch - 24ms/step
+Epoch 6/12
+1000/1000 - 24s - loss: 11.0441 - NLL: 4.1639 - KL: 3.0013 - wCCpred: 0.9747 - CCpred: 0.9772 - KL_Σ: 3.8790 - Σ_mean: 0.2883 - Σ_std: 0.1487 - |∇s|: 3.8790 - |∇q|: 0.0036 - val_loss: 10.9697 - val_NLL: 4.1514 - val_KL: 2.9759 - val_wCCpred: 0.9732 - val_CCpred: 0.9768 - val_KL_Σ: 3.8423 - val_Σ_mean: 0.3061 - val_Σ_std: 0.1531 - 24s/epoch - 24ms/step
+Epoch 7/12
+1000/1000 - 25s - loss: 10.4821 - NLL: 3.6956 - KL: 2.9816 - wCCpred: 0.9759 - CCpred: 0.9788 - KL_Σ: 3.8049 - Σ_mean: 0.3244 - Σ_std: 0.1622 - |∇s|: 1.6868 - |∇q|: 0.0035 - val_loss: 10.5949 - val_NLL: 3.8063 - val_KL: 2.9717 - val_wCCpred: 0.9774 - val_CCpred: 0.9781 - val_KL_Σ: 3.8169 - val_Σ_mean: 0.3437 - val_Σ_std: 0.1647 - 25s/epoch - 25ms/step
+Epoch 8/12
+1000/1000 - 24s - loss: 10.0933 - NLL: 3.3847 - KL: 2.9724 - wCCpred: 0.9764 - CCpred: 0.9798 - KL_Σ: 3.7362 - Σ_mean: 0.3606 - Σ_std: 0.1752 - |∇s|: 0.6635 - |∇q|: 0.0038 - val_loss: 10.3485 - val_NLL: 3.6679 - val_KL: 2.9606 - val_wCCpred: 0.9750 - val_CCpred: 0.9788 - val_KL_Σ: 3.7200 - val_Σ_mean: 0.3768 - val_Σ_std: 0.1839 - 24s/epoch - 24ms/step
+Epoch 9/12
+1000/1000 - 24s - loss: 9.8371 - NLL: 3.2017 - KL: 2.9633 - wCCpred: 0.9767 - CCpred: 0.9804 - KL_Σ: 3.6720 - Σ_mean: 0.3964 - Σ_std: 0.1876 - |∇s|: 1.3157 - |∇q|: 0.0037 - val_loss: 10.1350 - val_NLL: 3.6012 - val_KL: 2.9517 - val_wCCpred: 0.9747 - val_CCpred: 0.9787 - val_KL_Σ: 3.5822 - val_Σ_mean: 0.4107 - val_Σ_std: 0.1964 - 24s/epoch - 24ms/step
+Epoch 10/12
+1000/1000 - 24s - loss: 9.6265 - NLL: 3.0590 - KL: 2.9507 - wCCpred: 0.9770 - CCpred: 0.9809 - KL_Σ: 3.6168 - Σ_mean: 0.4314 - Σ_std: 0.1995 - |∇s|: 3.5093 - |∇q|: 0.0038 - val_loss: 9.9351 - val_NLL: 3.3987 - val_KL: 2.9374 - val_wCCpred: 0.9756 - val_CCpred: 0.9800 - val_KL_Σ: 3.5990 - val_Σ_mean: 0.4403 - val_Σ_std: 0.2017 - 24s/epoch - 24ms/step
+Epoch 11/12
+1000/1000 - 24s - loss: 9.4694 - NLL: 2.9657 - KL: 2.9350 - wCCpred: 0.9771 - CCpred: 0.9812 - KL_Σ: 3.5687 - Σ_mean: 0.4653 - Σ_std: 0.2109 - |∇s|: 0.8942 - |∇q|: 0.0039 - val_loss: 9.8383 - val_NLL: 3.3178 - val_KL: 2.9229 - val_wCCpred: 0.9741 - val_CCpred: 0.9798 - val_KL_Σ: 3.5976 - val_Σ_mean: 0.4837 - val_Σ_std: 0.2099 - 24s/epoch - 24ms/step
+Epoch 12/12
+1000/1000 - 24s - loss: 9.3260 - NLL: 2.8796 - KL: 2.9184 - wCCpred: 0.9774 - CCpred: 0.9815 - KL_Σ: 3.5280 - Σ_mean: 0.4978 - Σ_std: 0.2217 - |∇s|: 1.4162 - |∇q|: 0.0036 - val_loss: 9.6198 - val_NLL: 3.2105 - val_KL: 2.9050 - val_wCCpred: 0.9709 - val_CCpred: 0.9803 - val_KL_Σ: 3.5043 - val_Σ_mean: 0.5086 - val_Σ_std: 0.2264 - 24s/epoch - 24ms/step

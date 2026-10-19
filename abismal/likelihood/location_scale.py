@@ -1,5 +1,5 @@
-import tensorflow as tf
-import tf_keras as tfk
+import torch
+from abismal import tracking
 
 def weighted_pearsonr(x, y, w=None, axis=-1, keepdims=False, eps=1e-12):
     """
@@ -11,73 +11,59 @@ def weighted_pearsonr(x, y, w=None, axis=-1, keepdims=False, eps=1e-12):
 
     Parameters
     ----------
-    x : np.array(float)
+    x : torch.Tensor
         An array of observations.
-    y : np.array(float)
+    y : torch.Tensor
         An array of observations the same shape as x.
-    w : np.array(float)
+    w : torch.Tensor
         An array of weights the same shape as x. These needn't be normalized.
+    axis : int or tuple
+        The axis or axes to reduce over.
 
     Returns
     -------
-    r : float
-        The Pearson correlation coefficient along the last dimension. This has shape {x,y,w}.shape[:-1].
+    r : torch.Tensor
+        The Pearson correlation coefficient along the reduced axes.
     """
     if w is None:
-        w = tf.ones_like(x)
+        w = torch.ones_like(x)
 
-    z = tf.math.reciprocal(tf.reduce_sum(w, axis=axis, keepdims=True))
-    mx = tf.reduce_sum(z * (w * x), axis=axis, keepdims=True)
-    my = tf.reduce_sum(z * (w * y), axis=axis, keepdims=True)
+    z = torch.reciprocal(w.sum(axis, keepdim=True))
+    mx = (z * (w * x)).sum(axis, keepdim=True)
+    my = (z * (w * y)).sum(axis, keepdim=True)
 
     dx = x - mx
     dy = y - my
 
-    cxy = z * tf.reduce_sum(w * dx * dy, axis=axis, keepdims=True)
-    cx = z * tf.reduce_sum(w * dx * dx, axis=axis, keepdims=True)
-    cy = z * tf.reduce_sum(w * dy * dy, axis=axis, keepdims=True)
+    cxy = z * (w * dx * dy).sum(axis, keepdim=True)
+    cx = z * (w * dx * dx).sum(axis, keepdim=True)
+    cy = z * (w * dy * dy).sum(axis, keepdim=True)
 
-    r = cxy / tf.sqrt(cx * cy + eps)
+    r = cxy / torch.sqrt(cx * cy + eps)
+    if not keepdims:
+        r = r.squeeze()
     return r
 
-class LocationScale(tfk.layers.Layer):
+class LocationScale(torch.nn.Module):
     def _likelihood(self, iobs, sigiobs):
         raise NotImplementedError(
-            "Derived classes must implement _likelihood(iobs, sigiobs)->tfd.Distribution"
+            "Derived classes must implement _likelihood(iobs, sigiobs)->torch.distributions.Distribution"
         )
 
+    @torch.no_grad()
     def register_metrics(self, ipred, iobs, sigiobs):
-        #likelihood = self._likelihood(iobs, sigiobs)
-
-        # This is the mean ipred across the posterior mc samples
-        iobs = iobs * tf.ones_like(ipred)
-        sigiobs = sigiobs * tf.ones_like(ipred)
-        w = tf.math.reciprocal(tf.square(sigiobs))
+        # ipred is (reflections, mc samples) and iobs, sigiobs are (reflections, 1)
+        iobs = iobs * torch.ones_like(ipred)
+        sigiobs = sigiobs * torch.ones_like(ipred)
+        w = torch.reciprocal(torch.square(sigiobs))
 
         cc = weighted_pearsonr(iobs, ipred, w, axis=(-2, -1))
-        cc = tf.squeeze(cc)
-        self.add_metric(cc, name='wCCpred')
+        tracking.add_metric(cc, 'wCCpred')
 
         cc = weighted_pearsonr(iobs, ipred, axis=(-2, -1))
-        cc = tf.squeeze(cc)
-        self.add_metric(cc, name='CCpred')
+        tracking.add_metric(cc, 'CCpred')
 
-
-        resid = ipred - iobs
-        r2 = tf.square(resid)
-
-        #mse = tf.reduce_mean(r2)
-        #self.add_metric(mse, name='MSE')
-
-        #mae = tf.reduce_mean(tf.abs(resid))
-        #self.add_metric(mse, name='MAE')
-
-        #wmse = tf.reduce_sum(w * r2) / tf.reduce_sum(w * tf.ones_like(r2))
-        #self.add_metric(wmse, name='WMSE')
-
-
-    def call(self, ipred, iobs, sigiobs):
+    def forward(self, ipred, iobs, sigiobs):
         likelihood = self._likelihood(iobs, sigiobs)
         ll = likelihood.log_prob(ipred)
         return ll
-

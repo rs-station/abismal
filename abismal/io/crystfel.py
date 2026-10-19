@@ -6,7 +6,7 @@ import gemmi
 import numpy as np
 
 from reciprocalspaceship import DataSet, concat
-from abismal.io.common import check_for_ray, ray_context
+from abismal.io.parallel import ordered_map
 from reciprocalspaceship.utils import angle_between, eV2Angstroms
 
 # See Rupp Table 5-2
@@ -250,15 +250,12 @@ class StreamLoaderBase(object):
         chunk_metadata_keys=None,
         crystal_metadata_keys=None,
         peak_list_columns=None,
-        use_ray=True,
+        parallel=True,
         num_cpus=None,
-        address="local",
-        **ray_kwargs,
     ) -> list:
         """
-        Parse a CrystFEL stream file using multiple processors. Parallelization depends on the ray library (https://www.ray.io/).
-        If ray is unavailable, this method falls back to serial processing on one CPU. Ray is not a dependency of reciprocalspaceship
-        and will not be installed automatically. Users must manually install it prior to calling this method.
+        Parse a CrystFEL stream file, in a pool of processes when `parallel` is
+        true and `num_cpus > 1` (see `abismal.io.parallel`).
 
         PARAMETERS
         ----------
@@ -273,12 +270,10 @@ class StreamLoaderBase(object):
         peak_list_columns : list
             A list of columns to include in the peak list numpy arrays.
             A list of possible column names is stored as stream_loader.available_column_names.
-        use_ray : bool(optional)
-            Whether or not to use ray for parallelization.
+        parallel : bool(optional)
+            Whether to parse in parallel.
         num_cpus : int (optional)
-            The number of cpus for ray to use.
-        ray_kwargs : optional
-            Additional keyword arguments to pass to [ray.init](https://docs.ray.io/en/latest/ray-core/api/doc/ray.init.html#ray.init).
+            The number of parsing processes.
 
         RETURNS
         -------
@@ -291,55 +286,34 @@ class StreamLoaderBase(object):
         if peak_list_columns is not None:
             peak_list_columns = [self.peak_list_columns[s] for s in peak_list_columns]
 
-        # Check whether ray is available
-        if use_ray:
-            use_ray = check_for_ray()
+        tasks = [(self, spans, wavelength, chunk_metadata_keys, crystal_metadata_keys, peak_list_columns)
+                 for spans in self._chunk_groups(num_cpus if parallel else 1)]
+        results = []
+        for group in ordered_map(_parse_chunk_group, tasks, num_workers=num_cpus if parallel else 1):
+            results.extend(group)
+        return results
 
+    def _chunk_spans(self):
+        """The byte (start, end) of every chunk in the file, in file order."""
         with open(self.filename, "r") as f:
             memfile = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-            beginnings_and_ends = zip(
-                self.block_regex_bytes["chunk_begin"].finditer(memfile),
-                self.block_regex_bytes["chunk_end"].finditer(memfile),
-            )
-            if use_ray:
-                with ray_context(num_cpus=num_cpus, **ray_kwargs) as ray:
+            return [
+                (begin.start(), end.end()) for begin, end in zip(
+                    self.block_regex_bytes["chunk_begin"].finditer(memfile),
+                    self.block_regex_bytes["chunk_end"].finditer(memfile),
+                )
+            ]
 
-                    @ray.remote
-                    def parse_chunk(loader: StreamLoaderBase, *args):
-                        return loader._parse_chunk(*args)
-
-                    result_ids = []
-                    for begin, end in beginnings_and_ends:
-                        result_ids.append(
-                            parse_chunk.remote(
-                                self,
-                                begin.start(),
-                                end.end(),
-                                wavelength,
-                                chunk_metadata_keys,
-                                crystal_metadata_keys,
-                                peak_list_columns,
-                            )
-                        )
-
-                    results = ray.get(result_ids)
-
-                return results
-
-            else:
-                results = []
-                for begin, end in beginnings_and_ends:
-                    results.append(
-                        self._parse_chunk(
-                            begin.start(),
-                            end.end(),
-                            wavelength,
-                            chunk_metadata_keys,
-                            crystal_metadata_keys,
-                            peak_list_columns,
-                        )
-                    )
-        return results
+    def _chunk_groups(self, num_cpus):
+        """
+        The chunk spans in consecutive groups, one parsing task each: about eight
+        tasks per worker, so the work balances, and at most 1000 chunks a task,
+        so results come back steadily.
+        """
+        spans = self._chunk_spans()
+        workers = max(1, num_cpus or 1)
+        size = max(1, min(1000, -(-len(spans) // (8 * workers))))
+        return [spans[i:i + size] for i in range(0, len(spans), size)]
 
     def _extract_chunk_metadata(self, chunk_text, metadata_keys=None):
         if metadata_keys is None:
@@ -478,16 +452,12 @@ def read_crystfel(
     columns=None,
     parallel=True,
     num_cpus=None,
-    address="local",
-    **ray_kwargs,
 ) -> DataSet:
     """
     Initialize attributes and populate the DataSet object with data from a CrystFEL stream with indexed reflections.
     This is the output format used by CrystFEL software when processing still diffraction data.
 
-    This method is parallelized across CPUs speed up parsing. Parallelization depends on the ray library (https://www.ray.io/).
-    If ray is unavailable, this method falls back to serial processing on one CPU. Ray is not a dependency of reciprocalspaceship
-    and will not be installed automatically. Users must manually install it prior to calling this method.
+    Parsing runs in a pool of processes to speed it up (see `abismal.io.parallel`).
 
     Parameters
     ----------
@@ -503,14 +473,10 @@ def read_crystfel(
         See `rs.io.crystfel.StreamLoaderBase().available_column_names` for a list of available
         column names and *Notes* for a description of the returned columns
     parallel : bool (optional)
-        Read the stream file in parallel using [ray.io](https://docs.ray.io) if it is available.
+        Read the stream file in a pool of processes.
     num_cpus : int (optional)
-        By default, the model will use all available cores. For very large cpu counts, this may consume
-        too much memory. Decreasing num_cpus may help. If ray is not installed, a single core will be used.
-    address : str (optional)
-        Optionally specify the ray instance to connect to. By default, start a new local instance.
-    ray_kwargs : optional
-        Additional keyword arguments to pass to [ray.init](https://docs.ray.io/en/latest/ray-core/api/doc/ray.init.html#ray.init).
+        The number of parsing processes. For very large cpu counts, this may consume
+        too much memory. Decreasing num_cpus may help.
 
     Returns
     --------
@@ -571,10 +537,8 @@ def read_crystfel(
 
     for chunk in loader.read_crystfel(
         peak_list_columns=peak_list_columns,
-        use_ray=parallel,
+        parallel=parallel,
         num_cpus=num_cpus,
-        address=address,
-        **ray_kwargs,
     ):
         for peak_list in chunk["peak_lists"]:
             _ds = DataSet(
@@ -605,3 +569,8 @@ def read_crystfel(
     ds.set_index(["H", "K", "L"], inplace=True)
 
     return ds
+
+
+def _parse_chunk_group(loader, spans, *args):
+    """Parse the chunks at byte `spans` of `loader`'s file (run in a worker process)."""
+    return [loader._parse_chunk(start, end, *args) for start, end in spans]

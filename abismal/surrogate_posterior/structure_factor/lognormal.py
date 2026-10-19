@@ -1,12 +1,6 @@
-import tf_keras as tfk
 
 from abismal.surrogate_posterior import StructureFactorPosteriorBase
 from abismal.surrogate_posterior.lognormal import LogNormalPosteriorBase
-
-
-@tfk.saving.register_keras_serializable(
-    package="abismal", name="StructureFactorLogNormalPosterior"
-)
 class LogNormalPosterior(LogNormalPosteriorBase, StructureFactorPosteriorBase):
     """A structure factor surrogate posterior parameterized by a log normal distribution."""
 
@@ -19,4 +13,4 @@ class LogNormalPosterior(LogNormalPosteriorBase, StructureFactorPosteriorBase):
         """
         q = self.flat_distribution()
         i = self._distribution(2.0 * q.loc, 2.0 * q.scale)
-        return i.mean(), i.stddev()
+        return i.mean, i.stddev

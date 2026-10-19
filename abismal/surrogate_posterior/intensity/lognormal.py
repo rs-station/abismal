@@ -1,12 +1,6 @@
-import tf_keras as tfk
 
 from abismal.surrogate_posterior import IntensityPosteriorBase
 from abismal.surrogate_posterior.lognormal import LogNormalPosteriorBase
-
-
-@tfk.saving.register_keras_serializable(
-    package="abismal", name="IntensityLogNormalPosterior"
-)
 class LogNormalPosterior(LogNormalPosteriorBase, IntensityPosteriorBase):
     """An intensity surrogate posterior parameterized by a log normal distribution."""
 
@@ -19,4 +13,4 @@ class LogNormalPosterior(LogNormalPosteriorBase, IntensityPosteriorBase):
         """
         q = self.flat_distribution()
         f = self._distribution(0.5 * q.loc, 0.5 * q.scale)
-        return f.mean(), f.stddev()
+        return f.mean, f.stddev

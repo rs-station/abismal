@@ -1,8 +1,7 @@
 #/usr/bin/env cctbx.python
 import numpy as np
 import gemmi
-import tensorflow as tf
-from .loader import DataLoader
+from .loader import DataLoader, make_record, split_by_image
 
 
 
@@ -14,6 +13,15 @@ class StillsLoader(DataLoader):
             super().__init__(6)
         else:
             super().__init__(3)
+        # Activates a configured prefix if there is one, and raises with the
+        # install instructions if there is not. Here as well as in the data
+        # manager because the loader is usable on its own -- constructing it
+        # directly otherwise fails on the deferred import below, several lines
+        # from anything that explains why.
+        from abismal.io._dials_check import require_dials
+
+        require_dials(list(expt_files) + list(refl_files))
+
         from dxtbx.model.experiment_list import ExperimentListFactory  #defer defer defer defer
         self.expt_files = expt_files
         self.refl_files = refl_files
@@ -82,57 +90,49 @@ class StillsLoader(DataLoader):
                 raise ValueError(f"Crystal {cid} has Universal Hermann Mauguin symbol {_hms[cid]} but {hms} was expected")
         return gemmi.SpaceGroup(hms)
 
-    def _load_expt_refl(self, expt_and_refl):
-        expt = expt_and_refl[0]
-        refl = expt_and_refl[1]
-        ragged = self.dials_to_ragged(expt, refl)
-        ds = tf.data.Dataset.from_tensor_slices(ragged)
-        return ds
-
-    def get_dataset(self, num_cpus=1, **ray_kwargs):
+    def get_dataset(self, num_cpus=1):
         """
-        Convert dials monochromatic stills files to a tf.data.Dataset.
+        Lazily convert dials monochromatic stills files to per-image records.
+
+        Returns a generator of 7-tuples of numpy arrays (see `DataLoader`),
+        images in file order. With `num_cpus > 1` and several files, the files
+        are parsed in a pool of processes (see `abismal.io.parallel`), and each
+        file's images are yielded as soon as that file is parsed, without
+        waiting for the files after it.
         """
-        if num_cpus == 1:
-            data = []
-            for expt,refl in zip(self.expt_files, self.refl_files):
-                datum = self.dials_to_ragged(
-                    expt, refl, self.cell, self.spacegroup, self.dmin, self.asu_id, self.include_eo, self.cell_tol, self.isigi_cutoff
-                )
-                data.append(datum)
-        else:
-            from abismal.io.common import ray_context
-            with ray_context(num_cpus=num_cpus, **ray_kwargs) as ray:
-                @ray.remote
-                def parse_expt_refl(*args):
-                    return StillsLoader.dials_to_ragged(*args)
+        args = [
+            (expt, refl, self.cell, self.spacegroup, self.dmin, self.asu_id,
+             self.include_eo, self.cell_tol, self.isigi_cutoff)
+            for expt,refl in zip(self.expt_files, self.refl_files)
+        ]
+        from abismal.io.parallel import ordered_map
+        for flat in ordered_map(StillsLoader.dials_to_ragged, args, num_workers=num_cpus):
+            yield from self._split_images(flat)
 
-                result_ids = []
-                for expt,refl in zip(self.expt_files, self.refl_files):
-                    result_ids.append(
-                        parse_expt_refl.remote(
-                            expt, refl, self.cell, self.spacegroup, self.dmin, self.asu_id, self.include_eo, self.cell_tol, self.isigi_cutoff
-                        )
-                    )
-
-                data = ray.get(result_ids)
-
-
-        out = None
-        for datum in data:
-            datum = tf.data.Dataset.from_tensors(datum)
-            datum = datum.unbatch()
-            if out is None:
-                out = datum
-            else:
-                out = out.concatenate(datum)
-        return out
+    @staticmethod
+    def _split_images(flat):
+        """Split one file's flat arrays, sorted by image, into image records."""
+        image_ids, *columns = flat
+        for record in split_by_image(image_ids, *columns):
+            yield make_record(*record)
 
     @staticmethod
     def dials_to_ragged(expt_file, refl_file, cell, spacegroup, dmin, asu_id, include_eo=True, cell_tol=None, isigi_cutoff=None):
         """
-        Convert dials monochromatic stills files to ragged tensors.
+        Convert dials monochromatic stills files to flat numpy arrays.
+
+        Returns `(image_id, asu_id, hkl, d, wavelength, metadata, I, SigI)`,
+        one row per reflection, sorted by `image_id`, which numbers the
+        surviving images from zero. `StillsLoader._split_images` turns this
+        into per-image records. Kept flat so that one array of each kind,
+        rather than one per image, crosses between processes.
         """
+        # Also here: dials_to_ragged is a staticmethod, and the pool runs it in
+        # worker processes that never went through __init__.
+        from abismal.io._dials_check import require_dials
+
+        require_dials([expt_file, refl_file])
+
         from dials.array_family import flex
         from dxtbx.model.experiment_list import ExperimentListFactory 
         table = flex.reflection_table().from_file(refl_file)
@@ -200,19 +200,14 @@ class StillsLoader(DataLoader):
             ])
         metadata = np.concatenate(metadata, axis=-1)
 
+        # Images are numbered in table order and the table is grouped by
+        # experiment id, but make sure: _split_images needs sorted ids. The
+        # stable sort keeps each image's reflections in table order.
         batch = np.unique(batch, return_inverse=True)[1].astype(batch.dtype)
-        hkl = tf.RaggedTensor.from_value_rowids(hkl, batch)
-        d = tf.RaggedTensor.from_value_rowids(d, batch)
-        wavelength = tf.RaggedTensor.from_value_rowids(wavelength, batch)
-        metadata = tf.RaggedTensor.from_value_rowids(
-            metadata,
-            batch,
-        )
-        I = tf.RaggedTensor.from_value_rowids(I, batch)
-        SigI = tf.RaggedTensor.from_value_rowids(SigI, batch)
-        asu = tf.ones_like(I, dtype='int32') * asu_id
-
-        data = ((asu, hkl, d, wavelength, metadata, I, SigI), (I,))
+        order = np.argsort(batch, kind='stable')
+        asu = np.full(len(batch), asu_id, dtype='int32')
+        data = (batch, asu, hkl, d, wavelength, metadata, I, SigI)
+        data = tuple(x[order] for x in data)
 
         return data
 

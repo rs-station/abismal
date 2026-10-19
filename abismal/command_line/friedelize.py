@@ -59,7 +59,8 @@ def friedelize_stream(file_name, spacegroup=1):
             hkl = [int(i) for i in line.split()[:3]]
             _,isym = rasu.to_asu(hkl, go)
             fplus = (isym % 2) == 1
-            centric = go.centric_flag_array([hkl])[0]
+            # An int32 array, not a list: gemmi 0.7 accepts nothing else.
+            centric = go.centric_flag_array(np.array([hkl], dtype=np.int32))[0]
             is_plus = fplus | centric
             if is_plus:
                 p.write(line)
@@ -77,10 +78,11 @@ def friedelize_refl(file_name, spacegroup):
     refls.select(flex.bool(~plus)).as_file(base + '_minus.' + extension)
 
 def friedelize(file_name, spacegroup='P 1'):
+    # Only an mtz carries a space group to infer; the others fall back to P1.
     if file_name.endswith(".stream"):
-        friedelize_stream(file_name, spacegroup)
+        friedelize_stream(file_name, spacegroup or 'P 1')
     elif file_name.endswith(".pickle") or file_name.endswith(".refl"):
-        friedelize_refl(file_name, spacegroup)
+        friedelize_refl(file_name, spacegroup or 'P 1')
     elif file_name.endswith(".mtz"):
         friedelize_mtz(file_name, spacegroup)
     else:

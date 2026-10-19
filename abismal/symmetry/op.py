@@ -1,26 +1,46 @@
-import tensorflow as tf
-import tf_keras as tfk
 import gemmi
+import numpy as np
 
-class Op(tfk.layers.Layer):
+
+class Op:
+    """
+    A reindexing operator acting on integer miller indices, given as a gemmi
+    triplet such as "-x,-y,z".
+
+    Works on numpy arrays and on torch tensors alike. Integer arithmetic rather
+    than a float matmul: CUDA has no integer matmul, and a float32 product on an
+    Ampere card runs through TF32, whose 10-bit mantissa cannot be trusted to
+    round-trip a miller index.
+    """
     def __init__(self, triplet):
-        super().__init__()
         self.gemmi_op = gemmi.Op(triplet)
-        self.rot = tf.convert_to_tensor(self.gemmi_op.rot, dtype='float32')
-        self.den = tf.convert_to_tensor(self.gemmi_op.DEN, dtype='float32')
+        self.rot = np.array(self.gemmi_op.rot, dtype=np.int64)
+        self.den = int(self.gemmi_op.DEN)
         self.identity = self.gemmi_op == 'x,y,z'
+        self._torch_rot = {}
 
     def __str__(self):
         return f"Op({self.gemmi_op.triplet()})"
 
-    def call(self, hkl):
+    def triplet(self):
+        return self.gemmi_op.triplet()
+
+    def _rot_like(self, hkl):
+        if isinstance(hkl, np.ndarray):
+            return self.rot
+        key = (hkl.device, hkl.dtype)
+        if key not in self._torch_rot:
+            import torch
+            self._torch_rot[key] = torch.as_tensor(self.rot, dtype=hkl.dtype, device=hkl.device)
+        return self._torch_rot[key]
+
+    def __call__(self, hkl):
         if self.identity:
             return hkl
-        dtype = hkl.dtype
-        hkl = tf.cast(hkl, tf.float32)
-        hkl = tf.math.floordiv(tf.matmul(hkl, self.rot), self.den)
-        hkl = tf.cast(hkl, dtype)
-        return hkl
+        rot = self._rot_like(hkl)
+        # hkl @ rot, written as a broadcast sum so it stays in integers
+        out = (hkl[..., :, None] * rot).sum(-2)
+        return out // self.den
 
 
 

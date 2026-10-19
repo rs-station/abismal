@@ -1,12 +1,10 @@
-import tf_keras as tfk
-import tensorflow as tf
+from abismal.callbacks.base import Callback
 
-class StandardizationFreezer(tfk.callbacks.Callback):
+class StandardizationFreezer(Callback):
     """
     Freeze standardization layers after some epochs
     """
-    def __init__(self, freeze_after=1, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, freeze_after=1):
         self.freeze_after = freeze_after
 
     def on_epoch_end(self, epoch, logs=None):
@@ -14,9 +12,9 @@ class StandardizationFreezer(tfk.callbacks.Callback):
         if (epoch + 1) >= self.freeze_after:
             if self.model.standardize_intensity is not None:
                 if not self.model.standardize_intensity.frozen:
-                    tf.print("Freezing intensity standardization layer...")
-                    self.model.standardize_intensity.frozen.assign(True)
+                    print("Freezing intensity standardization layer...")
+                    self.model.standardize_intensity.frozen.fill_(True)
             if self.model.standardize_metadata is not None:
                 if not self.model.standardize_metadata.frozen:
-                    tf.print("Freezing metadata standardization layer...")
-                    self.model.standardize_metadata.frozen.assign(True)
+                    print("Freezing metadata standardization layer...")
+                    self.model.standardize_metadata.frozen.fill_(True)

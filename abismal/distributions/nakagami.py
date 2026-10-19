@@ -1,21 +1,24 @@
-import tensorflow as tf
-from tensorflow_probability import bijectors as tfb
-from tensorflow_probability import distributions as tfd
-from tensorflow_probability import math as tfm
-from tensorflow_probability.python.distributions import kullback_leibler
-from tensorflow_probability.python.internal import dtype_util
-from tensorflow_probability.python.internal import parameter_properties
-from tensorflow_probability.python.internal import tensor_util
-from tensorflow_probability.python.bijectors import softplus as softplus_bijector
+import math
+
+import torch
+from torch.distributions import constraints
+from torch.distributions.distribution import Distribution
+from torch.distributions.gamma import Gamma
+from torch.distributions.kl import kl_divergence, register_kl
+from torch.distributions.utils import broadcast_all
+
+from abismal.distributions.special import (
+    log_gamma_half_ratio_excess,
+    log_gamma_stirling_correction,
+)
 
 
-class Nakagami(tfd.TransformedDistribution):
+class Nakagami(Distribution):
     """The Nakagami distribution.
 
     If ``X ~ Gamma(concentration=m, rate=m/Omega)`` then
-    ``Y = sqrt(X) ~ Nakagami(m, Omega)``. This implementation wraps
-    ``tfd.Gamma`` with ``tfb.Invert(tfb.Square())`` so reparameterized
-    sampling comes directly from the underlying Gamma.
+    ``Y = sqrt(X) ~ Nakagami(m, Omega)``. ``rsample`` takes the square root of a
+    reparameterized Gamma sample (torch's implicit Gamma gradients).
 
     The density is
 
@@ -30,116 +33,91 @@ class Nakagami(tfd.TransformedDistribution):
       * ``Nakagami(m=1.0, Omega=sigma**2)`` is
         ``Weibull(concentration=2., scale=sigma)`` (the acentric Wilson prior).
     """
+    arg_constraints = {
+        "concentration": constraints.positive,
+        "spread": constraints.positive,
+    }
+    support = constraints.nonnegative
+    has_rsample = True
 
-    def __init__(self,
-                 concentration,
-                 spread,
-                 validate_args=False,
-                 allow_nan_stats=True,
-                 name='Nakagami'):
-        """Construct a Nakagami distribution.
+    def __init__(self, concentration, spread, validate_args=False):
+        self.concentration, self.spread = broadcast_all(concentration, spread)
+        super().__init__(self.concentration.shape, validate_args=validate_args)
 
-        Args:
-          concentration: Floating-point `Tensor`; the shape parameter ``m``
-            (also called ``nu`` in some references). Must be >= 0.5 for a
-            proper density; no runtime check is enforced unless
-            ``validate_args=True``.
-          spread: Floating-point `Tensor`; the spread parameter ``Omega``
-            equal to ``E[Y^2]``. Must be strictly positive.
-          validate_args: Python `bool`, default `False`. Whether to validate
-            input with asserts.
-          allow_nan_stats: Python `bool`, default `True`. If `False`, raise
-            an exception if a statistic (e.g. mean/mode/etc.) is undefined
-            for any batch member.
-          name: Python `str`, name prefixed to Ops created by this class.
-        """
-        parameters = dict(locals())
-        with tf.name_scope(name) as name:
-            dtype = dtype_util.common_dtype(
-                [concentration, spread], dtype_hint=tf.float32)
-            self._concentration = tensor_util.convert_nonref_to_tensor(
-                concentration, dtype=dtype, name='concentration')
-            self._spread = tensor_util.convert_nonref_to_tensor(
-                spread, dtype=dtype, name='spread')
-
-            gamma = tfd.Gamma(
-                concentration=self._concentration,
-                rate=self._concentration / self._spread,
-                validate_args=validate_args,
-                allow_nan_stats=allow_nan_stats,
-            )
-            super().__init__(
-                distribution=gamma,
-                bijector=tfb.Invert(tfb.Square()),
-                validate_args=validate_args,
-                parameters=parameters,
-                name=name,
-            )
-
-    @classmethod
-    def _parameter_properties(cls, dtype, num_classes=None):
-        return dict(
-            concentration=parameter_properties.ParameterProperties(
-                default_constraining_bijector_fn=(
-                    lambda: softplus_bijector.Softplus(low=dtype_util.eps(dtype)))),
-            spread=parameter_properties.ParameterProperties(
-                default_constraining_bijector_fn=(
-                    lambda: softplus_bijector.Softplus(low=dtype_util.eps(dtype)))),
-        )
-
-    @property
-    def concentration(self):
-        return self._concentration
-
-    @property
-    def spread(self):
-        return self._spread
+    def expand(self, batch_shape, _instance=None):
+        new = self._get_checked_instance(Nakagami, _instance)
+        batch_shape = torch.Size(batch_shape)
+        new.concentration = self.concentration.expand(batch_shape)
+        new.spread = self.spread.expand(batch_shape)
+        super(Nakagami, new).__init__(batch_shape, validate_args=False)
+        new._validate_args = self._validate_args
+        return new
 
     def square(self):
         """Return the Gamma distribution of the squared random variable.
 
         If ``Y ~ Nakagami(m, Omega)`` then ``Y**2 ~ Gamma(m, m / Omega)``.
         """
-        m = tf.convert_to_tensor(self._concentration)
-        omega = tf.convert_to_tensor(self._spread)
-        return tfd.Gamma(concentration=m, rate=m / omega)
+        m = self.concentration
+        return Gamma(m, m / self.spread, validate_args=self._validate_args)
 
-    def _log_gamma_ratio(self):
-        """Return ``lgamma(m + 1/2) - lgamma(m)`` computed stably."""
-        m = tf.convert_to_tensor(self._concentration)
-        half = tf.constant(0.5, dtype=m.dtype)
-        return -tfm.log_gamma_difference(half, m)
+    def rsample(self, sample_shape=torch.Size()):
+        return torch.sqrt(self.square().rsample(sample_shape))
 
-    def _mean(self):
-        m = tf.convert_to_tensor(self._concentration)
-        omega = tf.convert_to_tensor(self._spread)
-        return tf.math.exp(
-            self._log_gamma_ratio() + 0.5 * (tf.math.log(omega) - tf.math.log(m))
+    def log_prob(self, value):
+        if self._validate_args:
+            self._validate_sample(value)
+        m, omega = self.concentration, self.spread
+        positive = value > 0
+        y = torch.where(positive, value, torch.ones_like(value))
+        # log f = log 2 + m log(m / Omega) - lgamma(m) + (2m - 1) log y - m y^2 / Omega,
+        # regrouped with Stirling's series so that no two O(m log m) terms cancel:
+        #   log 2 - log y + m (log1p(u) - u) + log(m) / 2 - log(2 pi) / 2 - c(m),
+        # u = y^2 / Omega - 1, c the Stirling remainder.
+        u = y * y / omega - 1.0
+        # log t, t = y^2 / Omega: log1p(u) near the mode, where it is the
+        # accurate one, and directly away from it, where u rounds towards -1.
+        near = torch.abs(u) < 0.5
+        log_t = torch.where(
+            near,
+            torch.log1p(torch.where(near, u, torch.zeros_like(u))),
+            2.0 * torch.log(y) - torch.log(omega),
+        )
+        log_p = (
+            math.log(2.0) - torch.log(y) + m * (log_t - u)
+            + 0.5 * torch.log(m) - 0.5 * math.log(2.0 * math.pi)
+            - log_gamma_stirling_correction(m)
+        )
+        return torch.where(positive, log_p, torch.full_like(log_p, -math.inf))
+
+    def cdf(self, value):
+        m, omega = self.concentration, self.spread
+        value = torch.as_tensor(value, dtype=m.dtype, device=m.device)
+        y = torch.clamp(value, min=0.0)
+        return torch.special.gammainc(m, m * y * y / omega)
+
+    @property
+    def mean(self):
+        # sqrt(Omega / m) Gamma(m + 1/2) / Gamma(m)
+        return torch.sqrt(self.spread) * torch.exp(
+            log_gamma_half_ratio_excess(self.concentration)
         )
 
-    def _variance(self):
-        m = tf.convert_to_tensor(self._concentration)
-        omega = tf.convert_to_tensor(self._spread)
-        ratio_sq = tf.math.exp(2.0 * self._log_gamma_ratio())
-        return omega * (1.0 - ratio_sq / m)
+    @property
+    def variance(self):
+        # Omega (1 - Gamma(m + 1/2)^2 / (m Gamma(m)^2)) = -Omega expm1(2 r)
+        return -self.spread * torch.expm1(
+            2.0 * log_gamma_half_ratio_excess(self.concentration)
+        )
 
-    def _stddev(self):
-        return tf.math.sqrt(self._variance())
-
-    def _mode(self):
-        m = tf.convert_to_tensor(self._concentration)
-        omega = tf.convert_to_tensor(self._spread)
-        half = tf.constant(0.5, dtype=m.dtype)
-        return tf.math.sqrt(tf.maximum(0.0, (m - half) * omega / m))
+    @property
+    def mode(self):
+        m, omega = self.concentration, self.spread
+        return torch.sqrt(torch.clamp((m - 0.5) * omega / m, min=0.0))
 
 
-@kullback_leibler.RegisterKL(Nakagami, Nakagami)
-def _kl_nakagami_nakagami(a, b, name=None):
-    """Analytical KL divergence between two Nakagami distributions.
-
-    KL is invariant under deterministic bijective transformations, so
-    KL(Nakagami_a || Nakagami_b) = KL(Gamma_a || Gamma_b), and TFP
-    already registers the latter analytically.
-    """
-    with tf.name_scope(name or 'kl_nakagami_nakagami'):
-        return kullback_leibler.kl_divergence(a.distribution, b.distribution)
+@register_kl(Nakagami, Nakagami)
+def _kl_nakagami_nakagami(p, q):
+    """KL divergence is invariant under the bijection y -> y^2, so
+    KL(Nakagami_p || Nakagami_q) = KL(Gamma_p || Gamma_q), which torch has."""
+    return kl_divergence(p.square(), q.square())

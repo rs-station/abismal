@@ -47,17 +47,6 @@ args_and_kwargs = (
 
     (
         (
-            "--sample-reflections-per-image",
-        ),{
-            "help": "Optionally subsample the reflections going into the encoder. This can decrease memory usage."
-                    "By default use all reflections.",
-            "default": None,
-            "type": int,
-        }
-    ),
-
-    (
-        (
             "--test-fraction",
         ),{
             "help": "The fraction of images reserved for validation with default 0.01.",

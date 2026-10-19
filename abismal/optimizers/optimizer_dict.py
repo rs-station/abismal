@@ -1,10 +1,8 @@
 # Registry of optimizers for the abismal CLI
-from abismal.optimizers.adam import Adam
-from abismal.optimizers.adabelief import AdaBelief
-import tf_keras as tfk
+from abismal.optimizers.adam import Adam, AdamW, AdaBelief
 
 optimizer_dict = {
     'adam' : Adam,
+    'adamw' : AdamW,
     'adabelief' : AdaBelief,
-    'tfkadam' : tfk.optimizers.Adam,
 }

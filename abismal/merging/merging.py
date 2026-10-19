@@ -1,54 +1,27 @@
-import tensorflow as tf
+import torch
+from abismal import tracking
 from abismal.symmetry import Op
-import tf_keras as tfk
-#from abismal.layers import Standardize,Normalize
 from abismal.layers.normalization import StandardizeIntensities,StandardizeMetadata
 
-def to_indexed_slices(tensor):
-    """
-    This is used to sparsify the structure factor gradients. 
-    """
-    mask = tensor != 0.
-    shape = tfk.backend.shape(tensor)
-    idx = tf.where(mask)
-    idx = tf.squeeze(idx, axis=-1)
-    result = tf.IndexedSlices(
-        tf.boolean_mask(tensor, mask),
-        idx,
-        shape,
-    )
-    return result
 
-def grad_rms(grads):
-    """
-    Root-mean-square gradient magnitude over a group of variables.
-
-    Returns 0 for an empty group rather than nan. A frozen component (--freeze-scales,
-    --freeze-posterior, abismal.cchalf) has no trainable variables, so tape.gradient
-    hands back an empty list and tf.reduce_mean([]) is nan -- a frozen component would
-    otherwise report a nan gradient norm in the progress bar and in history.csv.
-    """
-    if len(grads) == 0:
-        return tf.constant(0., dtype=tf.float32)
-    return tf.sqrt(
-        tf.reduce_mean([tf.reduce_mean(tf.square(g)) for g in grads])
-    )
-
-@tfk.saving.register_keras_serializable(package="abismal")
-class VariationalMergingModel(tfk.models.Model):
+def _per_image_sum(values, image_id, num_images):
+    """Sum per-reflection `values`, shape (reflections, ...), within each image."""
+    out = values.new_zeros((num_images,) + values.shape[1:])
+    return out.index_add_(0, image_id, values)
+class VariationalMergingModel(torch.nn.Module):
     def __init__(
-            self, 
-            scale_model, 
-            surrogate_posterior, 
-            prior, 
-            likelihood, 
-            mc_samples=1, 
-            kl_weight=1., 
-            epsilon=1e-6, 
-            reindexing_ops=None, 
+            self,
+            scale_model,
+            surrogate_posterior,
+            prior,
+            likelihood,
+            mc_samples=1,
+            kl_weight=1.,
+            epsilon=1e-6,
+            reindexing_ops=None,
             standardize=False,
-            **kwargs):
-        super().__init__(**kwargs)
+        ):
+        super().__init__()
         self.epsilon = epsilon
         self.likelihood = likelihood
         self.prior = prior
@@ -62,77 +35,92 @@ class VariationalMergingModel(tfk.models.Model):
         self.standardize = standardize
         if standardize:
             self.standardize_intensity = StandardizeIntensities()
-            self.standardize_metadata = StandardizeMetadata()
+            self.standardize_metadata = StandardizeMetadata(scale_model.metadata_length)
         else:
             self.standardize_intensity = None
             self.standardize_metadata = None
 
-    def get_config(self):
-        ops = self.reindexing_ops
-        if ops is not None:
-            ops = [op.gemmi_op.triplet() for op in self.reindexing_ops]
-        config = super().get_config()
-
-        config.update({
-            'scale_model' : self.scale_model,
-            'surrogate_posterior' : self.surrogate_posterior,
-            'prior' : self.prior,
-            'likelihood' : self.likelihood,
-            'mc_samples' : self.mc_samples,
-            'kl_weight' : 1.,
-            'epsilon' : self.epsilon,
-            'reindexing_ops' : ops,
-            'standardize' : self.standardize,
-        })
-        for k in ['scale_model', 'surrogate_posterior', 'likelihood', 'prior']:
-            config[k] = tfk.saving.serialize_keras_object(config[k])
-        # standardize_intensity/standardize_metadata are plain tracked attributes
-        # (not part of __init__'s config), so they must be serialized explicitly
-        # here -- otherwise Keras never calls build_from_config() on them and
-        # they arrive at weight-loading time with zero variables built.
-        if self.standardize_intensity is not None:
-            config['standardize_intensity'] = tfk.saving.serialize_keras_object(self.standardize_intensity)
-        if self.standardize_metadata is not None:
-            config['standardize_metadata'] = tfk.saving.serialize_keras_object(self.standardize_metadata)
-        return config
-
-    @classmethod
-    def from_config(cls, config):
-        standardize_intensity = config.pop('standardize_intensity', None)
-        standardize_metadata = config.pop('standardize_metadata', None)
-        for k in ['scale_model', 'surrogate_posterior', 'likelihood', 'prior']:
-            config[k] = tfk.saving.deserialize_keras_object(config[k])
-        instance = cls(**config)
-        if standardize_intensity is not None:
-            instance.standardize_intensity = tfk.saving.deserialize_keras_object(standardize_intensity)
-        if standardize_metadata is not None:
-            instance.standardize_metadata = tfk.saving.deserialize_keras_object(standardize_metadata)
-        return instance
-
-    def build(self, shapes):
-        if self.built:
-            return
-        self.scale_model.build(shapes)
-        if self.standardize_intensity  is not None:
-            self.standardize_intensity.build(shapes[-1])
-        if self.standardize_metadata is not None:
-            self.standardize_metadata.build(shapes[-3])
-        self.built = True
+    def parameter_groups(self):
+        """
+        The trainable parameters by component, for per-component gradient
+        norms and for the optimizer, which updates the surrogate posterior
+        lazily. Shared modules are reported once, under the first component
+        that owns them.
+        """
+        groups = {}
+        seen = set()
+        for name, module in [
+            ("scale", self.scale_model),
+            ("q", self.surrogate_posterior),
+            ("ll", self.likelihood),
+            ("p", self.prior),
+        ]:
+            params = [
+                p for p in module.parameters()
+                if p.requires_grad and id(p) not in seen
+            ]
+            seen.update(id(p) for p in params)
+            groups[name] = params
+        return groups
 
     def standardize_inputs(self, inputs, training=None):
         out = inputs
         if self.standardize_intensity is not None:
-            out = self.standardize_intensity(out, training=training) 
+            out = self.standardize_intensity(out, training=training)
         if self.standardize_metadata is not None:
             out = self.standardize_metadata(out, training=training)
         return out
 
-    def call(self, inputs, mc_samples=None, training=None, **kwargs):
-        if self.surrogate_posterior.independent:
-            return self._call_independent(inputs, mc_samples=mc_samples, training=training, **kwargs)
-        return self._call_dependent(inputs, mc_samples=mc_samples, training=training, **kwargs)
+    def forward(self, inputs, mc_samples=None, training=None):
+        """
+        Parameters
+        ----------
+        inputs : abismal.io.Batch
+            A batch of images as flat, per-reflection tensors.
+        mc_samples : int (optional)
+        training : bool (optional)
 
-    def _call_dependent(self, inputs, mc_samples=None, training=None, **kwargs):
+        Returns
+        -------
+        ipred : torch.Tensor
+            The predicted intensity of each reflection, averaged over the Monte
+            Carlo samples, shape (reflections,).
+
+        The negative log likelihood and KL divergence are reported through
+        `abismal.tracking`.
+        """
+        if self.surrogate_posterior.independent:
+            return self._call_independent(inputs, mc_samples=mc_samples, training=training)
+        return self._call_dependent(inputs, mc_samples=mc_samples, training=training)
+
+    def _image_log_likelihood(self, ll, valid, image_id, num_images):
+        """
+        Average log likelihood of each image over the reflections a reindexing
+        operator can actually index and over the Monte Carlo samples.
+
+        An operator can push a reflection past dmin and out of the ASU, where
+        the gather silently returns reflection 0 instead. Score the operators
+        only on what they can actually index, so a miss cannot earn one of them
+        a spurious likelihood; an operator that indexes nothing in an image
+        loses outright.
+        """
+        valid = valid.to(ll.dtype)
+        ll = ll * valid
+        nvalid = _per_image_sum(valid[:, 0], image_id, num_images)
+        mc = ll.shape[-1]
+        total = _per_image_sum(ll.sum(-1), image_id, num_images)
+        image_ll = torch.where(nvalid > 0., total / (nvalid * mc).clamp_min(1.), -1e30)
+        return image_ll
+
+    def _select(self, best, idx, image_id, candidate):
+        """Take `candidate` where this operator won its image, `best` elsewhere."""
+        if best is None:
+            return candidate
+        pick = idx[image_id]
+        pick = pick.reshape(pick.shape + (1,) * (candidate.dim() - 1))
+        return torch.where(pick, candidate, best)
+
+    def _call_dependent(self, inputs, mc_samples=None, training=None):
         """
         Used for posteriors in which different miller indices are statistically dependent such as the MultivariateNormalPosterior
         """
@@ -141,98 +129,68 @@ class VariationalMergingModel(tfk.models.Model):
 
         inputs = self.standardize_inputs(inputs, training=training)
 
-        (
-            asu_id,
-            hkl_in,
-            resolution,
-            wavelength,
-            metadata,
-            iobs,
-            sigiobs,
-        ) = inputs
+        asu_id = inputs.asu_id
+        hkl_in = inputs.hkl
+        iobs = inputs.iobs
+        sigiobs = inputs.sigiobs
+        image_id = inputs.image_id
+        num_images = inputs.num_images
 
         scale = self.scale_model(
             inputs,
             mc_samples=mc_samples,
             training=training,
-            **kwargs
         )
 
         ll = None
         ipred = None
         hkl = None
-        kl_div = None
         q = self.surrogate_posterior.flat_distribution()
-        z = q.sample(mc_samples)
+        z = q.rsample((mc_samples,))
 
-        p = self.prior(inputs, flat=True)
+        p = self.prior.flat_distribution()
         kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
 
         for op in self.reindexing_ops:
-            _hkl = tf.ragged.map_flat_values(op, hkl_in)
-            _z = self.surrogate_posterior.rac.gather(
-                tf.transpose(z),
-                asu_id.flat_values,
-                _hkl.flat_values,
+            _hkl = op(hkl_in)
+            _ipred = self.surrogate_posterior.rac.gather(
+                z.transpose(0, 1),
+                asu_id,
+                _hkl,
             )
-
-            _ipred = tf.RaggedTensor.from_row_splits(_z, iobs.row_splits, validate=False)
 
             if self.surrogate_posterior.parameterization == 'structure_factor':
-                _ipred = tf.square(_ipred)
-            # map_flat_values rather than `*`: ragged binary ops go through ragged
-            # broadcasting, which emits `RaggedRange` (no XLA kernel) even when both
-            # operands already share row_splits.
-            _ipred = tf.ragged.map_flat_values(tf.multiply, _ipred, scale)
+                _ipred = torch.square(_ipred)
+            _ipred = _ipred * scale
 
-            _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
+            _ll = self.likelihood(_ipred, iobs, sigiobs)
 
-            # See _call_independent: only score what the operator can index.
             _valid = self.surrogate_posterior.rac.valid(asu_id, _hkl)
-            _ll = tf.ragged.map_flat_values(
-                lambda l, v: l * tf.cast(v, l.dtype), _ll, _valid
-            )
-            _nvalid = tf.reduce_sum(
-                tf.cast(_valid, _ll.dtype), [-1, -2], keepdims=True
-            )
-            _mc = tf.cast(tf.shape(_ll.flat_values)[-1], _ll.dtype)
-            _ll = tf.math.divide_no_nan(
-                tf.reduce_sum(_ll, [-1, -2], keepdims=True), _nvalid * _mc
-            )
-            _ll = tf.where(_nvalid > 0., _ll, tf.constant(-1e30, _ll.dtype))
+            _ll = self._image_log_likelihood(_ll, _valid, image_id, num_images)
 
-            if ll is None:
-                ipred = _ipred
-                ll = _ll
-                hkl = _hkl
-            else:
-                idx =  _ll > ll
-                ipred = tf.where(idx, _ipred, ipred)
-                ll = tf.where(idx, _ll, ll)
-                hkl = tf.where(idx, _hkl, hkl)
+            idx = None if ll is None else _ll > ll
+            ipred = self._select(ipred, idx, image_id, _ipred)
+            hkl = self._select(hkl, idx, image_id, _hkl)
+            ll = _ll if ll is None else torch.where(idx, _ll, ll)
 
         if training:
-            self.surrogate_posterior.register_seen(asu_id.flat_values, hkl.flat_values)
+            self.surrogate_posterior.register_seen(asu_id, hkl)
 
-        self.likelihood.register_metrics(
-            ipred.flat_values, 
-            iobs.flat_values, 
-            sigiobs.flat_values,
-        )
+        self.likelihood.register_metrics(ipred, iobs, sigiobs)
 
-        ll = tf.reduce_mean(ll)
-        kl_div = tf.reduce_mean(kl_div) 
+        ll = ll.mean()
+        kl_div = kl_div.mean()
 
-        self.add_metric(-ll, name='NLL')
-        self.add_loss(-ll)
+        tracking.add_metric(-ll, name='NLL')
+        tracking.add_loss(-ll)
 
-        self.add_metric(kl_div, name='KL')
-        self.add_loss(self.kl_weight * kl_div)
+        tracking.add_metric(kl_div, name='KL')
+        tracking.add_loss(self.kl_weight * kl_div)
 
-        ipred_avg = tf.reduce_mean(ipred, axis=-1)
+        ipred_avg = ipred.mean(-1)
         return ipred_avg
 
-    def _call_independent(self, inputs, mc_samples=None, training=None, **kwargs):
+    def _call_independent(self, inputs, mc_samples=None, training=None):
         """
         The default method can be used for most posteriors
         """
@@ -241,21 +199,17 @@ class VariationalMergingModel(tfk.models.Model):
 
         inputs = self.standardize_inputs(inputs, training=training)
 
-        (
-            asu_id,
-            hkl_in,
-            resolution,
-            wavelength,
-            metadata,
-            iobs,
-            sigiobs,
-        ) = inputs
+        asu_id = inputs.asu_id
+        hkl_in = inputs.hkl
+        iobs = inputs.iobs
+        sigiobs = inputs.sigiobs
+        image_id = inputs.image_id
+        num_images = inputs.num_images
 
         scale = self.scale_model(
             inputs,
             mc_samples=mc_samples,
             training=training,
-            **kwargs
         )
 
         ll = None
@@ -264,146 +218,44 @@ class VariationalMergingModel(tfk.models.Model):
         kl_div = None
 
         for op in self.reindexing_ops:
-            _hkl = tf.ragged.map_flat_values(op, hkl_in)
-            q = self.surrogate_posterior.distribution(asu_id.flat_values, _hkl.flat_values)
-            _inputs = inputs[:1] + (_hkl,) + inputs[2:]
-            p = self.prior(_inputs, flat=False)
-            z = q.sample(mc_samples)
+            _hkl = op(hkl_in)
+            q = self.surrogate_posterior.distribution(asu_id, _hkl)
+            p = self.prior.distribution(asu_id, _hkl)
+            z = q.rsample((mc_samples,))
             _kl_div = self.surrogate_posterior.compute_kl_terms(q, p, samples=z)
- 
-            _kl_div = tf.RaggedTensor.from_row_splits(_kl_div[...,None], iobs.row_splits, validate=False)
-            _ipred = tf.RaggedTensor.from_row_splits(tf.transpose(z), iobs.row_splits, validate=False)
+
+            _kl_div = _kl_div[..., None]
+            _ipred = z.transpose(0, 1)
 
             if self.surrogate_posterior.parameterization == 'structure_factor':
-                _ipred = tf.square(_ipred)
-            # map_flat_values rather than `*`: ragged binary ops go through ragged
-            # broadcasting, which emits `RaggedRange` (no XLA kernel) even when both
-            # operands already share row_splits.
-            _ipred = tf.ragged.map_flat_values(tf.multiply, _ipred, scale)
+                _ipred = torch.square(_ipred)
+            _ipred = _ipred * scale
 
-            _ll = tf.ragged.map_flat_values(self.likelihood, _ipred, iobs, sigiobs)
+            _ll = self.likelihood(_ipred, iobs, sigiobs)
 
-            # An operator can push a reflection past dmin and out of the ASU,
-            # where the gather silently returns reflection 0 instead. Score the
-            # operators only on what they can actually index, so a miss cannot
-            # earn one of them a spurious likelihood; an operator that indexes
-            # nothing in an image loses outright.
             _valid = self.surrogate_posterior.rac.valid(asu_id, _hkl)
-            _ll = tf.ragged.map_flat_values(
-                lambda l, v: l * tf.cast(v, l.dtype), _ll, _valid
-            )
-            _kl_div = tf.ragged.map_flat_values(
-                lambda k, v: k * tf.cast(v, k.dtype), _kl_div, _valid
-            )
-            _nvalid = tf.reduce_sum(
-                tf.cast(_valid, _ll.dtype), [-1, -2], keepdims=True
-            )
-            _mc = tf.cast(tf.shape(_ll.flat_values)[-1], _ll.dtype)
-            _ll = tf.math.divide_no_nan(
-                tf.reduce_sum(_ll, [-1, -2], keepdims=True), _nvalid * _mc
-            )
-            _ll = tf.where(_nvalid > 0., _ll, tf.constant(-1e30, _ll.dtype))
+            _kl_div = _kl_div * _valid.to(_kl_div.dtype)
+            _ll = self._image_log_likelihood(_ll, _valid, image_id, num_images)
 
-            if ll is None:
-                ipred = _ipred
-                ll = _ll
-                hkl = _hkl
-                kl_div = _kl_div
-            else:
-                idx =  _ll > ll
-                ipred = tf.where(idx, _ipred, ipred)
-                ll = tf.where(idx, _ll, ll)
-                hkl = tf.where(idx, _hkl, hkl)
-                kl_div = tf.where(idx, _kl_div, kl_div)
+            idx = None if ll is None else _ll > ll
+            ipred = self._select(ipred, idx, image_id, _ipred)
+            hkl = self._select(hkl, idx, image_id, _hkl)
+            kl_div = self._select(kl_div, idx, image_id, _kl_div)
+            ll = _ll if ll is None else torch.where(idx, _ll, ll)
 
         if training:
-            self.surrogate_posterior.register_seen(asu_id.flat_values, hkl.flat_values)
+            self.surrogate_posterior.register_seen(asu_id, hkl)
 
-        self.likelihood.register_metrics(
-            ipred.flat_values, 
-            iobs.flat_values, 
-            sigiobs.flat_values,
-        )
+        self.likelihood.register_metrics(ipred, iobs, sigiobs)
 
-        ll = tf.reduce_mean(ll)
+        ll = ll.mean()
 
+        tracking.add_metric(-ll, name='NLL')
+        tracking.add_loss(-ll)
 
+        kl_div = kl_div.mean()
+        tracking.add_metric(kl_div, name='KL')
+        tracking.add_loss(self.kl_weight * kl_div)
 
-        self.add_metric(-ll, name='NLL')
-        self.add_loss(-ll)
-
-
-        kl_div = tf.reduce_mean(kl_div) 
-        self.add_metric(kl_div, name='KL')
-        self.add_loss(self.kl_weight * kl_div)
-
-        ipred_avg = tf.reduce_mean(ipred, axis=-1)
+        ipred_avg = ipred.mean(-1)
         return ipred_avg
-
-    def train_step(self, data):
-        # Unpack the data. Its structure depends on your model and
-        # on what you pass to `fit()`.
-        x, y = data
-
-
-        # Set up metrics dict
-        metrics = {m.name: m.result() for m in self.metrics}
-
-        with tf.GradientTape(persistent=True) as tape:
-            y_pred = self(x, training=True)  # Forward pass
-            # Compute the loss value
-            # (the loss function is configured in `compile()`)
-            loss = self.compiled_loss(y, y_pred, regularization_losses=self.losses)
-
-        # Compute gradients
-        scale_vars = self.scale_model.trainable_variables
-        grad_scale = tape.gradient(loss, scale_vars)
-        metrics["|∇s|"] = grad_rms(grad_scale)
-
-        q_vars = self.surrogate_posterior.trainable_variables
-        self.optimizer.lazy_vars = [v._unique_id for v in q_vars]
-
-        grad_q = tape.gradient(loss, q_vars)
-        metrics["|∇q|"] = grad_rms(grad_q)
-        #grad_q = [to_indexed_slices(g) for g in grad_q] #This makes lazy adam work
-
-        trainable_vars = scale_vars + q_vars 
-
-        gradients = grad_scale + grad_q 
-
-        ll_vars = self.likelihood.trainable_variables
-        if len(ll_vars) > 0:
-            grad_ll = tape.gradient(loss, ll_vars)
-            trainable_vars += ll_vars
-            gradients += grad_ll
-            metrics["|∇ll|"] = grad_rms(grad_ll)
-
-        p_vars = self.prior.trainable_variables
-        if len(p_vars) > 0:
-            grad_p = tape.gradient(loss, p_vars)
-            trainable_vars += p_vars
-            gradients += grad_p
-            metrics["|∇p|"] = grad_rms(grad_p)
-
-
-        gradients = [tf.where(tf.math.is_finite(g), g, 0.) for g in gradients]
-        # Apply in trainable_variables order so the optimizer creates its slot
-        # variables in the same order load_model rebuilds them (it builds the
-        # optimizer against model.trainable_variables). The per-group order above
-        # (scale, q, ll, p) otherwise differs from tracking order whenever the
-        # prior is trainable (AutoWilsonPrior), and the saved optimizer slots then
-        # deserialize into the wrong variables -- a shape mismatch on load.
-        grad_by_var = {v.ref(): g for v, g in zip(trainable_vars, gradients)}
-        ordered = [
-            (grad_by_var[v.ref()], v)
-            for v in self.trainable_variables if v.ref() in grad_by_var
-        ]
-        self.optimizer.apply_gradients(ordered)
-
-        # Update metrics (includes the metric that tracks the loss)
-        self.compiled_metrics.update_state(y, y_pred)
-
-        # Return a dict mapping metric names to current value
-        return metrics
-
-

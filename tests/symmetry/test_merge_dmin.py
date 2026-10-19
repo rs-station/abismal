@@ -1,7 +1,7 @@
 import gemmi
 import numpy as np
 import pytest
-import tensorflow as tf
+import torch
 
 from abismal.symmetry import ReciprocalASU, ReciprocalASUCollection, merge_dmin
 
@@ -69,7 +69,7 @@ def test_padded_asu_contains_every_reindexed_reflection():
         asu_id = np.zeros((len(image), 1), dtype=np.int32)
         misses = 0
         for a, x in zip(np.array_split(asu_id, 20), np.array_split(image, 20)):
-            ids = rac._miller_ids(a, tf.convert_to_tensor(np.ascontiguousarray(x)))
+            ids = rac._miller_ids(torch.as_tensor(a), torch.as_tensor(x))
             misses += int((ids.numpy() < 0).sum())
         assert misses == 0, f"{misses} reflections fall outside the ASU under {triplet}"
 
@@ -85,7 +85,7 @@ def test_unpadded_asu_does_lose_reflections():
     image = np.array([op.apply_to_hkl(tuple(x)) for x in H], dtype=np.int32)
     asu_id = np.zeros((len(image), 1), dtype=np.int32)
     ids = np.concatenate([
-        rac._miller_ids(a, tf.convert_to_tensor(np.ascontiguousarray(x))).numpy()
+        rac._miller_ids(torch.as_tensor(a), torch.as_tensor(x)).numpy()
         for a, x in zip(np.array_split(asu_id, 20), np.array_split(image, 20))
     ])
     assert (ids < 0).any()
@@ -103,13 +103,12 @@ def test_valid_flags_out_of_asu_indices():
     op = gemmi.Op(SWAP)
     image = np.array([op.apply_to_hkl(tuple(x)) for x in H], dtype=np.int32)
 
-    splits = tf.constant([0, len(H)], dtype=tf.int64)
-    hkl = tf.RaggedTensor.from_row_splits(tf.convert_to_tensor(image), splits)
-    asu_id = tf.RaggedTensor.from_row_splits(tf.zeros((len(H), 1), "int32"), splits)
+    hkl = torch.as_tensor(image)
+    asu_id = torch.zeros((len(H), 1), dtype=torch.int32)
 
-    valid = rac.valid(asu_id, hkl).flat_values.numpy().ravel()
+    valid = rac.valid(asu_id, hkl).numpy().ravel()
     assert valid.tolist() == [True, True, False]
 
     # ... and the gather it protects would have returned reflection 0.
-    ids = rac._miller_ids(tf.zeros((len(H), 1), "int32"), tf.convert_to_tensor(image))
+    ids = rac._miller_ids(asu_id, hkl)
     assert ids.numpy()[-1] == -1

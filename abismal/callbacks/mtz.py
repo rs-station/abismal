@@ -1,15 +1,14 @@
-import tf_keras as tfk
+from abismal.callbacks.base import Callback
 from os.path import exists, abspath
 import reciprocalspaceship as rs
 from os import mkdir
 import numpy as np
 
-class MtzSaver(tfk.callbacks.Callback):
+class MtzSaver(Callback):
     def __init__(self, output_directory, reference_mtz=None, dmin=None, *args, **kwargs):
-        super().__init__(*args, **kwargs)
         self.reference_mtz = reference_mtz
         if self.reference_mtz is not None:
-            self.reference_mtz = rs.read_mtz(reference_mtz)
+            self.reference_mtz = rs.read_mtz(str(reference_mtz))
         self.dmin = dmin
         self.output_directory = abspath(output_directory)
 

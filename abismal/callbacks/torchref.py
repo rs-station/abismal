@@ -1,22 +1,23 @@
+import os
 import sys
-import tf_keras as tfk
+from abismal.callbacks.base import Callback
 from os.path import exists, abspath, dirname, join
 from os import mkdir
 from subprocess import Popen
 from warnings import warn
 
 
-class TorchRefRunner(tfk.callbacks.Callback):
+class TorchRefRunner(Callback):
     """Run torchref refinement periodically on the merged output.
 
     A PyTorch-based alternative to :class:`PhenixRunner`. Because torchref runs
     on CPU/GPU through PyTorch (no external Phenix install), it works on Colab.
 
     Each invocation launches ``_torchref_worker.py`` as a detached subprocess.
-    The worker is started *by file path* so it never imports the abismal package
-    (and therefore never initializes a second TensorFlow/CUDA context); it is a
-    pure PyTorch process. Refinement runs on CPU by default to avoid contending
-    with the training process for GPU memory.
+    The worker is started *by file path* and does not import the abismal
+    package. Running it as a separate process means a crash in refinement
+    cannot take training down. Refinement runs on CPU by default to avoid
+    contending with the training process for GPU memory.
 
     When the merged data are anomalous the worker also builds an anomalous
     difference map and runs peak finding on it, writing ``peaks.csv`` alongside
@@ -34,7 +35,6 @@ class TorchRefRunner(tfk.callbacks.Callback):
                  adp_aniso_sigma: str = 'auto', rigid_body: bool = True,
                  rigid_body_iter: int = 30, allow_overlap: bool = False,
                  *args, **kwargs):
-        super().__init__(*args, **kwargs)
         self.output_prefix = output_prefix
         self.asu_id = asu_id
         self.pdb_file = abspath(pdb_file) if pdb_file is not None else None
@@ -155,9 +155,9 @@ class TorchRefRunner(tfk.callbacks.Callback):
         worker = join(dirname(abspath(__file__)), "_torchref_worker.py")
         # abismal and torchref install into one environment (`abismal[torchref]`),
         # so the training interpreter always has torchref and can run the worker
-        # directly. The subprocess is still worth keeping: it isolates the worker's
-        # PyTorch/CUDA context from TensorFlow's, and a crash in refinement cannot
-        # take training down with it.
+        # directly. The subprocess is still worth keeping: a crash in refinement
+        # cannot take training down with it, and the worker's device and memory
+        # stay separate from the training process's.
         command = [
             sys.executable, worker,
             "--mtz", mtz_file,
@@ -182,5 +182,21 @@ class TorchRefRunner(tfk.callbacks.Callback):
         stderr = join(result_dir, "stderr.txt")
         stdout = join(result_dir, "stdout.txt")
         with open(stderr, 'w') as e, open(stdout, 'w') as o:
-            p = Popen(command, cwd=result_dir, stderr=e, stdout=o)
+            p = Popen(command, cwd=result_dir, stderr=e, stdout=o, env=self.worker_env())
             self.processes.append((p, result_dir))
+
+    def worker_env(self):
+        """
+        The worker's environment: the training process's, with the GPU hidden
+        when refinement runs on the CPU.
+
+        `--device cpu` alone is not enough once torch can see a GPU: torchref
+        probes for an accelerator and puts some scaler targets on it anyway,
+        leaving a refinement split across devices, and the worker opens a CUDA
+        context on the card training is using. Under TensorFlow abismal ran
+        with CPU-only torch, which hid the problem.
+        """
+        env = dict(os.environ)
+        if str(self.device) == "cpu":
+            env["CUDA_VISIBLE_DEVICES"] = ""
+        return env

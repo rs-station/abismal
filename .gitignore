@@ -6,7 +6,22 @@
 
 # Coverage and build/log artifacts
 coverage.xml
-.coverage*
+# Coverage *data* files, including the per-process ones parallel mode writes.
+# Deliberately not `.coverage*`, which also swallowed `.coveragerc` -- the config
+# file that addopts references and that therefore has to be committed.
+.coverage
+.coverage.*
 *.log
+# ...except the replay fixtures. tests/gui/replay/console.log is a captured abismal
+# console log used to drive the GUI's log tailer without running a merge job; it is
+# test data, not an artifact. Force-adding it would work once and then silently fail
+# for the next person.
+!tests/gui/replay/*.log
 build/
+
+# Debug artifacts from the Colab container loop (devtools/colab_container.py probe
+# and devtools/gui_snapshot.py). Machine-generated, regenerated on demand, and the
+# probe output in particular is a snapshot of whatever Colab shipped that day --
+# useful to diff against the previous one locally, not to carry in the history.
+devtools/artifacts/
 dist/

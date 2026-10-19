@@ -1,15 +1,11 @@
 title = "IO"
 description = "Arguments controlling file inputs and outputs."
 
+from pathlib import Path
+from abismal.command_line.parser.custom_types import directory
 
-import os
-def available_cpus():
-    if hasattr(os, 'sched_getaffinity'):
-        return len(os.sched_getaffinity(0))
-    n = os.environ.get('SLURM_CPUS_PER_TASK')
-    if n:
-        return int(n)
-    return os.cpu_count() or 1
+
+from abismal.io.parallel import available_cpus
 
 args_and_kwargs=(
     (
@@ -18,8 +14,8 @@ args_and_kwargs=(
             "--out-dir",
         ),{
         "help": "The directory in which to output results. The current working directory by default",
-        "default": ".",
-        "type": str,
+        "default": Path("."),
+        "type": directory,
         }
     ),
 
@@ -27,7 +23,10 @@ args_and_kwargs=(
         (
             "--num-cpus",
         ),{
-        "help": "Number of CPUs to use for parsing CrystFEL .stream files with default 1.",
+        "help": "How many processes may parse input files in parallel. The default is the number "
+        "of CPUs this process may use (its CPU affinity, which srun --cpu-bind sets). Parsing is "
+        "split by file for DIALS input and by groups of chunks for CrystFEL .stream files; 1 parses "
+        "serially.",
         "default": available_cpus(),
         "type": int,
         }
@@ -56,7 +55,7 @@ args_and_kwargs=(
         (
             "--reference-mtz",
         ),{
-            "type": str,
+            "type": Path,
             "default" : None,
             "help": 'A reference mtz file which will be used to determine the reindexing operator.',
         }

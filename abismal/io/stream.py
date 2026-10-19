@@ -2,9 +2,9 @@
 import mmap
 import numpy as np
 import gemmi
-import tensorflow as tf
-from abismal.io.common import check_for_ray,ray_context
-from abismal.io.crystfel import StreamLoaderBase
+from abismal.io.crystfel import StreamLoaderBase, _parse_chunk_group
+from abismal.io.parallel import ordered_map
+from abismal.io.loader import make_record
 from reciprocalspaceship.decorators import spacegroupify,cellify
 
 
@@ -37,7 +37,6 @@ class StreamLoader(StreamLoaderBase):
         """
         super().__init__(stream_file, encoding)
         self.cell_tol = cell_tol
-        self.signature = None
         self.cell = self._get_unit_cell(cell)
         self.asu_id = asu_id
         self.wavelength = wavelength
@@ -66,7 +65,7 @@ class StreamLoader(StreamLoaderBase):
             cell = gemmi.UnitCell(*cell)
         return cell
 
-    def _convert_to_tf(self, peak_list, wavelength):
+    def _convert_to_numpy(self, peak_list, wavelength):
         hkl = peak_list[:,:3]
         d = self.cell.calculate_d_array(hkl)
         I = peak_list[:,3]
@@ -91,26 +90,21 @@ class StreamLoader(StreamLoaderBase):
             SigI = SigI[idx]
             metadata = metadata[idx]
 
-        I = tf.convert_to_tensor(I[None,:,None])
-        d = tf.convert_to_tensor(d[None,:,None])
-        SigI = tf.convert_to_tensor(SigI[None,:,None])
-        hkl = tf.convert_to_tensor(hkl[None,:,:], dtype='int64')
-        metadata = tf.convert_to_tensor(metadata[None,:,:])
-        asu = tf.ones_like(I, dtype='int64') * self.asu_id
-        wavelength = tf.ones_like(I) * wavelength
-
-        data = ((asu, hkl, d, wavelength, metadata, I, SigI), (I,))
-        return data
+        return make_record(self.asu_id, hkl, d, wavelength, metadata, I, SigI)
 
     def _parse_chunk(self, *args, **kwargs):
         data = super()._parse_chunk(*args, **kwargs)
-        result = [self._convert_to_tf(pl, data['wavelength']) for pl in data['peak_lists'] if len(pl) > 0]
+        result = [self._convert_to_numpy(pl, data['wavelength']) for pl in data['peak_lists'] if len(pl) > 0]
         result = [pl for pl in result if pl is not None]
         return result
 
-    def get_dataset(self, peak_list_columns=None, **ray_kwargs):
+    def get_dataset(self, peak_list_columns=None, num_cpus=None):
         """
-        Convert CrystFEL .stream files to a tf.data.Dataset.
+        Lazily parse the CrystFEL .stream file into per-image records.
+
+        Returns a generator of 7-tuples of numpy arrays (see `DataLoader`).
+        Nothing is read until it is iterated; with `num_cpus > 1` the first
+        `next` starts a pool of parsing processes (see `abismal.io.parallel`).
         """
 
         if peak_list_columns is None:
@@ -127,35 +121,26 @@ class StreamLoader(StreamLoaderBase):
         chunks = self.read_crystfel(
             wavelength=self.wavelength,
             peak_list_columns=peak_list_columns,
-            **ray_kwargs,
+            num_cpus=num_cpus,
         )
 
-        def data_gen():
-            for chunk in chunks:
-                for peak_list in chunk:
-                    yield peak_list
-
-        if self.signature is None:
-            for datum in data_gen():
-                self.signature = StreamLoader.get_signature_from_datum(datum)
-                break
-
-        return tf.data.Dataset.from_generator(data_gen, output_signature=self.signature).unbatch()
+        # Chunks come back in file order, each as soon as it is parsed, so a
+        # consumer can start on the first images while the rest are parsed.
+        for chunk in chunks:
+            for peak_list in chunk:
+                yield peak_list
 
     def read_crystfel(
         self,
         wavelength=None, chunk_metadata_keys=None,
         crystal_metadata_keys=None,
         peak_list_columns=None,
-        use_ray=True,
         num_cpus=None,
-        address="local",
-        **ray_kwargs,
     ) -> list:
         """
-        Parse a CrystFEL stream file using multiple processors. Parallelization depends on the ray library (https://www.ray.io/).
-        If ray is unavailable, this method falls back to serial processing on one CPU. Ray is not a dependency of reciprocalspaceship
-        and will not be installed automatically. Users must manually install it prior to calling this method.
+        Parse a CrystFEL stream file, chunks in groups, in a pool of processes when
+        `num_cpus > 1` (see `abismal.io.parallel`), yielding chunks in file order
+        as they are parsed.
 
         PARAMETERS
         ----------
@@ -170,12 +155,8 @@ class StreamLoader(StreamLoaderBase):
         peak_list_columns : list
             A list of columns to include in the peak list numpy arrays.
             A list of possible column names is stored as stream_loader.available_column_names.
-        use_ray : bool(optional)
-            Whether or not to use ray for parallelization.
         num_cpus : int (optional)
-            The number of cpus for ray to use.
-        ray_kwargs : optional
-            Additional keyword arguments to pass to [ray.init](https://docs.ray.io/en/latest/ray-core/api/doc/ray.init.html#ray.init).
+            The number of parsing processes; one (serial) by default.
 
         RETURNS
         -------
@@ -188,67 +169,8 @@ class StreamLoader(StreamLoaderBase):
         if peak_list_columns is not None:
             peak_list_columns = [self.peak_list_columns[s] for s in peak_list_columns]
 
-        # Check whether ray is available
-        use_ray = False
-        if num_cpus > 1:
-            use_ray = check_for_ray()
-
-        with open(self.filename, "r") as f:
-            memfile = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-            beginnings_and_ends = zip(
-                self.block_regex_bytes["chunk_begin"].finditer(memfile),
-                self.block_regex_bytes["chunk_end"].finditer(memfile),
-            )
-            if use_ray:
-                with ray_context(num_cpus=num_cpus, **ray_kwargs) as ray:
-
-                    @ray.remote
-                    def parse_chunk(loader: StreamLoaderBase, *args):
-                        return loader._parse_chunk(*args)
-
-                    result_ids = []
-                    for begin, end in beginnings_and_ends:
-                        result_ids.append(
-                            parse_chunk.remote(
-                                self,
-                                begin.start(),
-                                end.end(),
-                                wavelength,
-                                chunk_metadata_keys,
-                                crystal_metadata_keys,
-                                peak_list_columns,
-                            )
-                        )
-
-                    for result_id in result_ids:
-                        yield ray.get(result_id)
-
-            else:
-                for begin, end in beginnings_and_ends:
-                    yield self._parse_chunk(
-                        begin.start(),
-                        end.end(),
-                        wavelength,
-                        chunk_metadata_keys,
-                        crystal_metadata_keys,
-                        peak_list_columns,
-                    )
-
-    @staticmethod
-    def get_signature_from_datum(datum):
-        """Work out the proper signature for creating a dataset from an example"""
-        #if ragged:
-        #    signature = tf.nest.map_structure(tf.RaggedTensorSpec.from_value, datum)
-        #else:
-        #    signature = tf.nest.map_structure(tf.TensorSpec.from_tensor, datum)
-        def to_ragged_spec(tensor):
-            spec = tf.TensorSpec.from_tensor(tensor)
-            shape,dtype = spec.shape,spec.dtype
-            new = tf.TensorSpec(
-                shape = (shape[0], None, shape[2]),
-                dtype=dtype,
-            )
-            return new
-        signature = tf.nest.map_structure(to_ragged_spec, datum)
-        return signature
-
+        workers = num_cpus if num_cpus is not None and num_cpus > 1 else 1
+        tasks = [(self, spans, wavelength, chunk_metadata_keys, crystal_metadata_keys, peak_list_columns)
+                 for spans in self._chunk_groups(workers)]
+        for group in ordered_map(_parse_chunk_group, tasks, num_workers=workers):
+            yield from group

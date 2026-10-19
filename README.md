@@ -16,7 +16,7 @@ abismal, DIALS and torchref all install into a single environment. DIALS comes
 from conda-forge; everything else comes from pip on top of it.
 
 ```bash
-micromamba create -yn abismal -c conda-forge python=3.12 dials "pandas<2.4" "scipy<1.18"
+micromamba create -yn abismal -c conda-forge python=3.12 dials "numpy<2.4" "pandas<2.4" "scipy<1.18"
 micromamba activate abismal
 pip install --upgrade pip
 pip install abismal
@@ -24,22 +24,54 @@ pip install abismal
 
 `conda` works in place of `micromamba` throughout.
 
+abismal trains with [PyTorch](https://pytorch.org), which pip installs with it.
+If torch is already installed -- on Colab, or in an environment you built for a
+particular CUDA version -- abismal uses that one and leaves it alone.
+
+## GPUs
+
+There is nothing extra to install for a GPU. On Linux the default torch wheel
+bundles CUDA, and on Apple silicon torch includes the Metal (MPS) backend.
+abismal picks a device for itself: the CUDA GPU given by `--gpu-id` (0 by
+default) if there is one, otherwise MPS, otherwise the CPU. `--device` names one
+explicitly (`cpu`, `cuda:1`, `mps`). See what torch can see with
+
+```bash
+abismal --list-devices
+```
+
+On a CUDA GPU abismal compiles its training step with `torch.compile`, which
+takes about half a minute before the first epoch, and on GPUs with native
+bfloat16 (Ampere and newer) runs the scale model's networks in bfloat16.
+Together they train about twice as fast in roughly half the GPU memory, with the
+same merged data. Turn them off with `--compile never` and `--precision float32`.
+
+On a machine with no GPU, the CUDA build is several gigabytes that never get
+used. Take the CPU build instead by adding PyTorch's CPU index to the install:
+
+```bash
+pip install abismal --extra-index-url https://download.pytorch.org/whl/cpu
+```
+
 ## Extras
 
-abismal ships two optional extras. They **compose** -- name both in one set of
-brackets rather than running two installs, so pip resolves everything in a single
-pass:
+abismal ships these optional extras. They **compose** -- name them in one set of
+brackets rather than running separate installs, so pip resolves everything in a
+single pass:
 
 | extra | what it adds |
 | --- | --- |
-| `cuda` | GPU-accelerated TensorFlow for merging (`tensorflow[and-cuda]`) |
-| `torchref` | PyTorch + torchref, for per-epoch refinement (`--torchref-pdb`) |
+| `torchref` | torchref, for per-epoch refinement (`--torchref-pdb`) |
+| `gui` | the widget stack behind the `abismal.gui` notebook |
+| `lab` | JupyterLab, to run that notebook locally |
 
 ```bash
-pip install "abismal[cuda,torchref]"
+pip install "abismal[torchref,gui,lab]"
 ```
 
-Test GPU support with `abismal --list-devices`.
+abismal 1.x had a `cuda` extra for GPU TensorFlow. It is gone: torch needs no
+extra for the GPU. pip warns about an extra that does not exist and installs
+the rest, so old commands still work.
 
 ## Per-epoch refinement (`--torchref-pdb`)
 
@@ -47,56 +79,82 @@ The `torchref` extra puts torchref in the same interpreter as abismal, so
 `--torchref-pdb` works with no further configuration. Refinement still runs in a
 subprocess, so a failure there cannot take training down, but that subprocess is
 the environment you are already in -- there is no second environment to build or
-point at.
+point at. It runs on the CPU, leaving the GPU to training.
 
-**Install the CPU build of PyTorch.** Refinement runs on CPU -- that is the
-default and nothing exposes a GPU option -- so the CUDA build of torch is several
-gigabytes that never get used, and it puts a second CUDA stack next to
-TensorFlow's for no benefit. Install torch from PyTorch's CPU index *first*, then
-the extras:
+## The notebook GUI
+
+The notebook ships inside the package, and `abismal.gui` puts a copy in
+whatever directory you are standing in and opens it:
 
 ```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install "abismal[cuda,torchref]"
+pip install "abismal[gui,lab]"
+cd /path/to/your/data
+abismal.gui
 ```
 
-Order matters. The second command finds `torch>=2.4.0` already satisfied and
-leaves it alone. Doing it the other way around installs the CUDA build and then
-you are stuck with it: **do not try to uninstall it afterwards.** PyTorch's CUDA
-wheels share the `nvidia/` namespace with TensorFlow's, and removing them deletes
-shared libraries that TensorFlow needs -- it will report no GPU and silently fall
-back to CPU. Rebuild the environment instead.
+`gui` is the widget stack the notebook needs on any frontend; `lab` adds
+JupyterLab to run it locally. On Colab, where the frontend is already there,
+`gui` alone is enough.
 
-If you do want the CUDA build of torch, it coexists with `abismal[cuda]` as long
-as the two sit on different CUDA majors: TensorFlow 2.18 pins the CUDA 12 wheels
-(`nvidia-cudnn-cu12==9.3.0.75`) and current PyTorch pins the CUDA 13 ones, so
-each gets exactly what it asked for. Older PyTorch (2.9 and earlier) was also
-built on CUDA 12 and contended with TensorFlow for those pins; it resolved to the
-newer versions and both still worked, but nothing guarantees that in general.
-Re-check `pip list | grep nvidia` after any TensorFlow or PyTorch bump.
+The notebook is one cell: it installs abismal if it is not already there, then
+
+```python
+from abismal.gui import launch
+
+launch()
+```
+
+`launch()` builds the form and returns it for the notebook to display. It also
+checks that the code running is the code you think it is -- a module loaded at a
+different version than is installed cannot be swapped without a restart, and it
+says so rather than rendering nothing.
+
+On Colab, `launch(example_data=True)` additionally fetches a lysozyme SSAD
+dataset and its reference model, and adds torchref, so there is something to
+merge and refine straight away. It is off by default: bring your own data and
+nothing is downloaded.
+
+`ArgparseGUI().to_widget()` still builds the form alone, for anyone who wants it
+without the setup around it.
+
+That directory is where the file pickers open and what a relative `out_dir`
+resolves against, so **run it from your data**. The copy is yours: a second
+`abismal.gui` in the same directory opens what is already there rather than
+overwriting your edits, and `--fresh` replaces it with the packaged one.
+Anything the launcher does not recognise is handed to `jupyter lab`, so
+`abismal.gui --no-browser --port 9999` works as you would expect.
+
+Nothing needs to be copied or symlinked by hand, and the notebook does not have
+to sit with your data: the form asks the running server which directory it was
+launched from rather than looking at the kernel's own, which jupyter sets to
+wherever the .ipynb happens to be.
+
+`out_dir` may be anywhere you can write, including another filesystem. The 3D
+viewer embeds the model and maps in its own page rather than fetching them from
+the server, so the server's root directory does not constrain it either.
+
+On Colab, upload your files to the session first (the Files pane, or
+`google.colab.files.upload()`) and point the file browser at `/content`. Colab
+already has torch, so installing abismal there does not download it again.
 
 ## About the version pins
 
-The three tool-chains agree on exactly one numpy window, and the recipe above is
-built to land inside it:
+abismal itself pins nothing tightly. The pins in the recipe above come from
+torchref, which declares
 
-| component | numpy |
+| package | torchref allows |
 | --- | --- |
-| tensorflow 2.18 | `>=1.26, <2.1` |
-| torchref | `>=2.0, <2.4` |
-| conda-forge dxtbx | `>=2.3.4` (declared) |
+| numpy | `>=2.0, <2.4` |
+| pandas | `>=2.0, <2.4` |
+| scipy | `>=1.10, <1.18` |
+| torch | `>=2.4, <2.14` |
 
-`pip install abismal` pulls numpy down to 2.0.2 to satisfy TensorFlow, below the
-floor conda-forge declares for dxtbx. That combination is tested -- the full
-suite, DIALS tests included, passes on it -- but it is why the pins exist:
-
-- `pandas<2.4` / `scipy<1.18` keep the conda solve inside torchref's ceilings, so
-  pip does not have to overwrite conda-built packages later.
-- `scikit-image<0.25` (a dependency of abismal, pinned in `pyproject.toml`) keeps
-  `tifffile` off releases that require numpy>=2.1.
-
-TensorFlow 2.20 dropped its numpy ceiling, which would let all three agree on
-numpy 2.3.x with no override at all. abismal is pinned to 2.18 for now.
+Left alone, conda solves DIALS onto numpy 2.5, and adding torchref afterwards
+makes pip downgrade conda-built packages underneath DIALS.
+Constraining the conda solve to torchref's windows avoids that, at the cost of
+a slightly older DIALS (3.26 rather than 3.30 at the time of writing). Without
+torchref the pins are harmless, and they let you add it later. Re-check them
+when torchref moves its ceilings.
 
 # Running tests
 Abismal CI runs tests on each pull request. Development installs are similar to a normal install, but it is important
@@ -105,11 +163,14 @@ Running the following commands will set up an environment.
 ```
 git clone https://github.com/rs-station/abismal.git
 cd abismal
-micromamba create -yn abismal -c conda-forge python=3.12 dials "pandas<2.4" "scipy<1.18"
+micromamba create -yn abismal -c conda-forge python=3.12 dials "numpy<2.4" "pandas<2.4" "scipy<1.18"
 micromamba activate abismal
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install -e ".[dev,cuda,torchref]"
+pip install -e ".[dev,torchref,gui]" --extra-index-url https://download.pytorch.org/whl/cpu
 ```
+
+The extra index gives the CPU build of torch, which is all the tests need; drop
+it to test on a GPU. TensorFlow is not a dependency, and CI checks it stays
+that way.
 
 Tests are run by calling `pytest` in the root of the abismal source code directory. 
 

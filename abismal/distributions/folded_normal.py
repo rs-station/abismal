@@ -1,226 +1,113 @@
-import tensorflow as tf
-from tensorflow.python.ops import array_ops
-from tensorflow_probability.python.internal import dtype_util
-from tensorflow_probability import distributions as tfd
-from tensorflow_probability.python.internal import reparameterization
-from tensorflow_probability.python.internal import prefer_static as ps
-import numpy as np
-from tensorflow_probability.python.internal import parameter_properties
-from tensorflow_probability.python.internal import samplers
-from tensorflow_probability import math as tfm
-from tensorflow_probability.python.internal import tensor_util
-from tensorflow_probability import math as tfm
 import math
 
+import torch
+from torch.distributions import constraints
+from torch.distributions.distribution import Distribution
+from torch.distributions.utils import broadcast_all
+
+from abismal.distributions.implicit import implicit_reparameterization
+
+
 def folded_normal_sample_gradients(z, loc, scale):
-    alpha = (z + loc) / scale
-    beta = (z - loc) / scale
+    """Implicit reparameterization gradients ``(dz/dloc, dz/dscale)`` of a folded normal.
 
-    log_p_a = tfd.Normal(loc, scale).log_prob(z)   #N(z|loc,scale)
-    log_p_b = tfd.Normal(-loc, scale).log_prob(z)  #N(z|-loc,scale)
+    With ``p_a = N(z|loc,scale)`` and ``p_b = N(z|-loc,scale)``,
 
-    p_a = tf.math.exp(log_p_a)
-    p_b = tf.math.exp(log_p_b)
+        dz/dloc   = (p_a - p_b) / (p_a + p_b)
+        dz/dscale = [(z - loc) p_a + (z + loc) p_b] / [scale (p_a + p_b)].
 
-    # This formula is dz = N(z|-loc,scale) + N(z|loc,scale)
-    log_dz = tfm.log_add_exp(log_p_a, log_p_b)
-    dz = tf.math.exp(log_dz)
-
-    # This formula is dloc = N(z|-loc,scale) - N(z|loc,scale)
-    log_dloc,sign  = tfm.log_sub_exp(log_p_b, log_p_a, return_sign=True)
-    #dloc = p_b - p_a
-    log_dloc = log_dloc - log_dz
-    dloc = -sign * tf.math.exp(log_dloc)
-    #dloc = -dloc / dz
-
-    # This formula is -[b * N(z|-loc, scale) + a * N(z|loc, scale)]
-    dscale = -alpha * p_b - beta * p_a
-    dscale = -dscale / dz
+    The density ratio is ``p_a / p_b = exp(2 z loc / scale^2)``, so the first is
+    ``tanh(z loc / scale^2)`` and the second ``(z - loc dz/dloc) / scale``. Written
+    this way neither ever divides two underflowed densities, which the direct
+    form does far out in the tail (0/0 = NaN).
+    """
+    dloc = torch.tanh(z * loc / (scale * scale))
+    dscale = (z - loc * dloc) / scale
     return dloc, dscale
 
-@tf.custom_gradient
-def stateless_folded_normal(shape, loc, scale, seed):
-    z = tf.random.stateless_normal(shape, seed, mean=loc, stddev=scale)
-    z = tf.abs(z)
-    def grad(upstream):
-        dloc,dscale = folded_normal_sample_gradients(z, loc, scale)
-        dloc = tf.reduce_sum(upstream * dloc, axis=0)
-        dscale = tf.reduce_sum(upstream * dscale, axis=0)
-        return None, dloc, dscale, None
-    return z, grad
 
-class FoldedNormal(tfd.Distribution):
-    """The folded normal distribution."""
-    _normal_crossover = 10.
-    def __init__(self,
-               loc,
-               scale,
-               validate_args=False,
-               allow_nan_stats=True,
-               name='FoldedNormal'):
-        """Construct a folded normal distribution.
-        Args:
-          loc: Floating-point `Tensor`; the means of the underlying
-            Normal distribution(s).
-          scale: Floating-point `Tensor`; the stddevs of the underlying
-            Normal distribution(s).
-          validate_args: Python `bool`, default `False`. Whether to validate input
-            with asserts. If `validate_args` is `False`, and the inputs are
-            invalid, correct behavior is not guaranteed.
-          allow_nan_stats: Python `bool`, default `True`. If `False`, raise an
-            exception if a statistic (e.g. mean/mode/etc...) is undefined for any
-            batch member If `True`, batch members with valid parameters leading to
-            undefined statistics will return NaN for this statistic.
-          name: The name to give Ops created by the initializer.
-        """
-        parameters = dict(locals())
-        with tf.name_scope(name) as name:
-          dtype = dtype_util.common_dtype([loc, scale], dtype_hint=tf.float32)
-          self._loc = tensor_util.convert_nonref_to_tensor(
-              loc, dtype=dtype, name='loc')
-          self._scale = tensor_util.convert_nonref_to_tensor(
-              scale, dtype=dtype, name='scale')
-          super(FoldedNormal, self).__init__(
-              dtype=dtype,
-              reparameterization_type=reparameterization.FULLY_REPARAMETERIZED,
-              validate_args=validate_args,
-              allow_nan_stats=allow_nan_stats,
-              parameters=parameters,
-              name=name)
+class FoldedNormal(Distribution):
+    """The folded normal distribution, the law of ``|x|`` for ``x ~ N(loc, scale)``.
 
-    def _batch_shape_tensor(self, loc=None, scale=None):
-        if loc is None:
-            loc = self.loc
-        if scale is None:
-            scale =self.scale
-        return array_ops.shape(loc / scale)
+    ``rsample`` uses implicit reparameterization gradients.
+    """
+    arg_constraints = {"loc": constraints.real, "scale": constraints.positive}
+    support = constraints.nonnegative
+    has_rsample = True
+    # Above this |loc/scale| the folded mass is negligible (< 1e-23) and the
+    # moments are those of the normal; the folded expressions for them cancel
+    # catastrophically there.
+    _normal_crossover = 10.0
 
-    @classmethod
-    def _parameter_properties(cls, dtype, num_classes=None):
-        return dict(
-            loc=parameter_properties.ParameterProperties(),
-            scale=parameter_properties.ParameterProperties(
-                default_constraining_bijector_fn=(
-                    lambda: softplus_bijector.Softplus(low=dtype_util.eps(dtype))
-                )
-            ),
-        )
+    def __init__(self, loc, scale, validate_args=False):
+        self.loc, self.scale = broadcast_all(loc, scale)
+        super().__init__(self.loc.shape, validate_args=validate_args)
 
-    @property
-    def loc(self):
-        """Distribution parameter for the pre-transformed mean."""
-        return self._loc
+    def expand(self, batch_shape, _instance=None):
+        new = self._get_checked_instance(FoldedNormal, _instance)
+        batch_shape = torch.Size(batch_shape)
+        new.loc = self.loc.expand(batch_shape)
+        new.scale = self.scale.expand(batch_shape)
+        super(FoldedNormal, new).__init__(batch_shape, validate_args=False)
+        new._validate_args = self._validate_args
+        return new
 
-    @property
-    def scale(self):
-        """Distribution parameter for the pre-transformed standard deviation."""
-        return self._scale
-
-    def _event_shape_tensor(self):
-        return tf.constant([], dtype=tf.int32)
-
-    def _event_shape(self):
-        return tf.TensorShape([])
-
-    def _cdf(self, x):
-        # F(x) = Phi((x - loc)/scale) + Phi((x + loc)/scale) - 1, which in terms of
-        # erf is the *sum* below. This read `erf(a) - erf(b)` until 2026-08-24,
-        # which is a different function entirely -- at loc=scale=1, x=0.5 it gave
-        # 0.6247 where the folded normal CDF is 0.2417. Nothing in abismal calls
-        # cdf(), so no result depended on it, but it agreed with neither _log_prob
-        # nor the sampler's implicit-reparameterization gradients, both of which
-        # are and were correct.
+    def rsample(self, sample_shape=torch.Size()):
+        shape = self._extended_shape(sample_shape)
         loc, scale = self.loc, self.scale
-        x = tf.convert_to_tensor(x)
-        a = (x + loc) / scale
-        b = (x - loc) / scale
-        # Build the constant at x's dtype rather than computing it in float32 and
-        # casting, which cost ~2e-8 relative error in a float64 distribution.
-        ir2 = tf.constant(1.0 / math.sqrt(2.0), dtype=x.dtype)
-        cdf = 0.5 * (tf.math.erf(ir2 * a) + tf.math.erf(ir2 * b))
-        # The support is non-negative; without this the expression runs negative
-        # below zero (-0.477 at x=-1, loc=scale=1) rather than returning 0.
-        return tf.where(x < 0, tf.zeros_like(cdf), cdf)
+        with torch.no_grad():
+            eps = torch.randn(shape, dtype=loc.dtype, device=loc.device)
+            z = torch.abs(loc + scale * eps)
+            dloc, dscale = folded_normal_sample_gradients(z, loc, scale)
+        return implicit_reparameterization(z, (loc, dloc), (scale, dscale))
 
-    def _sample_n(self, n, seed=None):
-        seed = samplers.sanitize_seed(seed)
-        loc = tf.convert_to_tensor(self.loc)
-        scale = tf.convert_to_tensor(self.scale)
-        shape = ps.concat([[n], self._batch_shape_tensor(loc=loc, scale=scale)], axis=0)
-        return stateless_folded_normal(shape, loc, scale, seed)
+    def log_prob(self, value):
+        if self._validate_args:
+            self._validate_sample(value)
+        loc, scale = self.loc, self.scale
+        log_norm = -torch.log(scale) - 0.5 * math.log(2.0 * math.pi)
+        a = (value - loc) / scale
+        b = (value + loc) / scale
+        return torch.logaddexp(-0.5 * a * a, -0.5 * b * b) + log_norm
 
-    def _log_prob(self,  value):
-        loc,scale = self.loc,self.scale
-        result = tfm.log_add_exp(
-            tfd.Normal(loc, scale).log_prob(value), 
-            tfd.Normal(-loc, scale).log_prob(value),
+    def cdf(self, value):
+        # F(x) = Phi((x - loc)/scale) + Phi((x + loc)/scale) - 1, the *sum* of two
+        # erfs. The TF version read `erf(a) - erf(b)` until 2026-08-24.
+        loc, scale = self.loc, self.scale
+        value = torch.as_tensor(value, dtype=loc.dtype, device=loc.device)
+        ir2 = 1.0 / math.sqrt(2.0)
+        cdf = 0.5 * (
+            torch.erf(ir2 * (value + loc) / scale)
+            + torch.erf(ir2 * (value - loc) / scale)
         )
-        return result
+        # The support is non-negative; the expression runs negative below zero.
+        return torch.where(value < 0, torch.zeros_like(cdf), cdf)
 
     @staticmethod
     def _folded_normal_mean(loc, scale):
-        u,s = loc, scale
         c = loc / scale
-        mean = (
-            s * tf.sqrt(2/math.pi) * tf.math.exp(-0.5 * c * c) + 
-            u * tf.math.erf(c/math.sqrt(2))
-        )
-        return mean
-
-    def _mean(self):
-        u = self.loc
-        s = self.scale
-        c = u/s
-
-        idx = tf.abs(c) >= self._normal_crossover
-        s_safe = tf.where(idx, 1., s)
-        u_safe = tf.where(idx, 1., u)
-
-        return tf.where(
-            idx,
-            tf.abs(u),
-            self._folded_normal_mean(u_safe, s_safe)
+        return (
+            scale * math.sqrt(2.0 / math.pi) * torch.exp(-0.5 * c * c)
+            + loc * torch.erf(c / math.sqrt(2.0))
         )
 
-    def _variance(self):
-        u = self.loc
-        s = self.scale
-        c = u/s
+    def _crossover_and_safe_mean(self):
+        loc, scale = self.loc, self.scale
+        idx = torch.abs(loc / scale) >= self._normal_crossover
+        # Substitute harmless values in the branch torch.where discards, so its
+        # gradient is zero rather than NaN.
+        one = torch.ones_like(loc)
+        loc_safe = torch.where(idx, one, loc)
+        scale_safe = torch.where(idx, one, scale)
+        return idx, self._folded_normal_mean(loc_safe, scale_safe)
 
-        idx = tf.abs(c) >= 10.
-        s_safe = tf.where(idx, 1., s)
-        u_safe = tf.where(idx, 1., u)
-        m = self._folded_normal_mean(u_safe, s_safe)
+    @property
+    def mean(self):
+        idx, m = self._crossover_and_safe_mean()
+        return torch.where(idx, torch.abs(self.loc), m)
 
-        return tf.where(
-            idx, 
-            s*s,
-            u*u + s*s - m*m,
-        )
-
-    def moment(self, t):
-        """ Use Scipy to calculate the t-moment of a folded normal """
-        from scipy.stats import foldnorm,norm
-        loc,scale = self.loc.numpy(),self.scale.numpy()
-        c = loc / scale
-        idx = np.abs(c) > self._normal_crossover
-        c_safe = tf.where(idx, c, 0.)
-        scale_safe = tf.where(idx, scale, 1.)
-
-        result = np.where(
-            idx,
-            foldnorm.moment(t, loc/scale, scale=scale),
-            norm.moment(t, loc=loc, scale=scale),
-        )
-        return result
-
-class ExplicitFoldedNormal(FoldedNormal):
-    def _sample_n(self, n, seed=None):
-        seed = samplers.sanitize_seed(seed)
-        loc = tf.convert_to_tensor(self.loc)
-        scale = tf.convert_to_tensor(self.scale)
-        shape = ps.concat([[n], self._batch_shape_tensor(loc=loc, scale=scale)], axis=0)
-        z = tf.random.stateless_normal(shape, seed, mean=loc, stddev=scale)
-        z = tf.abs(z)
-        return z
-
+    @property
+    def variance(self):
+        loc, scale = self.loc, self.scale
+        idx, m = self._crossover_and_safe_mean()
+        return torch.where(idx, scale * scale, loc * loc + scale * scale - m * m)

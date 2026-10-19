@@ -1,15 +1,15 @@
-import tensorflow as tf
-from tensorflow_probability import distributions as tfd
-from tensorflow_probability import bijectors as tfb
-from tensorflow.python.ops.ragged import ragged_tensor
-import tf_keras as tfk
+import torch
+import torch.nn.functional as F
+from torch import distributions as td
+from abismal import tracking
 from abismal.distributions import FoldedNormal,Rice
+from abismal.layers.feed_forward import FeedForward, GLUFeedForward, linear, variance_scaling_
 
 def _normalize(x, axis, epsilon=1e-3):
     out = (
-        x - tf.reduce_mean(x, axis=axis, keepdims=True)
+        x - x.mean(axis, keepdim=True)
     ) / (
-        tf.math.reduce_std(x, axis=axis, keepdims=True) + epsilon
+        x.std(axis, keepdim=True, correction=0) + epsilon
     )
     return out
 
@@ -26,135 +26,125 @@ class DeltaDistribution():
     def __init__(self, loc):
         self.loc = loc
 
-    def sample(self, *args, **kwargs):
+    def rsample(self, *args, **kwargs):
         """Return a tensor that broadcasts as a sample"""
         return self.loc[None,...]
 
+    sample = rsample
+
 def normal_posterior(output, bijector_function):
-    loc, scale = tf.unstack(output, axis=-1)
+    loc, scale = output.unbind(-1)
     scale = bijector_function(scale)
-    q = tfd.Normal(loc, scale)
+    q = td.Normal(loc, scale)
     return q
 
 def pos_normal_posterior(output, bijector_function):
     output = bijector_function(output)
-    loc, scale = tf.unstack(output, axis=-1)
-    q = tfd.Normal(loc, scale)
+    loc, scale = output.unbind(-1)
+    q = td.Normal(loc, scale)
     return q
 
 def log_normal_posterior(output, bijector_function):
-    loc, scale = tf.unstack(output, axis=-1)
+    loc, scale = output.unbind(-1)
     scale = bijector_function(scale)
-    q = tfd.LogNormal(loc, scale)
+    q = td.LogNormal(loc, scale)
     return q
 
 def folded_normal_posloc_posterior(output, bijector_function):
     output = bijector_function(output)
-    loc, scale = tf.unstack(output, axis=-1)
-    #scale = bijector_function(scale)
+    loc, scale = output.unbind(-1)
     q = FoldedNormal(loc, scale)
     return q
 
 def folded_normal_posterior(output, bijector_function):
-    loc, scale = tf.unstack(output, axis=-1)
+    loc, scale = output.unbind(-1)
     scale = bijector_function(scale)
     q = FoldedNormal(loc, scale)
     return q
 
 def rice_posterior(output, bijector_function):
     output = bijector_function(output)
-    loc, scale = tf.unstack(output, axis=-1)
+    loc, scale = output.unbind(-1)
     q = Rice(loc, scale)
     return q
 
 def gamma_posterior(output, bijector_function):
     output = bijector_function(output)
-    loc, scale = tf.unstack(output, axis=-1)
-    #scale = scale + 1. #prevent change in concavity
-    q = tfd.Gamma(loc, scale)
+    loc, scale = output.unbind(-1)
+    q = td.Gamma(loc, scale)
     return q
 
 def delta_posterior(output, bijector_function):
-    loc = tf.squeeze(output, axis=-1)
+    loc = output.squeeze(-1)
     q = DeltaDistribution(loc)
     return q
 
 def elog(x):
     """ exponential-logarithmic constraint """
-    neg = tf.minimum(x, 0.)
-    pos = tf.maximum(x, 0.)
-    return tf.math.exp(neg) + tf.math.log1p(pos)
+    neg = torch.clamp_max(x, 0.)
+    pos = torch.clamp_min(x, 0.)
+    return torch.exp(neg) + torch.log1p(pos)
 
-def rescale_distribution(p, mean=1.):
-    return tfd.TransformedDistribution(
-        p,
-        tfb.Scale(1. / p.mean())
-    )
+# The priors below keep TFP's positional conventions, which are not always the
+# obvious ones: `exponential_prior`'s "scale" is the rate, and `gamma_prior`
+# passes (rate, conc) as (concentration, rate).
+def cauchy_prior(loc=0., scale=1.):
+    return td.Cauchy(loc, scale)
 
-def cauchy_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.Cauchy(loc, scale)
+def laplace_prior(loc=0., scale=1.):
+    return td.Laplace(loc, scale)
 
-def laplace_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.Laplace(loc, scale)
+def normal_prior(loc=0., scale=1.):
+    return td.Normal(loc, scale)
 
-def normal_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.Normal(loc, scale)
+def lognormal_prior(loc=0., scale=1.):
+    return td.LogNormal(loc, scale)
 
-def cen_normal_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.Normal(0.0, scale)
+def halfcauchy_prior(loc=0., scale=1.):
+    return td.HalfCauchy(scale)
 
-def cen_laplace_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.Laplace(0.0, scale)
+def halfnormal_prior(loc=0., scale=1.):
+    return td.HalfNormal(scale)
 
-def lognormal_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-        #loc = bijector_function(loc)
-    return tfd.LogNormal(loc, scale)
+def exponential_prior(loc=0., scale=1.):
+    return td.Exponential(scale)
 
-def halfcauchy_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.HalfCauchy(scale)
-
-def halfnormal_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.HalfNormal(scale)
-
-def exponential_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return tfd.Exponential(scale)
-
-def foldednormal_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-        loc = bijector_function(loc)
+def foldednormal_prior(loc=0., scale=1.):
     return FoldedNormal(loc, scale)
 
-def gamma_prior(rate=1., conc=1., bijector_function=None):
-    if bijector_function is not None:
-        rate = bijector_function(rate)
-        conc = bijector_function(conc)
-    return tfd.Gamma(rate, conc)
+def gamma_prior(rate=1., conc=1.):
+    return td.Gamma(rate, conc)
 
-@tfk.saving.register_keras_serializable(package="abismal")
-class ImageScaler(tfk.models.Model):
+def _has_analytic_kl(q_type, p_type):
+    """Whether torch has a finite, closed form KL divergence for this pair."""
+    try:
+        fn = td.kl._dispatch_kl(q_type, p_type)
+    except NotImplementedError:
+        return False
+    if fn is NotImplemented:
+        return False
+    return "infinity" not in fn.__name__
+
+def kl_divergence(q, p, z, epsilon=0.):
+    """
+    The analytic KL divergence where torch has one, otherwise a Monte Carlo
+    estimate from the samples `z` drawn from `q`.
+
+    torch registers some pairs with mismatched support -- a normal posterior
+    against an exponential prior, say -- as infinitely divergent. TFP has no
+    such entries and abismal has always estimated those pairs by sampling, so
+    a non-finite analytic value falls through to the estimate as well.
+    """
+    if _has_analytic_kl(type(q), type(p)):
+        return td.kl_divergence(q, p)
+    q_z = q.log_prob(z)
+    p_z = p.log_prob(z + epsilon)
+    return q_z - p_z
+class ImageScaler(torch.nn.Module):
     bijector_dict = {
-        'softplus' : tf.nn.softplus,
-        'elup1' : lambda x : tf.nn.elu(x) + 1.,
-        'exp' : tf.math.exp,
+        'softplus' : F.softplus,
+        'elup1' : lambda x : F.elu(x) + 1.,
+        'exp' : torch.exp,
         'elog' : elog,
     }
     posterior_dict = {
@@ -170,25 +160,23 @@ class ImageScaler(tfk.models.Model):
         'cauchy' : cauchy_prior,
         'laplace' : laplace_prior,
         'normal' : normal_prior,
-        'cennormal' : cen_normal_prior,
-        'cenlaplace' : cen_laplace_prior,
         'halfnormal' : halfnormal_prior,
         'halfcauchy' : halfcauchy_prior,
-        'exponential' : exponential_prior, 
-        'lognormal' : lognormal_prior, 
+        'exponential' : exponential_prior,
+        'lognormal' : lognormal_prior,
         'foldednormal' : foldednormal_prior,
         'gamma' : gamma_prior,
     }
     def __init__(
-            self, 
-            mlp_width=32, 
-            mlp_depth=20, 
+            self,
+            metadata_length,
+            mlp_width=32,
+            mlp_depth=20,
             hidden_units=None,
             activation="relu",
             kl_weight=1.,
             epsilon=1e-12,
             ff_epsilon=None,
-            num_image_samples=None,
             share_weights=True,
             prior_name='exponential',
             posterior_name='foldednormal',
@@ -197,18 +185,19 @@ class ImageScaler(tfk.models.Model):
             hkl_to_imodel=False,
             gated=False,
             output_bias=True,
-            optimize_prior_scale=False,
             dropout=None,
             random_seed=1234,
             batch_normalize=True,
             metadata_noise_factor=0.1,
-            **kwargs,
+            precision="float32",
         ):
         """
-        This function has a lot of overrides, but comes with sensible defaults built in. 
+        This function has a lot of overrides, but comes with sensible defaults built in.
 
         Parameters
         ----------
+        metadata_length : int
+            The number of metadata columns per reflection.
         mlp_width : int (optional)
             Default 32 neurons. This is referred to as d-model in the CLI / paper
         mlp_depth : int (optional)
@@ -216,45 +205,50 @@ class ImageScaler(tfk.models.Model):
         hidden_units : int (optional)
             This defaults to 2*mlp_width
         activation : str (optional)
-            This is a Keras activation function with the default being "relu". 
+            The name of an activation function with the default being "relu".
         kl_weight : float (optional)
-            The importance of the prior distribution on scales. This parameter is ignored if the posterior is a delta distribution. 
+            The importance of the prior distribution on scales. This parameter is ignored if the posterior is a delta distribution.
         epsilon : float (optional)
             A small constant for numerical stability defaults to 1e-12.
         ff_epsilon : float (optional)
             Epsilon used by the feed forward layers' `pre_activation`, when that is a
             normalizer. Defaults to None, in which case it falls back to `epsilon`.
-        num_image_samples : int (optional)
-            The number of reflections to sample in order to create the image representation vectors. 
-            No subsampling will be done if this is set to None which is the default. 
         share_weights : bool (optional)
-            Whether or not share neural network weights between the image model and the scale model. 
-            The default is True. 
+            Whether or not share neural network weights between the image model and the scale model.
+            The default is True.
         prior_name : str (optional)
-            The name of the prior distribution to use. 
+            The name of the prior distribution to use.
         posterior_name : str (optional)
             The posterior parameterization to use
         bijector_name : str (optional)
             The bijector to use for parameters that need to be constrained positive
         pre_activation : str (optional)
             Applied to each feed forward layer's input. Either the name of a normalizer
-            (a key of `FeedForward.norm_dict`) or a keras activation name.
+            (a key of `FeedForward.norm_dict`) or an activation name.
         hkl_to_imodel : bool (optional)
-            Optionally allow the neural network to access the miller indices while computing the image representation vector. 
+            Optionally allow the neural network to access the miller indices while computing the image representation vector.
         gated : bool (optional)
             Optionally use a gated architecture instead of a vanilla residual multilayer perceptron
         output_bias : bool (optional)
-            Use bias in the output layer. 
+            Use bias in the output layer.
         dropout : float (optional)
             Use dropout when pooling reflections.
+        random_seed : int (optional)
+            Seeds the weight initialization.
         metadata_noise_factor : float (optional)
             The standard deviation of the Gaussian noise added to the metadata. This regularizes
             the model against overfitting on small data sets. The noise is only applied when
             `training` is True. The default is 0.1.
+        precision : str (optional)
+            'float32' (the default) or 'bfloat16'. With 'bfloat16' the networks
+            run under autocast, which roughly halves their time and activation
+            memory on GPUs with bfloat16 tensor cores. Weights, the pooled
+            image representation and everything downstream of the networks
+            stay in float32.
         """
-        super().__init__(**kwargs)
+        super().__init__()
+        self.metadata_length = metadata_length
         self.kl_weight = kl_weight
-        self.num_image_samples = num_image_samples
         self.mlp_width = mlp_width
         self.mlp_depth = mlp_depth
         self.epsilon = epsilon
@@ -270,10 +264,12 @@ class ImageScaler(tfk.models.Model):
         self.output_bias = output_bias
         self.hidden_units = hidden_units
         self.dropout = dropout
-        self.optimize_prior_scale = optimize_prior_scale
         self.random_seed = random_seed
         self.batch_normalize = batch_normalize
         self.metadata_noise_factor = metadata_noise_factor
+        if precision not in ("float32", "bfloat16"):
+            raise ValueError(f"precision must be 'float32' or 'bfloat16', not {precision!r}")
+        self.precision = precision
 
         input_bias=False
 
@@ -281,91 +277,52 @@ class ImageScaler(tfk.models.Model):
             self.hidden_units = 2 * mlp_width
         ffepsilon = epsilon if ff_epsilon is None else ff_epsilon
 
-        kernel_initializer = tfk.initializers.VarianceScaling(scale=mlp_depth**-1.0, mode='fan_avg', seed=random_seed) #FixUp init for early layers
-        if optimize_prior_scale:
-            self.output_prior = tfk.layers.Dense(2, kernel_initializer=kernel_initializer, use_bias=output_bias)
-            self.input_prior = tfk.layers.Dense(self.mlp_width, kernel_initializer=kernel_initializer, use_bias=input_bias)
+        # Seed the initialization without disturbing the global stream that the
+        # Monte Carlo sampling draws from.
+        with torch.random.fork_rng(devices=[]):
+            if random_seed is not None:
+                torch.manual_seed(random_seed)
+            kernel_initializer = lambda w: variance_scaling_(w, mlp_depth**-1.0, 'fan_avg') #FixUp init for early layers
 
-        self.input_image = tfk.layers.Dense(
-                mlp_width, kernel_initializer=kernel_initializer, use_bias=input_bias)
-        self.input_scale = tfk.layers.Dense(
-                mlp_width, kernel_initializer=kernel_initializer, use_bias=input_bias) #Should use_bias?
+            n = 2
+            dimage = metadata_length + n
+            if hkl_to_imodel:
+                dimage = dimage + 3
 
-        if gated:
-            from abismal.layers import GLUFeedForward as FeedForward
-        else:
-            from abismal.layers import FeedForward 
+            self.input_image = linear(dimage, mlp_width, input_bias, kernel_initializer)
+            self.input_scale = linear(metadata_length, mlp_width, input_bias, kernel_initializer) #Should use_bias?
 
-        self.image_network = tfk.models.Sequential([
-                FeedForward(
-                    hidden_units=self.hidden_units,
-                    activation=self.activation,
-                    kernel_initializer=kernel_initializer,
-                    use_bias=False,
-                    pre_activation=pre_activation,
-                    epsilon=ffepsilon,
-                ) for _ in range(mlp_depth)])
-        if share_weights:
-            self.scale_network = self.image_network
-        else:
-            self.scale_network = tfk.models.Sequential([
-                FeedForward(
-                    hidden_units=self.hidden_units, 
-                    kernel_initializer=kernel_initializer, 
-                    activation=self.activation, 
-                    use_bias=False,
-                    pre_activation=pre_activation,
-                    epsilon=ffepsilon,
-                    ) for _ in range(mlp_depth)
-            ]) 
+            FF = GLUFeedForward if gated else FeedForward
 
-        if self.posterior_name == 'delta':
-            self.output_dense = tfk.layers.Dense(1, kernel_initializer=kernel_initializer, use_bias=output_bias)
-        else:
-            self.output_dense = tfk.layers.Dense(2, kernel_initializer=kernel_initializer, use_bias=output_bias)
+            def network():
+                return torch.nn.Sequential(*[
+                    FF(
+                        mlp_width,
+                        hidden_units=self.hidden_units,
+                        activation=self.activation,
+                        kernel_initializer=kernel_initializer,
+                        use_bias=False,
+                        pre_activation=pre_activation,
+                        epsilon=ffepsilon,
+                    ) for _ in range(mlp_depth)])
 
-    def get_config(self):
-        config = super().get_config()
-        config.update({
-            'mlp_width' : self.mlp_width,
-            'mlp_depth' : self.mlp_depth, 
-            'hidden_units': self.hidden_units,
-            'epsilon' : self.epsilon,
-            'ff_epsilon' : self.ff_epsilon,
-            'activation' : self.activation,
-            'kl_weight' : self.kl_weight,
-            'num_image_samples' : self.num_image_samples,
-            'share_weights' : self.share_weights,
-            'prior_name' : self.prior_name,
-            'posterior_name' : self.posterior_name,
-            'bijector_name' : self.bijector_name,
-            'pre_activation' : self.pre_activation,
-            'hkl_to_imodel' : self.hkl_to_imodel,
-            'gated' : self.gated,
-            'output_bias' : self.output_bias, 
-            'optimize_prior_scale': self.optimize_prior_scale,
-            'dropout': self.dropout,
-            'random_seed': self.random_seed,
-            'batch_normalize' : self.batch_normalize,
-            'metadata_noise_factor' : self.metadata_noise_factor,
-        })
-        return config
+            self.image_network = network()
+            if share_weights:
+                self.scale_network = self.image_network
+            else:
+                self.scale_network = network()
 
-    @staticmethod
-    def sample_refls(tensor, mc_samples):
-        n = tf.shape(tensor)[0]
-        l = tf.reduce_sum(tf.ones_like(tensor[...,0]), axis=-1)
-        idx = tf.random.uniform(
-            (n, mc_samples),
-            minval=-0.5,
-            maxval=l[:,None]-0.5,
+            if self.posterior_name == 'delta':
+                self.output_dense = linear(mlp_width, 1, output_bias, kernel_initializer)
+            else:
+                self.output_dense = linear(mlp_width, 2, output_bias, kernel_initializer)
+
+    def _autocast(self, like):
+        return torch.autocast(
+            device_type=like.device.type,
+            dtype=torch.bfloat16,
+            enabled=self.precision == "bfloat16",
         )
-        idx = tf.cast(tf.round(idx), 'int32')
-        out = tf.gather(tensor, idx, axis=1, batch_dims=1)
-        return out
-
-    #def prior_function(self):
-    #    return self.prior_dict[self.prior_name]()
 
     def bijector_function(self, x):
         return self.bijector_dict[self.bijector_name](x) + self.epsilon
@@ -373,139 +330,89 @@ class ImageScaler(tfk.models.Model):
     def distribution_function(self, output):
         return self.posterior_dict[self.posterior_name](output, self.bijector_function)
 
-    def build(self, shapes):
-        (
-            asu_id,
-            hkl,
-            resolution,
-            wavelength,
-            metadata,
-            iobs,
-            sigiobs,
-        ) = shapes
+    @staticmethod
+    def pool(image, image_id, num_images):
+        """
+        Leave-one-out mean of `image` over the reflections of each image.
 
-        n = 2
-        dimage = metadata[-1] + n
-        if self.hkl_to_imodel:
-            dimage = dimage + 3
-        self.input_image.build(
-            metadata[:-1] + [dimage] #add columns for iobs/sigiobs
-        )
+        Parameters
+        ----------
+        image : torch.Tensor
+            Per-reflection features, shape (reflections, channels)
+        image_id : torch.Tensor
+            Which image each reflection belongs to, shape (reflections,)
+        num_images : int
+        """
+        sums = image.new_zeros((num_images, image.shape[-1])).index_add_(0, image_id, image)
+        # index_add rather than bincount, whose output length depends on the
+        # data and so breaks the graph under torch.compile.
+        counts = image.new_zeros(num_images).index_add_(0, image_id, image.new_ones(image_id.shape))
+        num = sums[image_id] - image
+        den = (counts[image_id] - 1.).clamp_min(1.)
+        return num / den[:, None]
 
-        self.input_scale.build(metadata)
-        if self.optimize_prior_scale:
-            self.input_prior.build(metadata)
-            self.output_prior.build(metadata[:-1] + [self.mlp_width])
-        self.image_network.build(metadata[:-1] + [self.mlp_width])
-        if not self.share_weights:
-            self.scale_network.build(metadata[:-1] + [self.mlp_width])
-        #self.pool.build(metadata[:-1] + [self.mlp_width])
-        self.output_dense.build(metadata[:-1] + [self.mlp_width])
-        self.built = True
+    def forward(self, inputs, mc_samples=32, training=None):
+        """
+        Parameters
+        ----------
+        inputs : abismal.io.Batch
+            Flat, per-reflection tensors and the image each reflection belongs to.
+        mc_samples : int
+        training : bool
 
-    def pool(self, image):
-        if self.num_image_samples is None:
-            #return tf.math.reduce_mean(image, axis=-2, keepdims=True)
-            # Leave-one-out mean over each image. This is done on flat_values and
-            # gathered back per reflection rather than by broadcasting a dense
-            # per-image tensor against the ragged one: ragged/dense broadcasting
-            # emits `RaggedRange`, which has no XLA kernel (breaks --jit-compile).
-            row_ids = image.value_rowids()
-            num = tf.gather(
-                tf.math.reduce_sum(image, axis=-2), row_ids
-            ) - image.flat_values
-            den = tf.cast(image.row_lengths(), 'float32') - 1.
-            den = tf.maximum(den, 1.)
-            out = image.with_flat_values(num / tf.gather(den, row_ids)[:, None])
-        else:
-            out = tf.math.reduce_mean(image, axis=-2, keepdims=True)
-        return out
+        Returns
+        -------
+        z : torch.Tensor
+            Samples of the scale of each reflection, shape (reflections, mc_samples)
+        """
+        hkl = inputs.hkl
+        metadata = inputs.metadata
+        iobs = inputs.iobs
+        sigiobs = inputs.sigiobs
+        image_id = inputs.image_id
+        num_images = inputs.num_images
 
-    def call(self, inputs, mc_samples=32, training=None, **kwargs):
-        (
-            asu_id,
-            hkl,
-            resolution,
-            wavelength,
-            metadata,
-            iobs,
-            sigiobs,
-        ) = inputs
-
-        n = 2
-        noise = 0.
         if training and self.metadata_noise_factor > 0.:
-            noise = self.metadata_noise_factor * metadata.with_flat_values(
-                tf.random.normal(
-                    tfk.backend.shape(metadata.flat_values)
-                )
-            )
+            metadata = metadata + self.metadata_noise_factor * torch.randn_like(metadata)
 
-        image = [metadata + noise, iobs, sigiobs]
+        image = [metadata, iobs, sigiobs]
         if self.hkl_to_imodel:
-            image.append(0.02 * tf.cast(hkl, metadata.dtype))
+            image.append(0.02 * hkl.to(metadata.dtype))
 
-        image = tf.concat(image, axis=-1)
+        image = torch.cat(image, dim=-1)
         if self.batch_normalize:
-            image = tf.ragged.map_flat_values(batch_normalize, image)
+            image = batch_normalize(image)
 
-        metadata = image[...,:-n]
+        # The scale branch sees the (normalized) metadata columns only.
+        scale = image[..., :self.metadata_length]
 
-        scale = metadata
+        with self._autocast(image):
+            unpooled_image = self.input_image(image)
+            image = self.image_network(unpooled_image)
+        # Pool and sum in float32: the leave-one-out mean subtracts each
+        # reflection from its image's total, which bfloat16 cannot resolve.
+        image = self.pool(image.float(), image_id, num_images)
 
-        if self.num_image_samples is not None:
-            #Subsample reflections per image 
-            image = ImageScaler.sample_refls(image, self.num_image_samples)
+        with self._autocast(image):
+            scale_in = self.input_scale(scale) + image
+            q_latent = self.scale_network(scale_in)
+            q_params = self.output_dense(q_latent)
+        q_params = q_params.float()
 
-        unpooled_image = self.input_image(image)
-        image = tf.ragged.map_flat_values(self.image_network, unpooled_image)
-        image = self.pool(image)
+        q = self.distribution_function(q_params)
 
-        scale_in = tf.ragged.map_flat_values(self.input_scale, scale) + image
-        q_latent = tf.ragged.map_flat_values(self.scale_network, scale_in)
-        q_params = tf.ragged.map_flat_values(self.output_dense, q_latent)
-
-        if ragged_tensor.is_ragged(q_params):
-            q = self.distribution_function(q_params.flat_values)
-        else:
-            q = self.distribution_function(q_params)
-
-        z = q.sample(mc_samples) 
+        z = q.rsample((mc_samples,))
 
         if not self.posterior_name.lower() == 'delta' and self.kl_weight > 0.:
-            if self.optimize_prior_scale:
-                p_latent = tf.ragged.map_flat_values(self.input_prior, metadata)
-                p_latent = tf.ragged.map_flat_values(self.scale_network, p_latent)
-                p_params = tf.ragged.map_flat_values(self.output_prior, p_latent) * tf.ones_like(iobs)
-                m,s = tf.unstack(p_params.flat_values, axis=-1)
-                p = self.prior_dict[self.prior_name](m, s, self.bijector_function)
-                p_mean = p.mean()
-                p_std = p.stddev()
-                self.add_metric(tf.reduce_mean(p_mean), 'pΣ_loc')
-                self.add_metric(tf.reduce_mean(p_std), 'pΣ_scale')
-            else:
-                p = self.prior_dict[self.prior_name]()
+            p = self.prior_dict[self.prior_name]()
 
-            try: #Attempt to calculate this analytically
-                kl_div = q.kl_divergence(p)
-            except NotImplementedError:
-                q_z = q.log_prob(z)
-                z = z + self.epsilon 
-                p_z = p.log_prob(z)
-                kl_div = q_z - p_z
+            kl_div = kl_divergence(q, p, z, self.epsilon)
+            kl_div = kl_div.mean()
+            tracking.add_loss(self.kl_weight * kl_div)
+            tracking.add_metric(kl_div, name='KL_Σ')
 
-            kl_div = tf.reduce_mean(kl_div)
-            self.add_loss(self.kl_weight * kl_div)
-            self.add_metric(kl_div, name='KL_Σ')
+        z = z.transpose(0, -1)
 
-        if ragged_tensor.is_ragged(q_params):
-            z = tf.RaggedTensor.from_row_splits(
-                tf.transpose(z), metadata.row_splits
-            )
-        else:
-            z = tf.transpose(z)
-
-        self.add_metric(tf.math.reduce_mean(z), name='Σ_mean')
-        self.add_metric(tf.math.reduce_std(z), name='Σ_std')
+        tracking.add_metric(z.mean(), name='Σ_mean')
+        tracking.add_metric(z.std(correction=0), name='Σ_std')
         return z
-

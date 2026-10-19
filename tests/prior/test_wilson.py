@@ -2,7 +2,7 @@ from os.path import abspath, dirname, join
 
 import numpy as np
 import pytest
-import tensorflow as tf
+import torch
 
 from abismal.io.manager import DataManager
 from abismal.symmetry import ReciprocalASU, ReciprocalASUGraph
@@ -56,14 +56,14 @@ def _direct_weighted_sigma(rac, batches, bins, isigi_cutoff, weighted=True):
     sigma array (``mean`` gathered back through the resolution-bin labels), to
     match the ``standardize=False, interpolate=False`` output of the method.
     """
-    labels, _ = bin_by_percentile(rac.dHKL, bins=bins, ascending=False)
+    labels, _ = bin_by_percentile(rac.dHKL.numpy(), bins=bins, ascending=False)
     num = np.zeros(bins)
     den = np.zeros(bins)
-    for x, _y in batches:
-        asu_id, hkl, _res, _wav, _meta, iobs, sigiobs = x
-        idx = rac.gather(labels, asu_id, hkl).flat_values.numpy()
-        I = np.squeeze(iobs.flat_values.numpy(), axis=-1)
-        SIGI = np.squeeze(sigiobs.flat_values.numpy(), axis=-1)
+    labels_t = torch.as_tensor(labels)
+    for batch in batches:
+        idx = rac.gather(labels_t, torch.as_tensor(batch.asu_id), torch.as_tensor(batch.hkl)).numpy()
+        I = np.squeeze(batch.iobs, axis=-1)
+        SIGI = np.squeeze(batch.sigiobs, axis=-1)
 
         if isigi_cutoff is not None:
             mask = (I / SIGI > isigi_cutoff).astype("float32")
@@ -75,7 +75,7 @@ def _direct_weighted_sigma(rac, batches, bins, isigi_cutoff, weighted=True):
         np.add.at(den, idx, w)
 
     mean = (num / den).astype("float32")
-    return tf.gather(mean, labels).numpy()
+    return mean[labels]
 
 
 @pytest.mark.parametrize("bins", [4, 6, 8, 10])
@@ -93,7 +93,7 @@ def test_welford_matches_direct_weighted_mean(empirical_inputs, bins, isigi_cuto
         standardize=False,
         interpolate=False,
     )
-    got = np.asarray(prior.sigma)
+    got = prior.sigma.numpy()
 
     expected = _direct_weighted_sigma(rac, batches, bins, isigi_cutoff)
 
@@ -116,7 +116,7 @@ def test_inverse_variance_weighting_is_applied(empirical_inputs):
         standardize=False,
         interpolate=False,
     )
-    weighted = np.asarray(prior.sigma)
+    weighted = prior.sigma.numpy()
 
     unweighted = _direct_weighted_sigma(
         rac, batches, bins, isigi_cutoff=None, weighted=False
@@ -131,22 +131,20 @@ def test_inverse_variance_weighting_is_applied(empirical_inputs):
 
 
 def _make_batch(hkl, I, SIGI):
-    """Hand-build one (x, y) batch (a single image) of the ragged shape the
-    loader emits, from plain numpy arrays of miller indices / intensities."""
+    """Hand-build one batch (a single image) of the shape the loader emits,
+    from plain numpy arrays of miller indices / intensities."""
+    from abismal.io import Batch
     n = len(hkl)
-
-    def ragged(values):
-        return tf.RaggedTensor.from_tensor(values[None], ragged_rank=1)
-
-    asu_id = ragged(tf.zeros((n, 1), tf.int32))
-    hkl_rt = ragged(tf.cast(hkl, tf.int32))
-    dHKL = ragged(tf.ones((n, 1), tf.float32))
-    wavelength = ragged(tf.ones((n, 1), tf.float32))
-    metadata = ragged(tf.ones((n, 1), tf.float32))
-    iobs = ragged(tf.cast(I, tf.float32)[:, None])
-    sigiobs = ragged(tf.cast(SIGI, tf.float32)[:, None])
-    x = (asu_id, hkl_rt, dHKL, wavelength, metadata, iobs, sigiobs)
-    return x, (iobs,)
+    image = (
+        np.zeros((n, 1), np.int32),
+        np.asarray(hkl, np.int32),
+        np.ones((n, 1), np.float32),
+        np.ones((n, 1), np.float32),
+        np.ones((n, 1), np.float32),
+        np.asarray(I, np.float32)[:, None],
+        np.asarray(SIGI, np.float32)[:, None],
+    )
+    return Batch.collate([image])
 
 
 def test_empty_bin_in_a_batch_stays_finite(empirical_inputs):
@@ -159,8 +157,8 @@ def test_empty_bin_in_a_batch_stays_finite(empirical_inputs):
     # Split the ASU's reflections into two contiguous resolution ranges. Each
     # batch then populates only a subset of the percentile bins (leaving the
     # rest empty within that batch), while the union covers every bin.
-    H = np.asarray(rac.Hunique)
-    order = np.argsort(np.asarray(rac.dHKL))
+    H = rac.Hunique.numpy()
+    order = np.argsort(rac.dHKL.numpy())
     H = H[order]
     half = len(H) // 2
     rng = np.random.default_rng(0)
@@ -174,10 +172,10 @@ def test_empty_bin_in_a_batch_stays_finite(empirical_inputs):
 
     # Confirm the test is actually meaningful: at least one batch leaves a bin
     # empty (which is exactly the condition the guard protects against).
-    labels, _ = bin_by_percentile(rac.dHKL, bins=bins, ascending=False)
+    labels, _ = bin_by_percentile(rac.dHKL.numpy(), bins=bins, ascending=False)
     empties = []
-    for x, _y in batches:
-        idx = rac.gather(labels, x[0], x[1]).flat_values.numpy()
+    for batch in batches:
+        idx = rac.gather(torch.as_tensor(labels), torch.as_tensor(batch.asu_id), torch.as_tensor(batch.hkl)).numpy()
         empties.append((np.bincount(idx, minlength=bins) == 0).any())
     assert any(empties)
 
@@ -189,7 +187,7 @@ def test_empty_bin_in_a_batch_stays_finite(empirical_inputs):
         standardize=False,
         interpolate=False,
     )
-    got = np.asarray(prior.sigma)
+    got = prior.sigma.numpy()
 
     assert np.all(np.isfinite(got))
     expected = _direct_weighted_sigma(rac, batches, bins, isigi_cutoff=None)

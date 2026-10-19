@@ -1,10 +1,9 @@
+
 # Sort the dependencies
 source <(curl -s https://raw.githubusercontent.com/rs-station/abismal/main/pre-install.sh)
 
-# Refinement (--torchref-pdb) runs on CPU, so install the CPU build of PyTorch
-# before the extras pull in the CUDA one. See README.md -- removing the CUDA
-# build afterwards deletes shared libraries that TensorFlow needs.
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-
-# Extras compose: one install, one resolution pass.
-pip install "abismal[cuda,torchref]"
+# torch comes with abismal. The default Linux wheel bundles CUDA, so a GPU is
+# used with no further setup; on a machine without one, add
+#   --extra-index-url https://download.pytorch.org/whl/cpu
+# to take the much smaller CPU build instead. See README.md.
+pip install "abismal[torchref]"

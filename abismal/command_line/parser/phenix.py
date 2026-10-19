@@ -1,6 +1,8 @@
 title = "phenix"
 description = "Arguments for running PHENIX periodically during optimization."
 
+from abismal.command_line.parser.custom_types import list_of_paths
+
 
 args_and_kwargs=(
     (
@@ -9,7 +11,7 @@ args_and_kwargs=(
         ),{
         "help": "Comma separated list of eff files.",
         "default": None,
-        "type": str,
+        "type": list_of_paths,
         }
     ),
 

@@ -4,14 +4,12 @@ End to end tests for abismal using a limited feature set
 import gemmi #this is necessary for some baffling dependency reason
 import reciprocalspaceship as rs
 import numpy as np
-import tf_keras as tfk
-import tensorflow as tf
-tf.config.set_visible_devices([], 'GPU')
+from abismal.saving import load_model
 from abismal.command_line.abismal import main as abismal_main
 from abismal.command_line.cchalf import main as cchalf_main
 import pytest
 from os.path import exists
-from os import chdir
+from os import chdir, getcwd
 from glob import glob
 from tempfile import TemporaryDirectory
 
@@ -23,7 +21,6 @@ base_flags = (
     "--batch-size=3",
     "--d-model=4",
     "--layers=2",
-    "--run-eagerly",
     "--shuffle-buffer-size=10",
     "--steps-per-epoch=10",
     "--num-cpus=1",
@@ -31,6 +28,18 @@ base_flags = (
 )
 
 def run_abismal(flags, files, additional_asserts=()):
+    # Restore the working directory afterwards. TemporaryDirectory deletes the tree on
+    # exit, so leaving the process chdir'd into it leaves cwd pointing at a directory
+    # that no longer exists -- every later test that touches a relative path or scans
+    # the cwd then fails with a bare FileNotFoundError, a long way from the cause.
+    original_cwd = getcwd()
+    try:
+        _run_abismal(flags, files, additional_asserts)
+    finally:
+        chdir(original_cwd)
+
+
+def _run_abismal(flags, files, additional_asserts=()):
     with TemporaryDirectory() as output_dir:
         chdir(output_dir)
         flags = ' ' + ' '.join(flags) + ' ' 
@@ -42,22 +51,21 @@ def run_abismal(flags, files, additional_asserts=()):
 
         assert exists('asu_0_epoch_1.mtz')
         assert exists('asu_0_epoch_2.mtz')
-        assert exists('datamanager.yml')
-        assert exists('epoch_0.keras')
-        assert exists('epoch_1.keras')
-        assert exists('epoch_2.keras')
+        assert exists('epoch_0.pt')
+        assert exists('epoch_1.pt')
+        assert exists('epoch_2.pt')
         assert exists('history.csv')
         for add in additional_asserts:
             assert add()
 
-        tfk.saving.load_model("epoch_0.keras")
-        tfk.saving.load_model("epoch_1.keras")
-        tfk.saving.load_model("epoch_2.keras")
+        load_model("epoch_0.pt")
+        load_model("epoch_1.pt")
+        load_model("epoch_2.pt")
 
         rs.read_mtz("asu_0_epoch_1.mtz")
         rs.read_mtz("asu_0_epoch_2.mtz")
 
-        args = " datamanager.yml epoch_2.keras --run-eagerly --sf-init epoch_0.keras "
+        args = " epoch_2.pt --sf-init epoch_0.pt "
         cchalf_main(args.split())
         assert exists('abismal_xval.mtz')
         assert_cchalf_optimized()
@@ -67,12 +75,11 @@ def assert_cchalf_optimized():
     """
     The half-dataset structure factors must actually move during abismal.cchalf.
 
-    cchalf freezes everything but the surrogate posterior. Doing that by way of
-    `model.trainable = False` silently zeroes out `model.trainable_variables`
-    -- tf_keras gates a layer's trainable weights on the layer itself -- and
-    `train_step` then applies gradients to nothing. cchalf still ran to
-    completion and still wrote every mtz, so only the *values* betray it: the
-    per-epoch files came out byte-identical. Compare them.
+    cchalf freezes everything but the surrogate posterior. A freeze that caught
+    the posterior too would still run to completion and still write every mtz,
+    so only the *values* betray it: the per-epoch files would come out
+    byte-identical. Compare them. (This happened under tf_keras, which gated a
+    layer's trainable weights on its parent.)
     """
     def read(path):
         # An asu with nothing `seen` in this half writes a zero-row mtz, which
@@ -123,6 +130,7 @@ def test_mtz(conventional_mtz):
     )
 
 def test_dials(stills_expt, stills_refl):
+    pytest.importorskip("dxtbx", reason="reading .expt/.refl files needs DIALS")
     flags = base_flags
     files = [
         stills_expt,
@@ -151,13 +159,11 @@ def test_stream(stills_stream):
         ('structure_factor', 'rice'),
         ('structure_factor', 'nakagami'),
         pytest.param('structure_factor', 'gamma', marks=pytest.mark.xfail(reason='Not implemented')),
-        ('structure_factor', 'truncatednormal'),
         ('intensity', 'normal'),
         ('intensity', 'foldednormal'),
         pytest.param('intensity', 'rice', marks=pytest.mark.xfail(reason='Not implemented')),
         ('intensity', 'gamma'),
         pytest.param('intensity', 'nakagami', marks=pytest.mark.xfail(reason='Not implemented')),
-        pytest.param('intensity', 'truncatednormal', marks=pytest.mark.xfail(reason='Not implemented')),
     )
 )
 def test_posteriors(conventional_mtz, kind, distribution):

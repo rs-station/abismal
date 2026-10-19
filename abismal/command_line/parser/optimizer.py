@@ -105,4 +105,23 @@ args_and_kwargs=(
             "choices": optimizer_dict.keys(),
         }
     ),
+
+    (
+        (
+            "--weight-decay",
+        ),{
+            "help": "Decoupled weight decay coefficient. Left unset, each optimizer keeps its "
+                    "own default, which is 0.004 for adamw and none for the others; 0.0 recovers "
+                    "plain Adam. Every optimizer here accepts it, but only adamw handles the lazy "
+                    "variables correctly: it decays a structure factor once per update, whereas "
+                    "the others decay every variable on every step, pulling rarely observed "
+                    "reflections toward zero at a rate set by how seldom they appear in a batch "
+                    "rather than by the objective. The flip side is that under adamw a reflection "
+                    "seen one step in ten decays ten times more slowly than a dense weight at the "
+                    "same coefficient, so the effective decay on merged structure factors varies "
+                    "with multiplicity.",
+            "default" : None,
+            "type" : float,
+        }
+    ),
 )

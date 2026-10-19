@@ -5,20 +5,9 @@ Estimate cchalf from abismal output.
 def freeze_all_but_posterior(model):
     """
     Configure `model` so that only the structure factors are refined.
-
-    Do NOT do this by setting `model.trainable = False` and re-enabling the child:
-    tf_keras' `Layer.trainable_weights` short-circuits to `[]` whenever the layer
-    itself is not trainable, regardless of what its children report.
-    `VariationalMergingModel.train_step` filters its gradients through
-    `model.trainable_variables`, so a frozen top-level model turns every
-    `apply_gradients()` into a no-op and the half-dataset structure factors never
-    move. Freeze the siblings instead and leave the model itself trainable.
     """
-    model.trainable = True
-    model.scale_model.trainable = False
-    model.likelihood.trainable = False
-    model.prior.trainable = False
-    model.surrogate_posterior.trainable = True
+    model.requires_grad_(False)
+    model.surrogate_posterior.requires_grad_(True)
     return model
 
 
@@ -26,63 +15,83 @@ def main(args=None):
     from argparse import ArgumentParser
     parser = ArgumentParser(__doc__)
     parser.add_argument(
-        "datamanager_yml", help="A .yml file from an abismal run", default="datamanager.yml"
+        "model_file", help="A .pt file from an abismal run. The data are read again from the inputs that run used.",
     )
     parser.add_argument(
-        "model_file", help="A .keras file from an abismal run",
-    )
-    parser.add_argument(
-        "--sf-init", help="An optional .keras file from which to initialize the structure factors file from an abismal run", default=None, required=False
+        "--sf-init", help="An optional .pt file from an abismal run from which to initialize the structure factors", default=None, required=False
     )
     parser.add_argument(
         "--repeats", help="Number of random repeats to conduct. Default is one.", type=int, default=1, required=False
     )
     parser.add_argument(
-        "--keras-verbosity", help="Keras Model.fit verbose level. See docs for more info: https://keras.io/2.18/api/models/model_training_apis/#fit-method", type=int, default=1, choices=[0, 1, 2,]
+        "--verbosity", "--keras-verbosity", dest="verbosity", help="0 is silent, 1 shows a progress bar and 2 prints one line per epoch.", type=int, default=1, choices=[0, 1, 2,]
     )
     parser.add_argument(
         "--reference-mtz", type= str, default=None, help='A reference mtz file which will be used to determine the reindexing operator.',
     )
     parser.add_argument(
-        "--run-eagerly", help="Run eagerly which is slower but more straightforward to debug.", action='store_true',
+        "--gpu-id", help="The numerical id of the GPU to use. Ignored when no GPU is available.", type=int, default=0,
+    )
+    parser.add_argument(
+        "--device", help="Run on this PyTorch device, for instance 'cpu' or 'cuda:1'. Overrides --gpu-id.", type=str, default=None,
+    )
+    parser.add_argument(
+        "--compile", "--jit-compile", dest="compile", nargs="?", const="always", default="auto",
+        choices=["auto", "always", "never"],
+        help="torch.compile the training step: 'auto' (the default) compiles on CUDA GPUs only.",
+    )
+    parser.add_argument(
+        "--precision", default="auto", choices=["auto", "float32", "bfloat16"],
+        help="Precision of the scale model's networks. 'auto' (the default) uses bfloat16 on GPUs "
+             "that support it natively and float32 elsewhere, whatever the model was trained with.",
     )
     parser = parser.parse_args(args)
 
-    import tf_keras as tfk
+    from abismal.device import select_device, configure, resolve_compile, resolve_precision
     from abismal.io.manager import DataManager
     from abismal.callbacks import MtzSaver
+    from abismal.saving import load_args, load_model, load_optimizer
+    from abismal.training import Trainer
+
+    device = select_device(parser.gpu_id, parser.device)
+    configure(device)
+    precision = resolve_precision(parser.precision, device)
+    compile_options = {"dynamic": True} if resolve_compile(parser.compile, device) else None
 
     refls = []
 
 
     for repeat in range(parser.repeats):
-        dm = DataManager.from_file(parser.datamanager_yml)
+        dm = DataManager.from_parser(load_args(parser.model_file))
         half1,half2 = dm.get_half_datasets()
 
         for half_id,half in enumerate([half1, half2]):
-            model = tfk.saving.load_model(parser.model_file)
+            model = load_model(parser.model_file)
             if parser.sf_init is not None:
-                sf_model = tfk.saving.load_model(parser.sf_init)
-                model.surrogate_posterior.set_weights(
-                    sf_model.surrogate_posterior.get_weights())
+                sf_model = load_model(parser.sf_init)
+                model.surrogate_posterior.load_state_dict(
+                    sf_model.surrogate_posterior.state_dict())
 
             freeze_all_but_posterior(model)
+            model.scale_model.precision = precision
+            model.to(device)
 
-            #Reset optimizer state to remove frozen variables
-            opt = model.optimizer.from_config(model.optimizer.get_config()) 
-
-            #Now re-compile to re-initialize the optimizer momenta
-            model.compile(opt, run_eagerly=parser.run_eagerly)
+            # Same optimizer and hyperparameters, but fresh moments, over the
+            # posterior only.
+            opt = load_optimizer(parser.model_file, model, state=False)
+            if opt is None:
+                from abismal.optimizers import Adam
+                from abismal.training import parameter_groups
+                opt = Adam(parameter_groups(model))
 
             callbacks = [
                 MtzSaver(f"half_{half_id+1}", reference_mtz=parser.reference_mtz, dmin=dm.dmin)
             ]
-            history = model.fit(
-                x=half, 
+            trainer = Trainer(model, opt, device=device, callbacks=callbacks, verbose=parser.verbosity, compile=compile_options)
+            history = trainer.fit(
+                half, 
                 epochs=dm.epochs, 
                 steps_per_epoch=dm.steps_per_epoch, 
-                callbacks=callbacks, 
-                verbose=parser.keras_verbosity,
             )
 
             for asu_id,(asu,ds) in enumerate(zip(model.surrogate_posterior.rac, model.surrogate_posterior.to_datasets())):

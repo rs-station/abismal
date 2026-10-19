@@ -1,6 +1,7 @@
 title = "Surrogate posteriors"
 description = "Arguments affecting the parameterization and initialization of surrogate posteriors"
 
+from pathlib import Path
 from abismal.scaling.scaling import ImageScaler
 
 args_and_kwargs = (
@@ -43,7 +44,7 @@ args_and_kwargs = (
                     "The default is foldednormal. ",
             "type": str.lower,
             "default" : "foldednormal",
-            "choices" : ["normal", "foldednormal", "rice", "gamma", "nakagami", "truncatednormal", "lognormal"],
+            "choices" : ["normal", "foldednormal", "rice", "gamma", "nakagami", "lognormal"],
         }
     ),
 
@@ -137,8 +138,8 @@ args_and_kwargs = (
         (
             "--posterior-init-file",
         ),{
-            "help": "A `.keras` model file from which to initialize the intensity or structure factors weights.",
-            "type": str,
+            "help": "A saved abismal model (`epoch_N.pt`) from which to initialize the intensity or structure factors weights.",
+            "type": Path,
             "default": None,
         }
     ),
@@ -147,8 +148,8 @@ args_and_kwargs = (
         (
             "--scale-init-file",
         ),{
-            "help": "A `.keras` model file from which to initialize the scale model weights.",
-            "type": str,
+            "help": "A saved abismal model (`epoch_N.pt`) from which to initialize the scale model weights.",
+            "type": Path,
             "default": None,
         }
     ),

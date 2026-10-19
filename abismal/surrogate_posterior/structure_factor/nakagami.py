@@ -1,10 +1,6 @@
-import tf_keras as tfk
 
 from abismal.surrogate_posterior import StructureFactorPosteriorBase
 from abismal.surrogate_posterior.nakagami import NakagamiPosteriorBase
-
-
-@tfk.saving.register_keras_serializable(package="abismal")
 class NakagamiPosterior(NakagamiPosteriorBase, StructureFactorPosteriorBase):
     """A structure factor surrogate posterior parameterized by a Nakagami distribution.
 
@@ -13,4 +9,4 @@ class NakagamiPosterior(NakagamiPosteriorBase, StructureFactorPosteriorBase):
 
     def get_flat_isigi(self):
         g = self.flat_distribution().square()
-        return g.mean(), g.stddev()
+        return g.mean, g.stddev

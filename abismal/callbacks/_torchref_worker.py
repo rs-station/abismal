@@ -3,9 +3,10 @@
 Invoked by :class:`abismal.callbacks.torchref.TorchRefRunner` as a detached
 subprocess *by file path* (``python /path/to/_torchref_worker.py ...``). Running
 it by path — rather than ``python -m abismal.callbacks._torchref_worker`` —
-deliberately avoids importing the ``abismal`` package, whose ``__init__`` pulls
-in TensorFlow/tf_keras. This keeps the worker a pure PyTorch process so it does
-not initialize a second TF/CUDA context alongside the training process.
+keeps the worker independent of the ``abismal`` package: it needs only torchref
+and its own imports. Being a separate process at all is what matters most: a
+crash in refinement cannot take training down, and refinement stays off the
+GPU training is using.
 
 Basic refinement workflow: reset every atomic B-factor to a flat value, then run
 ADP (B-factor) refinement against the merged structure factors. Anomalous vs
