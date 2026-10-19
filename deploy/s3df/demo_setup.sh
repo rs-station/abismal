@@ -1,13 +1,14 @@
 # Pre-launch script for the abismal demo in S3DF Jupyter (Open OnDemand).
 #
-# Paste ONE of these into the Jupyter app's custom-script field:
+# Paste this into the Jupyter app's custom-script field, with the path of the shared
+# clone that deploy/s3df/install_env.sh was run in:
 #
-#   source <(curl -fsSL https://raw.githubusercontent.com/rs-station/abismal/s3df-demo/deploy/s3df/demo_setup.sh)
-#   source /sdf/.../abismal/demo_setup.sh        # the copy in the shared install; no internet needed
+#   source /sdf/group/<facility>/abismal/deploy/s3df/demo_setup.sh
 #
-# It must be sourced, not run (`curl ... | bash` runs it in a throwaway subshell and the
-# environment it sets up is lost before Jupyter starts). It therefore never exits and
-# never turns on `set -e`, either of which would end the launcher's own shell.
+# It must be sourced from that clone, not run and not piped from elsewhere: it finds
+# the environment next to itself, and the environment it sets up must outlive it to
+# reach Jupyter. It therefore never exits and never turns on `set -e`, either of which
+# would end the launcher's own shell.
 #
 # What it does, for the user who launches the session (nothing outside their own space
 # is written):
@@ -21,12 +22,13 @@
 #      other than the shared one.
 #
 # Override the defaults by setting these before the source line:
-#   ABISMAL_S3DF_PREFIX   the shared install (default below)
 #   ABISMAL_DEMO_DIR      where the user's demo copy goes (default ~/abismal-demo)
 #   ABISMAL_CACHE_DIR     where compile caches go (default: user scratch, else ~/.cache)
 
 _abismal_demo_setup() {
-    local prefix="${ABISMAL_S3DF_PREFIX:-/sdf/group/CHANGE_ME/abismal}"
+    local here
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+    local install="$here/install"
     local demo="${ABISMAL_DEMO_DIR:-$HOME/abismal-demo}"
     local scratch="/sdf/scratch/users/${USER:0:1}/${USER}"
     local cache="${ABISMAL_CACHE_DIR:-}"
@@ -34,12 +36,12 @@ _abismal_demo_setup() {
         if [ -d "$scratch" ] && [ -w "$scratch" ]; then cache="$scratch/.cache/abismal"; else cache="$HOME/.cache/abismal"; fi
     fi
 
-    if [ ! -f "$prefix/activate.sh" ]; then
-        echo "abismal demo: no shared install at $prefix (set ABISMAL_S3DF_PREFIX); continuing without it" >&2
+    if [ ! -x "$install/env/bin/python" ]; then
+        echo "abismal demo: no environment at $install. Source this file from the clone" \
+             "that deploy/s3df/install_env.sh was run in; continuing without it" >&2
         return 1
     fi
-    # shellcheck source=/dev/null
-    source "$prefix/activate.sh"
+    export PATH="$install/env/bin:$PATH"
 
     mkdir -p "$cache" "$demo"
     export TORCHINDUCTOR_CACHE_DIR="$cache/inductor"
@@ -49,18 +51,18 @@ _abismal_demo_setup() {
 
     # The user's own copy of the notebook, so edits and outputs stay theirs; never
     # overwrite one they already have.
-    [ -e "$demo/abismal_s3df_demo.ipynb" ] || cp "$prefix/abismal_s3df_demo.ipynb" "$demo/"
-    [ -e "$demo/hewl" ] || ln -s "$prefix/share/demo/hewl" "$demo/hewl"
+    [ -e "$demo/abismal_s3df_demo.ipynb" ] || cp "$here/abismal_s3df_demo.ipynb" "$demo/"
+    [ -e "$demo/hewl" ] || ln -s "$install/demo/hewl" "$demo/hewl"
     mkdir -p "$demo/runs"
 
     local kernels="${XDG_DATA_HOME:-$HOME/.local/share}/jupyter/kernels/abismal-s3df"
     if [ ! -f "$kernels/kernel.json" ]; then
-        "$prefix/env/bin/python" -m ipykernel install --user --name abismal-s3df \
+        "$install/env/bin/python" -m ipykernel install --user --name abismal-s3df \
             --display-name "abismal (S3DF)" >/dev/null 2>&1 \
             || echo "abismal demo: could not register the kernel (the shared Jupyter still has it)" >&2
     fi
 
-    echo "abismal demo: environment $prefix/env, notebook $demo/abismal_s3df_demo.ipynb, caches $cache"
+    echo "abismal demo: environment $install/env, notebook $demo/abismal_s3df_demo.ipynb, caches $cache"
 }
 _abismal_demo_setup
 unset -f _abismal_demo_setup
