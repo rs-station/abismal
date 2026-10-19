@@ -76,11 +76,6 @@ torchref = [
 #                  try/except, so declaring it would make the extra uninstallable
 #                  off Colab.
 #   matplotlib, pandas, reciprocalspaceship - already required by abismal itself.
-#   solara - its only importer is components/file_browser.py, which is dead code
-#            (see the coverage omit below). Dropping it takes a large dependency
-#            off every install, and Colab installs into a live kernel where every
-#            package that need not change is one that cannot break it. Revive this
-#            alongside file_browser.py if that ever comes back.
 gui = [
     # 7 as well as 8, because Colab ships 7.7.1 and its widget manager cannot
     # render what 8 emits: the opt-in CDN manager is pinned to an ipywidgets-8
@@ -121,12 +116,6 @@ source = ["abismal"]
 # The runner tails its log, polls, and reaps the child on daemon threads. Without this
 # every line they execute reports as uncovered.
 concurrency = ["thread"]
-omit = [
-    # Dead code: nothing imports it, components/__init__.py does not export it, and it
-    # is the package's only consumer of solara. Counting it would depress the coverage
-    # delta for a file no one runs. Drop this line if it is ever revived or deleted.
-    "abismal/gui/components/file_browser.py",
-]
 
 [tool.coverage.report]
 exclude_also = [
