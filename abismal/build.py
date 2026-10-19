@@ -220,7 +220,6 @@ def build_model(args, facts, data=None, precision="float32"):
         bijector_name=args.scale_posterior_bijector,
         pre_activation=args.pre_activation,
         gated=args.gated,
-        optimize_prior_scale=args.optimize_scale_prior,
         dropout=args.dropout,
         batch_normalize=args.batch_normalize,
         metadata_noise_factor=args.metadata_noise_factor,

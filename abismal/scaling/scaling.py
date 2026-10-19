@@ -88,61 +88,31 @@ def elog(x):
 # The priors below keep TFP's positional conventions, which are not always the
 # obvious ones: `exponential_prior`'s "scale" is the rate, and `gamma_prior`
 # passes (rate, conc) as (concentration, rate).
-def cauchy_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
+def cauchy_prior(loc=0., scale=1.):
     return td.Cauchy(loc, scale)
 
-def laplace_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
+def laplace_prior(loc=0., scale=1.):
     return td.Laplace(loc, scale)
 
-def normal_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
+def normal_prior(loc=0., scale=1.):
     return td.Normal(loc, scale)
 
-def cen_normal_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return td.Normal(torch.zeros_like(scale), scale)
-
-def cen_laplace_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-    return td.Laplace(torch.zeros_like(scale), scale)
-
-def lognormal_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
+def lognormal_prior(loc=0., scale=1.):
     return td.LogNormal(loc, scale)
 
-def halfcauchy_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
+def halfcauchy_prior(loc=0., scale=1.):
     return td.HalfCauchy(scale)
 
-def halfnormal_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
+def halfnormal_prior(loc=0., scale=1.):
     return td.HalfNormal(scale)
 
-def exponential_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
+def exponential_prior(loc=0., scale=1.):
     return td.Exponential(scale)
 
-def foldednormal_prior(loc=0., scale=1., bijector_function=None):
-    if bijector_function is not None:
-        scale = bijector_function(scale)
-        loc = bijector_function(loc)
+def foldednormal_prior(loc=0., scale=1.):
     return FoldedNormal(loc, scale)
 
-def gamma_prior(rate=1., conc=1., bijector_function=None):
-    if bijector_function is not None:
-        rate = bijector_function(rate)
-        conc = bijector_function(conc)
+def gamma_prior(rate=1., conc=1.):
     return td.Gamma(rate, conc)
 
 def _has_analytic_kl(q_type, p_type):
@@ -190,8 +160,6 @@ class ImageScaler(torch.nn.Module):
         'cauchy' : cauchy_prior,
         'laplace' : laplace_prior,
         'normal' : normal_prior,
-        'cennormal' : cen_normal_prior,
-        'cenlaplace' : cen_laplace_prior,
         'halfnormal' : halfnormal_prior,
         'halfcauchy' : halfcauchy_prior,
         'exponential' : exponential_prior,
@@ -217,7 +185,6 @@ class ImageScaler(torch.nn.Module):
             hkl_to_imodel=False,
             gated=False,
             output_bias=True,
-            optimize_prior_scale=False,
             dropout=None,
             random_seed=1234,
             batch_normalize=True,
@@ -297,7 +264,6 @@ class ImageScaler(torch.nn.Module):
         self.output_bias = output_bias
         self.hidden_units = hidden_units
         self.dropout = dropout
-        self.optimize_prior_scale = optimize_prior_scale
         self.random_seed = random_seed
         self.batch_normalize = batch_normalize
         self.metadata_noise_factor = metadata_noise_factor
@@ -322,9 +288,6 @@ class ImageScaler(torch.nn.Module):
             dimage = metadata_length + n
             if hkl_to_imodel:
                 dimage = dimage + 3
-
-            if optimize_prior_scale:
-                self.output_prior = linear(mlp_width, 2, output_bias, kernel_initializer)
 
             self.input_image = linear(dimage, mlp_width, input_bias, kernel_initializer)
             self.input_scale = linear(metadata_length, mlp_width, input_bias, kernel_initializer) #Should use_bias?
@@ -441,14 +404,7 @@ class ImageScaler(torch.nn.Module):
         z = q.rsample((mc_samples,))
 
         if not self.posterior_name.lower() == 'delta' and self.kl_weight > 0.:
-            if self.optimize_prior_scale:
-                p_params = self.output_prior(image)
-                m,s = p_params.unbind(-1)
-                p = self.prior_dict[self.prior_name](m, s, self.bijector_function)
-                tracking.add_metric(p.mean.mean(), 'pΣ_loc')
-                tracking.add_metric(p.stddev.mean(), 'pΣ_scale')
-            else:
-                p = self.prior_dict[self.prior_name]()
+            p = self.prior_dict[self.prior_name]()
 
             kl_div = kl_divergence(q, p, z, self.epsilon)
             kl_div = kl_div.mean()
