@@ -24,10 +24,11 @@ lysozyme example data and its reference files, makes the clone world-readable, a
 To update, `git pull` in the clone and run the script again.
 
 Options:
-- `--torch-index <url>`: take torch from this PyTorch wheel index. Not normally needed: PyPI's torch
-  brings its own CUDA (13) and needs only an NVIDIA driver of version 580 or newer. If the node's
-  driver is older, the check says so; rerun with, for example,
-  `--torch-index https://download.pytorch.org/whl/cu128`.
+- `--torch-index <url>`: the PyTorch wheel index to take torch from. The default is the CUDA 12.9
+  builds (`https://download.pytorch.org/whl/cu129`), which S3DF's GPU driver supports; they bring
+  their own CUDA libraries, so no CUDA toolkit is needed, and they also run on newer drivers. Pass
+  `pypi` for PyPI's default build (CUDA 13, driver 580 or newer). If torch cannot use the node's GPU,
+  the closing check says so.
 - `--with-dials`: add DIALS for `.expt`/`.refl` inputs (several GB).
 
 ## For users: start the demo

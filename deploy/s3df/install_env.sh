@@ -19,10 +19,11 @@
 # Usage:
 #   deploy/s3df/install_env.sh [--torch-index URL] [--with-dials]
 #
-#   --torch-index  take torch from this PyTorch wheel index, e.g.
-#                  https://download.pytorch.org/whl/cu128. Only needed when the GPU
-#                  driver is too old for the CUDA build PyPI ships (CUDA 13 needs driver
-#                  580 or newer); the script says so at the end if the GPU is not usable.
+#   --torch-index  the PyTorch wheel index to take torch from (default: CUDA 12.9 builds,
+#                  https://download.pytorch.org/whl/cu129, which S3DF's GPU driver supports;
+#                  a CUDA build runs on its own driver version and newer). The wheels bring
+#                  their own CUDA libraries, so no CUDA toolkit is needed. Pass "pypi" for
+#                  PyPI's default build (CUDA 13, driver 580 or newer).
 #   --with-dials   also install DIALS/dxtbx from conda-forge, needed for .expt/.refl
 #                  inputs (several GB; .mtz and CrystFEL .stream inputs never need it)
 #
@@ -32,7 +33,7 @@ set -euo pipefail
 
 usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
-TORCH_INDEX=""
+TORCH_INDEX="https://download.pytorch.org/whl/cu129"
 WITH_DIALS=0
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -67,12 +68,21 @@ if [ "$WITH_DIALS" = 1 ]; then
     "$MAMBA" install -y -q -p "$ENV" -c conda-forge dials
 fi
 
-step "abismal[gui,torchref] from $REPO, torch, jupyterlab"
-# One pass, so pip resolves torch together with torchref's cap on it. A wheel from an
-# extra index carries a local version (+cu128), which outranks PyPI's for the same release.
-EXTRA=()
-[ -n "$TORCH_INDEX" ] && EXTRA=(--extra-index-url "$TORCH_INDEX")
-"$PY" -m pip install -q --no-cache-dir --upgrade "${EXTRA[@]}" "$REPO[gui,torchref]" jupyterlab ipykernel
+PACKAGES=("$REPO[gui,torchref]" jupyterlab ipykernel)
+if [ "$TORCH_INDEX" != pypi ]; then
+    # pip counts 2.13.0+cu129 and PyPI's 2.13.0 as one release and may keep either, so
+    # ask for the local build by name: first the version pip would choose (which honours
+    # torchref's cap on torch), then that version's build from the index.
+    step "torch from $TORCH_INDEX"
+    version="$("$PY" -m pip install -q --dry-run --ignore-installed --report - "${PACKAGES[@]}" | "$PY" -c '
+import json, sys
+print(next(p["metadata"]["version"] for p in json.load(sys.stdin)["install"] if p["metadata"]["name"] == "torch").split("+")[0])')"
+    tag="$(basename "${TORCH_INDEX%/}")"
+    "$PY" -m pip install -q --no-cache-dir --extra-index-url "$TORCH_INDEX" "torch==$version+$tag"
+fi
+
+step "abismal[gui,torchref] from $REPO, jupyterlab"
+"$PY" -m pip install -q --no-cache-dir --upgrade --upgrade-strategy only-if-needed "${PACKAGES[@]}"
 
 step "example data"
 DEMO="$INSTALL/demo/hewl"
@@ -114,7 +124,7 @@ if command -v nvidia-smi >/dev/null 2>&1 && ! "$PY" -c "import torch, sys; sys.e
     echo
     echo "  This node has a GPU (its driver supports CUDA $driver_cuda) but torch cannot use it:"
     echo "  the driver is older than torch's CUDA build. Rerun with an older build, e.g."
-    echo "    $0 --torch-index https://download.pytorch.org/whl/cu128"
+    echo "    $0 --torch-index https://download.pytorch.org/whl/cu126"
 fi
 echo
 echo "Installed in $INSTALL. Users paste this into the Jupyter app's custom-script field:"
