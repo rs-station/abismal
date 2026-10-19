@@ -8,7 +8,6 @@ import abismal.command_line.parser.likelihood as likelihood
 import abismal.command_line.parser.optimizer as optimizer
 import abismal.command_line.parser.phenix as phenix
 import abismal.command_line.parser.priors as priors
-import abismal.command_line.parser.ray as ray
 import abismal.command_line.parser.surrogate_posterior as surrogate_posterior
 import abismal.command_line.parser.device as device
 import abismal.command_line.parser.torchref as torchref
@@ -21,7 +20,6 @@ groups = [
     optimizer,
     phenix,
     priors,
-    ray,
     surrogate_posterior,
     device,
     torchref,

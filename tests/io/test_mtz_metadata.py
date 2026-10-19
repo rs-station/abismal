@@ -77,7 +77,7 @@ def test_manager_forwards_to_the_loader(conventional_mtz, monkeypatch):
     """The link that was missing: DataManager -> MTZLoader.
 
     Asserted on the argv the loader is constructed with rather than by building
-    a dataset, so the test needs no ray cluster and cannot pass by accident if
+    a dataset, so the test parses nothing and cannot pass by accident if
     the keys are dropped further downstream.
     """
     seen = {}

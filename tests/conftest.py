@@ -12,7 +12,7 @@ import os
 # card free.
 #
 # A worker that hangs while holding the card is worse. One ran for 46 hours,
-# keeping 46 GB of GPU and -- through file handles on already-unlinked ray spill
+# keeping 46 GB of GPU and -- through file handles on already-unlinked spill
 # files -- 264 GB of disk that `du` could not see, until the filesystem hit 100%.
 #
 # Set here rather than per-file because CUDA reads the variable once, when it

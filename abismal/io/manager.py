@@ -51,7 +51,7 @@ class DataManager:
     A high-level class for managing I/O of reflection data.
     """
     def __init__(self, inputs, dmin, cell=None, spacegroup=None, 
-            num_cpus=None, separate=False, wavelength=None, ray_log_level="ERROR",
+            num_cpus=None, separate=False, wavelength=None,
             test_fraction=0., separate_friedel_mates=False, cell_tol=None, isigi_cutoff=None, 
             shuffle_buffer_size=0, batch_size=100, steps_per_epoch=None, validation_steps=None,
             epochs=30, ambiguate=False, mtz_metadata=None, seed=None,
@@ -64,7 +64,6 @@ class DataManager:
         self.wavelength = wavelength
         self.separate = separate
         self.num_cpus = num_cpus
-        self.ray_log_level = ray_log_level
         self.cell = cell
         self.spacegroup = spacegroup
         self.test_fraction = test_fraction
@@ -98,7 +97,6 @@ class DataManager:
             'num_cpus' : self.num_cpus,
             'separate' : self.separate,
             'wavelength' : self.wavelength,
-            'ray_log_level' : self.ray_log_level,
             'test_fraction' : self.test_fraction,
             'num_asus': self.num_asus,
             'separate_friedel_mates' : self.separate_friedel_mates,
@@ -116,7 +114,10 @@ class DataManager:
     @classmethod
     def from_config(cls, conf):
         num_asus = conf.pop('num_asus')
-        result = cls(**conf)
+        # Files from older versions may hold settings that no longer exist.
+        import inspect
+        known = inspect.signature(cls.__init__).parameters
+        result = cls(**{k: v for k, v in conf.items() if k in known})
         result.num_asus = num_asus
         return result
 
@@ -131,7 +132,6 @@ class DataManager:
             num_cpus = parser.num_cpus,
             separate = parser.separate,
             wavelength = parser.wavelength,
-            ray_log_level = parser.ray_log_level,
             test_fraction = parser.test_fraction,
             separate_friedel_mates = parser.separate_friedel_mates,
             cell_tol = parser.fractional_cell_tolerance,
@@ -190,14 +190,10 @@ class DataManager:
                     cell_tol=self.cell_tol,
                 )
                 if self.separate:
-                    self.num_cpus = 1 #multiprocessing with ray can't be done on multiple files at once
                     asu_id += 1
                 if self.cell is None:
                     self.cell = loader.cell
-                data.append(loader.get_dataset(
-                    num_cpus=self.num_cpus,
-                    logging_level=self.ray_log_level,
-                ))
+                data.append(loader.get_dataset(num_cpus=self.num_cpus))
 
         elif all([_is_dials_file(f) for f in self.inputs]):
             # Checked before the loader, not inside it. dxtbx is imported several

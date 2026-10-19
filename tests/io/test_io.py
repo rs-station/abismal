@@ -64,11 +64,11 @@ def test_stream_loader(stills_stream):
 
 
 @pytest.mark.timeout(300)
-def test_stream_loader_ray_matches_serial(stills_stream):
-    """ Parsing with ray must give the same images, in the same order """
+def test_stream_loader_parallel_matches_serial(stills_stream):
+    """ Parsing in parallel must give the same images, in the same order """
     loader = StreamLoader(stills_stream, dmin=4.)
     serial = list(loader.get_dataset(num_cpus=1))
-    parallel = list(loader.get_dataset(num_cpus=2, logging_level="ERROR"))
+    parallel = list(loader.get_dataset(num_cpus=2))
     assert len(serial) == len(parallel)
     for a, b in zip(serial, parallel):
         for x, y in zip(a, b):

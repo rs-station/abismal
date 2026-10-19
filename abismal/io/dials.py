@@ -90,33 +90,24 @@ class StillsLoader(DataLoader):
                 raise ValueError(f"Crystal {cid} has Universal Hermann Mauguin symbol {_hms[cid]} but {hms} was expected")
         return gemmi.SpaceGroup(hms)
 
-    def get_dataset(self, num_cpus=1, **ray_kwargs):
+    def get_dataset(self, num_cpus=1):
         """
         Lazily convert dials monochromatic stills files to per-image records.
 
         Returns a generator of 7-tuples of numpy arrays (see `DataLoader`),
-        images in file order. With `num_cpus > 1` every file is submitted to
-        ray on the first `next`, and each file's images are yielded as soon
-        as that file is parsed, without waiting for the files after it.
+        images in file order. With `num_cpus > 1` and several files, the files
+        are parsed in a pool of processes (see `abismal.io.parallel`), and each
+        file's images are yielded as soon as that file is parsed, without
+        waiting for the files after it.
         """
         args = [
             (expt, refl, self.cell, self.spacegroup, self.dmin, self.asu_id,
              self.include_eo, self.cell_tol, self.isigi_cutoff)
             for expt,refl in zip(self.expt_files, self.refl_files)
         ]
-        if num_cpus is None or num_cpus <= 1:
-            for a in args:
-                yield from self._split_images(StillsLoader.dials_to_ragged(*a))
-        else:
-            from abismal.io.common import ray_context
-            with ray_context(num_cpus=num_cpus, **ray_kwargs) as ray:
-                @ray.remote
-                def parse_expt_refl(*args):
-                    return StillsLoader.dials_to_ragged(*args)
-
-                result_ids = [parse_expt_refl.remote(*a) for a in args]
-                for result_id in result_ids:
-                    yield from self._split_images(ray.get(result_id))
+        from abismal.io.parallel import ordered_map
+        for flat in ordered_map(StillsLoader.dials_to_ragged, args, num_workers=num_cpus):
+            yield from self._split_images(flat)
 
     @staticmethod
     def _split_images(flat):
@@ -134,9 +125,9 @@ class StillsLoader(DataLoader):
         one row per reflection, sorted by `image_id`, which numbers the
         surviving images from zero. `StillsLoader._split_images` turns this
         into per-image records. Kept flat so that one array of each kind,
-        rather than one per image, crosses the ray object store.
+        rather than one per image, crosses between processes.
         """
-        # Also here: dials_to_ragged is a staticmethod, and ray runs it in
+        # Also here: dials_to_ragged is a staticmethod, and the pool runs it in
         # worker processes that never went through __init__.
         from abismal.io._dials_check import require_dials
 

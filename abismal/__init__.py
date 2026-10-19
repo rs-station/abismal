@@ -16,7 +16,7 @@ __version__ = getVersionNumber()
 import pandas as pd #Workaround for scipy 1.15.1 (see https://github.com/rs-station/abismal/issues/12)
 
 # Subpackages load on first use. Importing them all here meant `import abismal`
-# paid for torch, ray and the rest even in a process that only wanted the CLI
+# paid for torch and the rest even in a process that only wanted the CLI
 # parser -- and the GUI imports the parser.
 _submodules = (
     "callbacks", "distributions", "io", "layers", "likelihood", "merging",
