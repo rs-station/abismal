@@ -101,14 +101,16 @@ def test_output_streams_rather_than_arriving_at_the_end(replay):
     Sampling from the test thread while the child is still writing shows the log
     growing and the progress bar advancing.
     """
-    runner = replay(delay=0.03, total_epochs=12)
+    runner = replay(delay=0.1, total_epochs=12)
 
+    # Start sampling once the child is writing epochs, not on a fixed clock: on a
+    # slow CI runner the child's interpreter can take longer to start than a
+    # fixed window lasts, and the log would sit at its launch header throughout.
+    wait_until(lambda: "Epoch" in H.log_text(runner) or not runner.is_running, timeout=60)
     samples = []
-    for _ in range(12):
-        time.sleep(0.25)
+    while runner.is_running:
         samples.append((runner.progress_widget.value, len(runner.log_widget.value)))
-        if not runner.is_running:
-            break
+        time.sleep(0.05)
     H.wait_for_replay(runner, timeout=30)
 
     log_lengths = [n for _, n in samples]
