@@ -97,24 +97,3 @@ def test_manager_forwards_to_the_loader(conventional_mtz, monkeypatch):
     assert seen["metadata_keys"] == ["XDET", "YDET"], (
         "DataManager did not forward mtz_metadata to MTZLoader"
     )
-
-
-def test_manager_config_round_trips(tmp_path, conventional_mtz):
-    """datamanager.yml is reloaded to resume a run, so the keys must persist.
-
-    `get_config` reads `self.cell.parameters`, so the cell is supplied here
-    rather than discovered by reading the file.
-    """
-    import gemmi
-
-    manager = DataManager(
-        inputs=[conventional_mtz], dmin=None,
-        cell=gemmi.UnitCell(79.0, 79.0, 38.0, 90.0, 90.0, 90.0),
-        spacegroup=gemmi.SpaceGroup("P 43 21 2"),
-        mtz_metadata=["XDET", "YDET"],
-    )
-    assert manager.get_config()["mtz_metadata"] == ["XDET", "YDET"]
-
-    path = tmp_path / "datamanager.yml"
-    manager.to_file(str(path))
-    assert DataManager.from_file(str(path)).mtz_metadata == ["XDET", "YDET"]

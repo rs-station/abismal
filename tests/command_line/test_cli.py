@@ -52,7 +52,6 @@ def _run_abismal(flags, files, additional_asserts=()):
 
         assert exists('asu_0_epoch_1.mtz')
         assert exists('asu_0_epoch_2.mtz')
-        assert exists('datamanager.yml')
         assert exists('epoch_0.pt')
         assert exists('epoch_1.pt')
         assert exists('epoch_2.pt')
@@ -67,7 +66,7 @@ def _run_abismal(flags, files, additional_asserts=()):
         rs.read_mtz("asu_0_epoch_1.mtz")
         rs.read_mtz("asu_0_epoch_2.mtz")
 
-        args = " datamanager.yml epoch_2.pt --run-eagerly --sf-init epoch_0.pt "
+        args = " epoch_2.pt --run-eagerly --sf-init epoch_0.pt "
         cchalf_main(args.split())
         assert exists('abismal_xval.mtz')
         assert_cchalf_optimized()

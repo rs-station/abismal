@@ -10,7 +10,6 @@ _FILE_PATTERNS = (
     'abismal.log',
     'console.log',
     'abismal.pid',
-    'datamanager.yml',
     'history.csv',
     'epoch_*.pt',
     'asu_*.mtz',

@@ -1,19 +1,10 @@
 import torch
-from abismal import serialization
 
 
-class PriorBase(torch.nn.Module, serialization.Serializable):
+class PriorBase(torch.nn.Module):
     def __init__(self, rac):
         super().__init__()
         self.rac = rac
-
-    def get_config(self):
-        return {'rac' : serialization.serialize(self.rac)}
-
-    @classmethod
-    def from_config(cls, config):
-        config['rac'] = serialization.deserialize(config['rac'])
-        return cls(**config)
 
     def distribution(self, asu_id, hkl):
         raise NotImplementedError(

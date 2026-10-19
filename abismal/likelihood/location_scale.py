@@ -1,5 +1,4 @@
 import torch
-from abismal import serialization
 from abismal import tracking
 
 def weighted_pearsonr(x, y, w=None, axis=-1, keepdims=False, eps=1e-12):
@@ -45,10 +44,7 @@ def weighted_pearsonr(x, y, w=None, axis=-1, keepdims=False, eps=1e-12):
         r = r.squeeze()
     return r
 
-class LocationScale(torch.nn.Module, serialization.Serializable):
-    def get_config(self):
-        return {}
-
+class LocationScale(torch.nn.Module):
     def _likelihood(self, iobs, sigiobs):
         raise NotImplementedError(
             "Derived classes must implement _likelihood(iobs, sigiobs)->torch.distributions.Distribution"

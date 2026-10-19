@@ -1,9 +1,6 @@
 import torch
 from torch import distributions as td
-from abismal import serialization
 from abismal.prior.base import PriorBase
-
-@serialization.register
 class NormalPrior(PriorBase):
     """Normally distributed prior."""
     def __init__(self, rac, loc=0., scale=1.):
@@ -18,14 +15,6 @@ class NormalPrior(PriorBase):
         self.loc = loc
         self.scale = scale
 
-    def get_config(self):
-        config = super().get_config()
-        config.update({
-            'loc' : self.loc,
-            'scale' : self.scale,
-        })
-        return config
-
     def _ones(self, shape):
         return torch.ones(shape, device=self.rac.dHKL.device)
 
@@ -39,8 +28,6 @@ class NormalPrior(PriorBase):
         loc = self.loc * ones
         scale = self.scale * ones
         return td.Normal(loc, scale)
-
-@serialization.register
 class MultivariateNormalPrior(NormalPrior):
     """Multivariate normal distributed prior."""
     def flat_distribution(self):
@@ -52,8 +39,6 @@ class MultivariateNormalPrior(NormalPrior):
         # posterior in torch's analytic KL registry.
         factor = torch.zeros(self.rac.asu_size, 1, device=loc.device)
         return td.LowRankMultivariateNormal(loc, factor, scale * scale)
-
-@serialization.register
 class HalfNormalPrior(PriorBase):
     """HalfNormally distributed prior."""
     def __init__(self, rac, scale=1.):
@@ -65,13 +50,6 @@ class HalfNormalPrior(PriorBase):
         """
         super().__init__(rac)
         self.scale = scale
-
-    def get_config(self):
-        config = super().get_config()
-        config.update({
-            'scale' : self.scale,
-        })
-        return config
 
     def flat_distribution(self):
         scale = self.scale * torch.ones(self.rac.asu_size, device=self.rac.dHKL.device)

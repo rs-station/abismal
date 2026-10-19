@@ -117,13 +117,13 @@ def test_both_parameters_are_trainable(rac, Posterior):
     [StructureFactorLogNormalPosterior, IntensityLogNormalPosterior],
 )
 def test_round_trips_through_saving(rac, moments, Posterior, tmp_path):
-    from abismal import serialization
     mean, stddev = moments
     q = Posterior(rac, loc_init=mean, scale_init=stddev)
 
     path = tmp_path / "posterior.pt"
     torch.save(q.state_dict(), path)
-    reloaded = serialization.deserialize(serialization.serialize(q))
+    # Rebuilt from its constructor with other initial values, as loading a checkpoint does.
+    reloaded = Posterior(rac, loc_init=np.ones_like(mean), scale_init=np.ones_like(stddev))
     reloaded.load_state_dict(torch.load(path))
 
     assert type(reloaded) is Posterior

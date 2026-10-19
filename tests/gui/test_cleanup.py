@@ -19,7 +19,7 @@ from abismal.gui.cleanup import (
 @pytest.fixture
 def populated(tmp_path):
     """One of everything abismal writes, plus decoys that must survive."""
-    for name in ("abismal.log", "console.log", "abismal.pid", "datamanager.yml",
+    for name in ("abismal.log", "console.log", "abismal.pid",
                  "history.csv", "epoch_0.pt", "epoch_10.pt", "asu_0_epoch_1.mtz"):
         (tmp_path / name).write_text("x")
     for name in ("eff_0_asu_0_epoch_1", "diffmaps_0"):

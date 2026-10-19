@@ -1,5 +1,4 @@
 import torch
-from abismal import serialization
 from abismal import tracking
 from abismal.symmetry import Op
 from abismal.layers.normalization import StandardizeIntensities,StandardizeMetadata
@@ -9,10 +8,7 @@ def _per_image_sum(values, image_id, num_images):
     """Sum per-reflection `values`, shape (reflections, ...), within each image."""
     out = values.new_zeros((num_images,) + values.shape[1:])
     return out.index_add_(0, image_id, values)
-
-
-@serialization.register
-class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
+class VariationalMergingModel(torch.nn.Module):
     def __init__(
             self,
             scale_model,
@@ -43,26 +39,6 @@ class VariationalMergingModel(torch.nn.Module, serialization.Serializable):
         else:
             self.standardize_intensity = None
             self.standardize_metadata = None
-
-    def get_config(self):
-        config = {
-            'scale_model' : serialization.serialize(self.scale_model),
-            'surrogate_posterior' : serialization.serialize(self.surrogate_posterior),
-            'prior' : serialization.serialize(self.prior),
-            'likelihood' : serialization.serialize(self.likelihood),
-            'mc_samples' : self.mc_samples,
-            'kl_weight' : self.kl_weight,
-            'epsilon' : self.epsilon,
-            'reindexing_ops' : [op.triplet() for op in self.reindexing_ops],
-            'standardize' : self.standardize,
-        }
-        return config
-
-    @classmethod
-    def from_config(cls, config):
-        for k in ['scale_model', 'surrogate_posterior', 'likelihood', 'prior']:
-            config[k] = serialization.deserialize(config[k])
-        return cls(**config)
 
     def parameter_groups(self):
         """

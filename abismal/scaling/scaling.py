@@ -1,7 +1,6 @@
 import torch
 import torch.nn.functional as F
 from torch import distributions as td
-from abismal import serialization
 from abismal import tracking
 from abismal.distributions import FoldedNormal,Rice
 from abismal.layers.feed_forward import FeedForward, GLUFeedForward, linear, variance_scaling_
@@ -171,9 +170,7 @@ def kl_divergence(q, p, z, epsilon=0.):
     q_z = q.log_prob(z)
     p_z = p.log_prob(z + epsilon)
     return q_z - p_z
-
-@serialization.register
-class ImageScaler(torch.nn.Module, serialization.Serializable):
+class ImageScaler(torch.nn.Module):
     bijector_dict = {
         'softplus' : F.softplus,
         'elup1' : lambda x : F.elu(x) + 1.,
@@ -356,33 +353,6 @@ class ImageScaler(torch.nn.Module, serialization.Serializable):
                 self.output_dense = linear(mlp_width, 1, output_bias, kernel_initializer)
             else:
                 self.output_dense = linear(mlp_width, 2, output_bias, kernel_initializer)
-
-    def get_config(self):
-        config = {
-            'metadata_length' : self.metadata_length,
-            'mlp_width' : self.mlp_width,
-            'mlp_depth' : self.mlp_depth,
-            'hidden_units': self.hidden_units,
-            'epsilon' : self.epsilon,
-            'ff_epsilon' : self.ff_epsilon,
-            'activation' : self.activation,
-            'kl_weight' : self.kl_weight,
-            'share_weights' : self.share_weights,
-            'prior_name' : self.prior_name,
-            'posterior_name' : self.posterior_name,
-            'bijector_name' : self.bijector_name,
-            'pre_activation' : self.pre_activation,
-            'hkl_to_imodel' : self.hkl_to_imodel,
-            'gated' : self.gated,
-            'output_bias' : self.output_bias,
-            'optimize_prior_scale': self.optimize_prior_scale,
-            'dropout': self.dropout,
-            'random_seed': self.random_seed,
-            'batch_normalize' : self.batch_normalize,
-            'metadata_noise_factor' : self.metadata_noise_factor,
-            'precision' : self.precision,
-        }
-        return config
 
     def _autocast(self, like):
         return torch.autocast(

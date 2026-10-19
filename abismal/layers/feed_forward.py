@@ -1,7 +1,6 @@
 import math
 import torch
 import torch.nn.functional as F
-from abismal import serialization
 
 
 # Keras resolved activations by name; these are the ones the CLI offers (see
@@ -55,10 +54,7 @@ def linear(in_features, out_features, use_bias=True, kernel_init=glorot_normal_)
     if use_bias:
         torch.nn.init.zeros_(layer.bias)
     return layer
-
-
-@serialization.register
-class FeedForward(torch.nn.Module, serialization.Serializable):
+class FeedForward(torch.nn.Module):
     """
     This is a ResNet version 2 style layer
     """
@@ -168,18 +164,6 @@ class FeedForward(torch.nn.Module, serialization.Serializable):
         self.pre_activation = self.get_transform(pre_activation, self)
         self.build(kernel_initializer)
 
-    def get_config(self):
-        return {
-            'units' : self.units,
-            'hidden_units' : self.hidden_units,
-            'dropout' : self.dropout_rate,
-            'activation' : self._activation,
-            'pre_activation' : self._pre_activation,
-            'use_bias' : self.use_bias,
-            'epsilon' : self.epsilon,
-            'scale_factor' : self.scale_factor,
-        }
-
     def build(self, kernel_initializer):
         self.ff1 = linear(self.units, self.hidden_units, self.use_bias, kernel_initializer)
         self.ff2 = linear(self.hidden_units, self.units, self.use_bias, "zeros")
@@ -199,9 +183,6 @@ class FeedForward(torch.nn.Module, serialization.Serializable):
 
         out = out + X
         return out
-
-
-@serialization.register
 class GLUFeedForward(FeedForward):
     """
     This is a residual, gated linear unit.

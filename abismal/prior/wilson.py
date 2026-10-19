@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-from abismal import serialization
 from abismal import tracking
 from abismal.prior.base import PriorBase
 
@@ -18,8 +17,7 @@ class WilsonPriorBase(PriorBase):
         """
         super().__init__(rac)
         # Always a full-length buffer, even for a scalar, so that a saved model
-        # restores an empirical Σ through its state_dict without the config
-        # having to carry asu_size floats.
+        # restores an empirical Σ through its state_dict.
         sigma = torch.as_tensor(sigma, dtype=torch.float32)
         sigma = sigma * torch.ones(self.rac.asu_size)
         self.register_buffer('_sigma', sigma)
@@ -110,10 +108,6 @@ class WilsonPriorBase(PriorBase):
             sigma = mean[labels]
 
         return cls(rac, sigma.astype('float32'), **kwargs)
-
-    def get_config(self):
-        # Σ is restored from the state_dict; see __init__.
-        return super().get_config()
 
 
 class AutoWilsonPriorBase(WilsonPriorBase):

@@ -4,7 +4,6 @@ from reciprocalspaceship.utils import hkl_to_asu,is_absent
 from reciprocalspaceship.decorators import spacegroupify,cellify
 import gemmi
 from abismal.symmetry.op import Op
-from abismal import serialization
 
 
 def _flat_miller_index(asu_id, H, hmax):
@@ -32,10 +31,7 @@ def _flat_miller_index(asu_id, H, hmax):
         asu_id = asu_id.long()
     a = asu_id[..., 0]
     return ((a * shape[0] + H[..., 0]) * shape[1] + H[..., 1]) * shape[2] + H[..., 2]
-
-
-@serialization.register
-class ReciprocalASU(serialization.Serializable):
+class ReciprocalASU:
     @cellify
     @spacegroupify
     def __init__(self, cell, spacegroup, dmin, anomalous=True):
@@ -101,14 +97,6 @@ class ReciprocalASU(serialization.Serializable):
         self.epsilon = go.epsilon_factor_array(self.Hunique).astype(np.float32)
         self.centric = go.centric_flag_array(self.Hunique).astype(bool)
 
-    def get_config(self):
-        return {
-            'cell' : list(self.cell.parameters),
-            'spacegroup' : self.spacegroup.xhm(),
-            'dmin' : self.dmin,
-            'anomalous' : self.anomalous,
-        }
-
     @property
     def spacegroup(self):
         return gemmi.SpaceGroup(self._spacegroup)
@@ -153,10 +141,7 @@ class ReciprocalASU(serialization.Serializable):
         idx = self.miller_ids(H)
         safe = np.maximum(idx, 0)
         return np.asarray(tensor)[safe]
-
-
-@serialization.register
-class ReciprocalASUCollection(torch.nn.Module, serialization.Serializable):
+class ReciprocalASUCollection(torch.nn.Module):
     def __init__(self, *reciprocal_asus):
         """
         Several reciprocal ASUs concatenated into one flat index space, which is
@@ -199,16 +184,6 @@ class ReciprocalASUCollection(torch.nn.Module, serialization.Serializable):
 
     def _buffer(self, name, value):
         self.register_buffer(name, torch.as_tensor(value), persistent=False)
-
-    def get_config(self):
-        return {
-            'reciprocal_asus' : [serialization.serialize(v) for v in self.reciprocal_asus],
-        }
-
-    @classmethod
-    def from_config(cls, config):
-        rasus = [serialization.deserialize(v) for v in config.pop('reciprocal_asus')]
-        return cls(*rasus, **config)
 
     def _miller_ids(self, asu_id, H):
         """
@@ -278,9 +253,6 @@ class ReciprocalASUCollection(torch.nn.Module, serialization.Serializable):
 
     def __len__(self):
         return len(self.reciprocal_asus)
-
-
-@serialization.register
 class ReciprocalASUGraph(ReciprocalASUCollection):
     def __init__(self, *reciprocal_asus, parents=None, reindexing_ops=None):
         super().__init__(*reciprocal_asus)
@@ -303,11 +275,3 @@ class ReciprocalASUGraph(ReciprocalASUCollection):
         self._buffer('is_root', parent_asu_id == self.asu_id)
         self._buffer('parent_miller_id', self._miller_ids(parent_asu_id[:,None], Hpa))
         self._buffer('has_parent', (self.parent_miller_id >= 0) & (~self.is_root))
-
-    def get_config(self):
-        config = super().get_config()
-        config.update({
-            'parents' : list(self.parents),
-            'reindexing_ops' : self.reindexing_ops,
-        })
-        return config

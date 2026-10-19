@@ -55,3 +55,21 @@ def synthetic_batch(model, num_images=3, refls_per_image=20, seed=0):
             np.sqrt(I + 1.).astype(np.float32),
         ))
     return Batch.collate(images)
+
+
+SMALL_FACTS = {
+    "cell": [34., 45., 98., 90., 90., 90.],
+    "spacegroup": "P 21 21 21",
+    "dmin": 4.0,
+    "num_asus": 1,
+    "metadata_length": 3,
+}
+
+
+def build_cli_model(*flags, facts=None):
+    """A small model built the way the CLI builds one, so it can be saved and reloaded."""
+    from abismal.build import build_model
+    from abismal.command_line.parser import parser
+
+    args = parser.parse_args(["-o", "unused", "-d", "4", "unused.mtz", "--d-model", "8", "--layers", "2", *flags])
+    return build_model(args, dict(SMALL_FACTS if facts is None else facts)), args

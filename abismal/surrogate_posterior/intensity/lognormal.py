@@ -1,10 +1,6 @@
-from abismal import serialization
 
 from abismal.surrogate_posterior import IntensityPosteriorBase
 from abismal.surrogate_posterior.lognormal import LogNormalPosteriorBase
-
-
-@serialization.register
 class LogNormalPosterior(LogNormalPosteriorBase, IntensityPosteriorBase):
     """An intensity surrogate posterior parameterized by a log normal distribution."""
 

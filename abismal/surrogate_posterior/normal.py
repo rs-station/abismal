@@ -3,7 +3,6 @@ from torch import distributions as td
 from abismal.surrogate_posterior.surrogate_posterior import PositiveParameter
 
 
-
 class NormalPosteriorBase(object):
     """
     A base class for creating normal posteriors. 
@@ -60,13 +59,6 @@ class MultivariateNormalPosteriorBase(object):
     @property
     def scale(self):
         return torch.ones(self.rac.asu_size, device=self._scale.raw.device) * self._scale()
-
-    def get_config(self):
-        conf = super().get_config()
-        conf.update({
-            'rank' : self.rank,
-        })
-        return conf
 
     def _distribution(self, loc, scale, scale_update):
         # TFP's MultivariateNormalDiagPlusLowRankCovariance(loc, d, U) is the

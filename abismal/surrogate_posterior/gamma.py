@@ -3,7 +3,6 @@ from torch import distributions as td
 from abismal.surrogate_posterior.surrogate_posterior import PositiveParameter
 
 
-
 class GammaPosteriorBase(object):
     """
     A base class for creating gamma posteriors. 
@@ -26,11 +25,6 @@ class GammaPosteriorBase(object):
 
         #Concentration should remain above one to prevent change in curvature
         self.concentration = PositiveParameter(conc_init, shift=concentration_min + epsilon)
-
-    def get_config(self):
-        config = super().get_config()
-        config['concentration_min'] = self.concentration_min
-        return config
 
     def _distribution(self, concentration, rate):
         return td.Gamma(concentration, rate)

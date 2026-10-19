@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-from abismal import serialization
 from abismal import tracking
 
 
@@ -28,9 +27,7 @@ class RunningMoments:
     @property
     def std(self):
         return np.sqrt(self.var)
-
-@serialization.register
-class Standardize(torch.nn.Module, serialization.Serializable):
+class Standardize(torch.nn.Module):
     """
     Standardize the last axis of its input with running (Welford) moments that
     accumulate while training and are frozen thereafter.
@@ -50,20 +47,6 @@ class Standardize(torch.nn.Module, serialization.Serializable):
         # A tensor rather than a Python bool so that StandardizationFreezer can
         # flip it mid-training without recompiling a compiled train step.
         self.register_buffer('frozen', torch.zeros((), dtype=torch.bool))
-
-    def get_config(self):
-        return {
-            'units' : self.units,
-            'center' : self.center,
-            'max_counts' : None if np.isinf(self.max_counts) else self.max_counts,
-            'epsilon' : self.epsilon,
-        }
-
-    @classmethod
-    def from_config(cls, config):
-        if config.get('max_counts') is None:
-            config['max_counts'] = np.inf
-        return cls(**config)
 
     @property
     def flat_mean(self):
@@ -106,32 +89,18 @@ class Standardize(torch.nn.Module, serialization.Serializable):
         if training:
             self.update(data)
         return self.standardize(data)
-
-@serialization.register
 class StandardizeMetadata(Standardize):
     def __init__(self, units, max_counts=np.inf, epsilon=1e-6, **kwargs):
         kwargs.pop('center', None)
         super().__init__(units, center=True, max_counts=max_counts, epsilon=epsilon)
 
-    def get_config(self):
-        config = super().get_config()
-        config.pop('center')
-        return config
-
     def forward(self, inputs, training=None):
         metadata_out = super().forward(inputs.metadata, training=training)
         return inputs._replace(metadata=metadata_out)
-
-@serialization.register
 class StandardizeIntensities(Standardize):
     def __init__(self, units=1, max_counts=np.inf, epsilon=1e-6, **kwargs):
         kwargs.pop('center', None)
         super().__init__(units, center=False, max_counts=max_counts, epsilon=epsilon)
-
-    def get_config(self):
-        config = super().get_config()
-        config.pop('center')
-        return config
 
     def forward(self, inputs, training=None):
         iout = super().forward(inputs.iobs, training=training)

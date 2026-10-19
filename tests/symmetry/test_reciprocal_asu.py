@@ -3,7 +3,6 @@ import numpy as np
 import pytest
 import torch
 
-from abismal import serialization
 from abismal.symmetry import Op, ReciprocalASU, ReciprocalASUCollection, ReciprocalASUGraph
 
 
@@ -69,17 +68,6 @@ def test_gather_matches_numpy_rasu(rac):
     a = torch.zeros((100, 1), dtype=torch.int64)
     out = rac.gather(torch.as_tensor(padded), a, torch.as_tensor(H)).numpy()
     assert np.array_equal(out, expected)
-
-
-def test_serialization_roundtrip(rac):
-    graph = ReciprocalASUGraph(*rac.reciprocal_asus, parents=[0, 0], reindexing_ops=["x,y,z", "x,y,z"])
-    clone = serialization.deserialize(serialization.serialize(graph))
-    assert isinstance(clone, ReciprocalASUGraph)
-    assert torch.equal(clone.miller_id, graph.miller_id)
-    assert torch.equal(clone.parent_miller_id, graph.parent_miller_id)
-    assert clone.parents == [0, 0]
-    # Lookup tables are rebuilt from the config, so the state_dict stays empty
-    assert len(graph.state_dict()) == 0
 
 
 @pytest.mark.parametrize("triplet", ["x,y,z", "-y,-x,-z", "k,h,-l", "-h,k,-l"])

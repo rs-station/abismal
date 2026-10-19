@@ -1,7 +1,6 @@
 import numpy as np
 import reciprocalspaceship as rs
 import torch
-from abismal import serialization
 
 
 def _numpy(x):
@@ -35,7 +34,7 @@ class PositiveParameter(torch.nn.Module):
         return self.transform(rac.gather(self.raw, asu_id, hkl))
 
 
-class PosteriorBase(torch.nn.Module, serialization.Serializable):
+class PosteriorBase(torch.nn.Module):
     anomalous_keys = [
         'F(+)',
         'SIGF(+)',
@@ -63,19 +62,6 @@ class PosteriorBase(torch.nn.Module, serialization.Serializable):
         self.epsilon = epsilon
         self.rac = rac
         self.register_buffer('seen', torch.zeros(self.rac.asu_size, dtype=torch.bool))
-
-    def get_config(self):
-        config = {
-            'rac' : serialization.serialize(self.rac),
-            'epsilon' : self.epsilon,
-            'independent' : self.independent,
-        }
-        return config
-
-    @classmethod
-    def from_config(cls, config):
-        config['rac'] = serialization.deserialize(config['rac'])
-        return cls(**config)
 
     @torch.no_grad()
     def register_seen(self, asu_id, hkl):

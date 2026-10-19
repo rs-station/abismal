@@ -1,11 +1,7 @@
 from abismal.surrogate_posterior import IntensityPosteriorBase
 from abismal.surrogate_posterior.gamma import GammaPosteriorBase
 import torch
-from abismal import serialization
 from abismal.distributions import log_gamma_half_ratio_excess
-
-
-@serialization.register
 class GammaPosterior(GammaPosteriorBase, IntensityPosteriorBase):
     """
     an intensity surrogate posterior parameterized by a gamma distribution.

@@ -1,6 +1,5 @@
 import math
 import torch
-from abismal import serialization
 from abismal.distributions import FoldedNormal,Nakagami,Rice
 from abismal.prior.base import PriorBase
 from abismal.prior.wilson import WilsonPriorBase,AutoWilsonPriorBase
@@ -43,8 +42,6 @@ class WilsonDistribution:
 
     def log_prob(self, z):
         return self._dist.log_prob(z)
-
-@serialization.register
 class WilsonPrior(WilsonPriorBase):
     """Wilson's priors on structure factor amplitudes."""
 
@@ -68,8 +65,6 @@ class WilsonPrior(WilsonPriorBase):
 
     def distribution(self, asu_id, hkl):
         return self._distribution(asu_id, hkl)
-
-@serialization.register
 class AutoWilsonPrior(WilsonPrior, AutoWilsonPriorBase):
     """Wilson prior with learnable scale and b-factor"""
 
@@ -142,8 +137,6 @@ class MultiWilsonDistribution:
             ll_dw,
         )
         return ll
-
-@serialization.register
 class MultiWilsonPrior(PriorBase):
     """
     This class uses reparameterized samples to approximate the log probability 
@@ -196,13 +189,6 @@ class MultiWilsonPrior(PriorBase):
     @property
     def correlation(self):
         return self._correlation[self.rac.asu_id]
-
-    def get_config(self):
-        config = super().get_config()
-        config.update({
-            'correlation' : self._correlation_list,
-        })
-        return config
 
     def _distribution(self, asu_id=None, hkl=None):
         sigma = self.sigma

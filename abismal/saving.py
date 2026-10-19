@@ -1,35 +1,34 @@
 """
 Saving and loading abismal models.
 
-A saved model is one `torch.save`d dict holding the model's config as JSON, its
-state_dict, and optionally the optimizer's class, hyperparameters and state.
-It contains only plain types and tensors, so it loads under torch's default
+A saved model is one `torch.save`d dict holding the command-line arguments the
+model was built from, the few facts about the data its structure depends on
+(see `abismal.build.facts_from`), its state_dict, and optionally the
+optimizer's state. Loading rebuilds the model with `abismal.build.build_model`
+and then loads the weights, so model classes need no serialization code. The
+file contains only plain types and tensors, so it loads under torch's default
 `weights_only=True` without trusting the file to run code.
 """
-import json
+from argparse import Namespace
+from pathlib import PurePath
+
 import torch
-from abismal import serialization
 
 FORMAT = "abismal-torch"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 
-def _optimizer_config(optimizer):
-    lr = optimizer.learning_rate
-    return {
-        "class_name": f"{type(optimizer).__module__}.{type(optimizer).__qualname__}",
-        "config": {
-            # A schedule is a function; record the rate it had reached.
-            "learning_rate": lr if not callable(lr) else optimizer.current_learning_rate(),
-            "beta_1": optimizer.beta_1,
-            "beta_2": optimizer.beta_2,
-            "epsilon": optimizer.epsilon,
-            "weight_decay": optimizer.weight_decay,
-            "clipnorm": optimizer.clipnorm,
-            "clipvalue": optimizer.clipvalue,
-            "global_clipnorm": optimizer.global_clipnorm,
-        },
-    }
+def _plain(value):
+    """`value` as types torch.load(weights_only=True) accepts."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, PurePath):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _plain(v) for k, v in value.items()}
+    return str(value)
 
 
 def save_model(model, path, optimizer=None):
@@ -37,20 +36,28 @@ def save_model(model, path, optimizer=None):
     Parameters
     ----------
     model : VariationalMergingModel
+        A model from `abismal.build.build_model`, which records what it was
+        built from.
     path : str
     optimizer : AbismalOptimizer (optional)
         Saved with its state, so that training can resume where it stopped.
     """
+    spec = getattr(model, "spec", None)
+    if spec is None:
+        raise ValueError(
+            "This model was not built by abismal.build.build_model, so there is "
+            "nothing to rebuild it from. Save its state_dict with torch.save instead."
+        )
     from abismal import __version__
     payload = {
         "format": FORMAT,
         "format_version": FORMAT_VERSION,
         "abismal_version": __version__,
-        "config": json.dumps(serialization.serialize(model)),
+        "args": _plain(spec["args"]),
+        "facts": _plain(spec["facts"]),
         "state_dict": model.state_dict(),
     }
     if optimizer is not None:
-        payload["optimizer_config"] = json.dumps(_optimizer_config(optimizer))
         payload["optimizer"] = optimizer.state_dict()
     torch.save(payload, path)
 
@@ -62,14 +69,35 @@ def _load(path, map_location):
     return payload
 
 
+def _args(payload, path):
+    """The saved arguments over today's defaults, so new options keep theirs."""
+    if "args" not in payload:
+        raise ValueError(
+            f"{path} was saved by an earlier abismal that did not record its "
+            "arguments, so the model cannot be rebuilt from it. Its weights can "
+            "still initialize a run through --scale-init-file or "
+            "--posterior-init-file."
+        )
+    from abismal.command_line.parser import parser
+    args = {a.dest: a.default for a in parser._actions if a.dest != "help"}
+    args.update(payload["args"])
+    return Namespace(**args)
+
+
 def load_model(path, map_location="cpu"):
     """
     Rebuild a model saved with `save_model`, weights included.
     """
+    from abismal.build import build_model
     payload = _load(path, map_location)
-    model = serialization.deserialize(json.loads(payload["config"]))
+    model = build_model(_args(payload, path), payload["facts"])
     model.load_state_dict(payload["state_dict"])
-    return model
+    return model.to(map_location)
+
+
+def load_args(path):
+    """The command-line arguments a saved model was trained with, as a Namespace."""
+    return _args(_load(path, "cpu"), path)
 
 
 def load_optimizer(path, model, map_location="cpu", state=True):
@@ -79,15 +107,22 @@ def load_optimizer(path, model, map_location="cpu", state=True):
     `state=False` only its class and hyperparameters are restored, and its
     moments start from zero.
     """
+    from abismal.build import build_optimizer
     payload = _load(path, map_location)
-    if "optimizer_config" not in payload:
+    if "optimizer" not in payload:
         return None
-    import importlib
-    config = json.loads(payload["optimizer_config"])
-    module, _, name = config["class_name"].rpartition(".")
-    cls = getattr(importlib.import_module(module), name)
-    from abismal.training import parameter_groups
-    optimizer = cls(parameter_groups(model), **config["config"])
+    optimizer = build_optimizer(_args(payload, path), model)
     if state:
         optimizer.load_state_dict(payload["optimizer"])
     return optimizer
+
+
+def load_weights(path, module, prefix):
+    """
+    Load the weights saved under `prefix` (for instance "scale_model") into
+    `module`. Works for checkpoints from any abismal version, since it uses
+    only the state_dict.
+    """
+    state_dict = _load(path, "cpu")["state_dict"]
+    head = prefix + "."
+    module.load_state_dict({k[len(head):]: v for k, v in state_dict.items() if k.startswith(head)})

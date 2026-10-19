@@ -15,10 +15,7 @@ def main(args=None):
     from argparse import ArgumentParser
     parser = ArgumentParser(__doc__)
     parser.add_argument(
-        "datamanager_yml", help="A .yml file from an abismal run", default="datamanager.yml"
-    )
-    parser.add_argument(
-        "model_file", help="A .pt file from an abismal run.",
+        "model_file", help="A .pt file from an abismal run. The data are read again from the inputs that run used.",
     )
     parser.add_argument(
         "--sf-init", help="An optional .pt file from an abismal run from which to initialize the structure factors", default=None, required=False
@@ -56,7 +53,7 @@ def main(args=None):
     from abismal.device import select_device, configure, resolve_compile, resolve_precision
     from abismal.io.manager import DataManager
     from abismal.callbacks import MtzSaver
-    from abismal.saving import load_model, load_optimizer
+    from abismal.saving import load_args, load_model, load_optimizer
     from abismal.training import Trainer
 
     device = select_device(parser.gpu_id, parser.device)
@@ -68,7 +65,7 @@ def main(args=None):
 
 
     for repeat in range(parser.repeats):
-        dm = DataManager.from_file(parser.datamanager_yml)
+        dm = DataManager.from_parser(load_args(parser.model_file))
         half1,half2 = dm.get_half_datasets()
 
         for half_id,half in enumerate([half1, half2]):

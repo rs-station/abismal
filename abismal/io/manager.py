@@ -3,7 +3,6 @@ from reciprocalspaceship.decorators import spacegroupify,cellify
 from abismal.io.pipeline import ImageCache, BatchStream
 import numpy as np
 import reciprocalspaceship as rs
-import yaml
 
 # TODO: refactor this filetype control flow into abismal.io
 _file_endings = {
@@ -38,7 +37,7 @@ def _split_metadata_keys(value):
     """Turn the CLI's comma-separated string into the list MTZLoader wants.
 
     Parsed here rather than in DataManager so the manager's own API takes a
-    list, which is what `MTZLoader` and the yaml config both use.
+    list, which is what `MTZLoader` uses.
     """
     if value is None:
         return None
@@ -86,40 +85,6 @@ class DataManager:
         # the unseeded tf.data shuffle did. The train/test split and the
         # ambiguation are deterministic regardless.
         self.seed = seed
-
-    def get_config(self):
-        conf = {
-            'dmin' : self.dmin,
-            'wavelength' : self.wavelength,
-            'inputs' : self.inputs,
-            'cell' : list(self.cell.parameters), 
-            'spacegroup' : self.spacegroup.xhm(),
-            'num_cpus' : self.num_cpus,
-            'separate' : self.separate,
-            'wavelength' : self.wavelength,
-            'test_fraction' : self.test_fraction,
-            'num_asus': self.num_asus,
-            'separate_friedel_mates' : self.separate_friedel_mates,
-            'shuffle_buffer_size' : self.shuffle_buffer_size,
-            'batch_size' : self.batch_size,
-            'steps_per_epoch' : self.steps_per_epoch,
-            'validation_steps' : self.validation_steps,
-            'epochs' : self.epochs,
-            'ambiguate' : self.ambiguate,
-            'mtz_metadata' : self.mtz_metadata,
-            'seed' : self.seed,
-        }
-        return conf
-
-    @classmethod
-    def from_config(cls, conf):
-        num_asus = conf.pop('num_asus')
-        # Files from older versions may hold settings that no longer exist.
-        import inspect
-        known = inspect.signature(cls.__init__).parameters
-        result = cls(**{k: v for k, v in conf.items() if k in known})
-        result.num_asus = num_asus
-        return result
 
     @classmethod
     def from_parser(cls, parser):
@@ -334,15 +299,4 @@ class DataManager:
 
     def get_half_datasets(self):
         return self.get_train_test_splits(test_fraction = 0.5, repeat_test = self.repeat_train)
-
-    def to_file(self, file_name):
-        conf = self.get_config()
-        with open(file_name, 'w') as out:
-            yaml.dump(conf, out)
-
-    @classmethod
-    def from_file(cls, file_name):
-        with open(file_name, 'r') as f:
-            conf = yaml.safe_load(f)
-        return cls.from_config(conf)
 

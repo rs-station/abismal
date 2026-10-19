@@ -50,11 +50,6 @@ class NakagamiPosteriorBase(object):
         self.spread = PositiveParameter(spread_init, shift=epsilon)
         self.concentration = PositiveParameter(concentration_init, shift=concentration_min + epsilon)
 
-    def get_config(self):
-        config = super().get_config()
-        config['concentration_min'] = self.concentration_min
-        return config
-
     def _distribution(self, concentration, spread):
         return Nakagami(concentration, spread)
 

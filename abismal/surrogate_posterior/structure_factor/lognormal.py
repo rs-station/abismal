@@ -1,10 +1,6 @@
-from abismal import serialization
 
 from abismal.surrogate_posterior import StructureFactorPosteriorBase
 from abismal.surrogate_posterior.lognormal import LogNormalPosteriorBase
-
-
-@serialization.register
 class LogNormalPosterior(LogNormalPosteriorBase, StructureFactorPosteriorBase):
     """A structure factor surrogate posterior parameterized by a log normal distribution."""
 
