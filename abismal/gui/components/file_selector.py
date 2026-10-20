@@ -40,6 +40,27 @@ def default_directory():
     return os.getcwd()
 
 
+# The directory of the most recent file picked in any picker, shared by all of
+# them: once the reflection files are chosen, the model and R-free pickers open
+# beside them. Only where pickers open; relative paths still resolve against
+# default_directory().
+_last_selected_dir = None
+
+
+def remember_selection(directory):
+    """Record `directory` as where the last file was picked."""
+    global _last_selected_dir
+    _last_selected_dir = Path(directory).resolve()
+
+
+def browse_directory():
+    """Where a picker with no value of its own opens: beside the last file
+    picked in any picker, or default_directory() before any."""
+    if _last_selected_dir is not None and _last_selected_dir.is_dir():
+        return str(_last_selected_dir)
+    return default_directory()
+
+
 class ServerFileSelectorWidget(widgets.VBox):
     """
     Two-panel file selector: left panel navigates directories (single-click),
@@ -51,7 +72,7 @@ class ServerFileSelectorWidget(widgets.VBox):
 
     def __init__(self, initial_directory=None, **kwargs):
         if initial_directory is None:
-            initial_directory = default_directory()
+            initial_directory = browse_directory()
         self._current_dir = Path(initial_directory).resolve()
         self._selected_files = []
         self._create_widgets()
@@ -186,6 +207,8 @@ class ServerFileSelectorWidget(widgets.VBox):
             self._refresh()
 
     def _on_add_clicked(self, _):
+        if self.file_list.value:
+            remember_selection(self._current_dir)
         for fname in self.file_list.value:
             path = str(self._current_dir / fname)
             if path not in self._selected_files:
@@ -282,7 +305,7 @@ class PathSelector(widgets.VBox):
         if mode not in ('file', 'files', 'directory', 'save'):
             raise ValueError(f"unknown mode {mode!r}")
         if initial_directory is None:
-            initial_directory = default_directory()
+            initial_directory = browse_directory()
         self.mode = mode
         self.file_types = tuple(file_types) if file_types else ()
         self._label_text = description
@@ -449,9 +472,13 @@ class PathSelector(widgets.VBox):
 
     def _open_browser(self):
         # Reopen where the current value points, so correcting a typo does not
-        # start over from the root.
+        # start over from the root; with no value, beside the last file picked
+        # anywhere in the form.
         current = self._input.value.split(',')[0].strip()
-        if current:
+        if not current:
+            if _last_selected_dir is not None and _last_selected_dir.is_dir():
+                self._current_dir = _last_selected_dir
+        else:
             candidate = Path(current).expanduser()
             if not candidate.is_absolute():
                 candidate = Path(self._current_dir) / candidate
@@ -492,11 +519,13 @@ class PathSelector(widgets.VBox):
             self._input.value = ','.join(
                 str(self._current_dir / name) for name in chosen
             )
+            remember_selection(self._current_dir)
         else:
             chosen = self._file_list.value
             if not chosen:
                 return
             self._input.value = str(self._current_dir / chosen)
+            remember_selection(self._current_dir)
         self._close_browser()
 
     @property

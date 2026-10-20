@@ -168,3 +168,10 @@ def replay_dir():
     import gui_harness as H
 
     return H.REPLAY_DIR
+
+
+@pytest.fixture(autouse=True)
+def forget_last_selection(monkeypatch):
+    """The pickers share where the last file was picked; start every test fresh."""
+    from abismal.gui.components import file_selector
+    monkeypatch.setattr(file_selector, "_last_selected_dir", None)
