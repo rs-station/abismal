@@ -30,7 +30,9 @@ Options:
   their own CUDA libraries, so no CUDA toolkit is needed, and they also run on newer drivers. Pass
   `pypi` for PyPI's default build (CUDA 13, driver 580 or newer). If torch cannot use the node's GPU,
   the closing check says so.
-- `--with-dials`: add DIALS for `.expt`/`.refl` inputs (several GB).
+- `--without-dials`: leave out DIALS, which reads `.expt`/`.refl` inputs and is installed by default
+  (several GB). `.mtz` and CrystFEL `.stream` inputs never need it. Rerunning the script without
+  this flag adds DIALS to an environment built without it.
 
 ## For users: start the demo
 

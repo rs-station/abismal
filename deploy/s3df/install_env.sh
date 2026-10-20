@@ -18,15 +18,15 @@
 # `git pull`; run this again only when dependencies change.
 #
 # Usage:
-#   deploy/s3df/install_env.sh [--torch-index URL] [--with-dials]
+#   deploy/s3df/install_env.sh [--torch-index URL] [--without-dials]
 #
 #   --torch-index  the PyTorch wheel index to take torch from (default: CUDA 12.9 builds,
 #                  https://download.pytorch.org/whl/cu129, which S3DF's GPU driver supports;
 #                  a CUDA build runs on its own driver version and newer). The wheels bring
 #                  their own CUDA libraries, so no CUDA toolkit is needed. Pass "pypi" for
 #                  PyPI's default build (CUDA 13, driver 580 or newer).
-#   --with-dials   also install DIALS/dxtbx from conda-forge, needed for .expt/.refl
-#                  inputs (several GB; .mtz and CrystFEL .stream inputs never need it)
+#   --without-dials  leave out DIALS/dxtbx, which read .expt/.refl inputs and are installed
+#                  by default (several GB; .mtz and CrystFEL .stream inputs never need them)
 #
 # Needs internet access (GitHub, conda-forge, PyPI): run it on a login or interactive node
 # that has it, ideally a GPU node so the closing check can see the GPU.
@@ -35,11 +35,12 @@ set -euo pipefail
 usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 TORCH_INDEX="https://download.pytorch.org/whl/cu129"
-WITH_DIALS=0
+WITH_DIALS=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --torch-index) TORCH_INDEX="$2"; shift 2 ;;
-        --with-dials) WITH_DIALS=1; shift ;;
+        --with-dials) WITH_DIALS=1; shift ;;  # the default; accepted for older instructions
+        --without-dials) WITH_DIALS=0; shift ;;
         -h|--help) usage 0 ;;
         *) echo "unknown argument $1" >&2; usage 1 ;;
     esac
@@ -60,13 +61,21 @@ fi
 MAMBA="$INSTALL/bin/micromamba"
 export MAMBA_ROOT_PREFIX="$INSTALL/mamba"
 
-step "python environment at $ENV"
-if [ ! -x "$PY" ]; then
-    "$MAMBA" create -y -q -p "$ENV" -c conda-forge python=3.12 pip
-fi
+# DIALS comes from conda-forge (it is not on PyPI) and is solved together with the
+# environment, under the pins the CI uses: its compiled extensions need a numpy at least
+# as new as the one they were built against, and torchref, installed by pip afterwards,
+# caps numpy below 2.4. Unpinned, conda picks a newer numpy, pip downgrades it for
+# torchref, and dxtbx no longer imports.
+CONDA_PACKAGES=(python=3.12 pip)
 if [ "$WITH_DIALS" = 1 ]; then
-    step "dials (conda-forge)"
-    "$MAMBA" install -y -q -p "$ENV" -c conda-forge dials
+    CONDA_PACKAGES+=(dials "numpy<2.4" "pandas<2.4" "scipy<1.18")
+fi
+step "python environment at $ENV (${CONDA_PACKAGES[*]})"
+if [ ! -x "$PY" ]; then
+    "$MAMBA" create -y -q -p "$ENV" -c conda-forge "${CONDA_PACKAGES[@]}"
+elif [ "$WITH_DIALS" = 1 ] && ! "$PY" -c "import dxtbx, dials" >/dev/null 2>&1; then
+    # An environment built without DIALS: add it under the same pins.
+    "$MAMBA" install -y -q -p "$ENV" -c conda-forge "${CONDA_PACKAGES[@]}"
 fi
 
 # abismal is installed in editable mode, so that `git pull` in this clone updates it;
@@ -122,6 +131,13 @@ print("  GUI builds")
 print(f"  torch built for CUDA {torch.version.cuda}; GPU usable here: {torch.cuda.is_available()}")
 PYEOF
 "$ENV/bin/abismal" --help >/dev/null && echo "  abismal CLI runs"
+if [ "$WITH_DIALS" = 1 ]; then
+    # Import the compiled parts the readers use, not just find the packages: a numpy
+    # mismatch only shows up on import.
+    "$PY" -c "from dials.array_family import flex; from dxtbx.model.experiment_list import ExperimentListFactory" \
+        && echo "  DIALS readers (.expt/.refl) import" \
+        || echo "  WARNING: DIALS was requested but does not import; .expt/.refl inputs will fail"
+fi
 if command -v nvidia-smi >/dev/null 2>&1 && ! "$PY" -c "import torch, sys; sys.exit(not torch.cuda.is_available())"; then
     driver_cuda="$(nvidia-smi | sed -n 's/.*CUDA Version: *\([0-9.]*\).*/\1/p' | head -1)"
     echo
