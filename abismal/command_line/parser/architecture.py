@@ -37,8 +37,8 @@ args_and_kwargs = (
     (
         ("--d-model",),
         {
-            "help": "The number of channels in the model with default 256.",
-            "default": 256,
+            "help": "The number of channels in the model with default 128.",
+            "default": 128,
             "type": int,
         },
     ),
@@ -54,8 +54,9 @@ args_and_kwargs = (
         ("--activation",),
         {
             "help": "Applied between the two linear layers of each feed forward layer. "
-            "Either a normalizer or a named activation. The default is 'relu'.",
-            "default": "relu",
+            "Either a normalizer or a named activation. The default is 'swish', which "
+            "with the gated layers makes them SwiGLU.",
+            "default": "swish",
             "choices": TRANSFORM_CHOICES,
         },
     ),
@@ -63,8 +64,9 @@ args_and_kwargs = (
         ("--pre-activation",),
         {
             "help": "Applied to each feed forward layer's input, before the first linear "
-            "layer. Takes the same values as --activation. The default is 'relu'.",
-            "default": "relu",
+            "layer. Takes the same values as --activation. The default is 'rms', "
+            "RMS normalization.",
+            "default": "rms",
             "choices": TRANSFORM_CHOICES,
         },
     ),
@@ -76,10 +78,22 @@ args_and_kwargs = (
         },
     ),
     (
-        ("--gated",),
+        ("--no-gated",),
         {
-            "help": "Use a Gated (GLU) architecture for the feed forward layers.",
-            "action": "store_true",
+            "help": "Use plain feed forward layers instead of the gated (GLU) ones, "
+            "which are the default.",
+            "action": "store_false",
+            "dest": "gated",
+        },
+    ),
+    (
+        ("--hidden-multiplier",),
+        {
+            "help": "Width of each feed forward layer's hidden layer, as a multiple of "
+            "--d-model. The default, 2/3, gives a gated layer the parameters of a plain "
+            "one with twice --d-model hidden units.",
+            "default": 2 / 3,
+            "type": float,
         },
     ),
     (

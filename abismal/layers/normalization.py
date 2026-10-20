@@ -62,7 +62,16 @@ class Standardize(torch.nn.Module):
 
     @property
     def var(self):
-        return self.m2.clamp_min(self.epsilon) / self.count
+        # Before any data the moments say nothing, so standardize by mean 0 and
+        # variance 1 -- the identity -- rather than divide by count = 0, which made
+        # every input exactly zero and an untrained model's output meaningless
+        # (NaN after an RMS-normalized layer). Training never sees this: the first
+        # forward pass updates the moments before using them.
+        return torch.where(
+            self.count > 0,
+            self.m2.clamp_min(self.epsilon) / self.count,
+            torch.ones_like(self.m2),
+        )
 
     @torch.no_grad()
     def update(self, x):

@@ -210,7 +210,7 @@ def build_model(args, facts, data=None, precision="float32"):
         metadata_length=facts["metadata_length"],
         mlp_width=args.d_model,
         mlp_depth=args.layers,
-        hidden_units=args.d_model * 2,
+        hidden_units=max(1, round(args.d_model * args.hidden_multiplier)),
         activation=args.activation,
         kl_weight=args.scale_kl_weight,
         epsilon=args.epsilon,
