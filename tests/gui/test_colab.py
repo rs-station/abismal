@@ -333,20 +333,23 @@ def _output_payloads(module):
     return found
 
 
-def test_html_outputs_are_isolated():
-    """A full HTML document in an output area must not inherit the page.
+def test_the_viewer_output_is_not_wrapped_in_a_second_frame():
+    """Regression: the 3D viewer stayed on its first epoch.
 
-    The viewer is a complete document with a global `*` reset, so without the
-    isolated flag -- which renders it in an iframe -- its CSS applies to the
-    notebook around it. Colab may ignore the flag, which is a separate question;
-    this only asserts we always ask.
+    The viewer is already sealed in its own srcdoc iframe (see
+    test_gemmimol.py::test_the_viewer_is_sealed_in_an_iframe), so its CSS cannot
+    reach the notebook. Marking the output `isolated` as well made JupyterLab
+    wrap it in a second iframe, and the reload broadcast, which posts to the
+    iframes of the notebook's own document, stopped at that wrapper: in a real
+    JupyterLab the nested viewer received none of the reloads while an unwrapped
+    one received every one.
     """
     checked = 0
     for data_keys, metadata in _output_payloads(runner_module):
         if "text/html" in data_keys:
             checked += 1
-            assert "isolated" in metadata, (
-                f"text/html payload with metadata {metadata!r} is not isolated"
+            assert "isolated" not in metadata, (
+                f"text/html payload with metadata {metadata!r} would be framed twice"
             )
     # Without this the test passes by finding nothing, which is exactly what would
     # happen if the payload were ever built somewhere the AST walk cannot see.
