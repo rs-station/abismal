@@ -34,7 +34,7 @@ class TorchRefRunner(Callback):
                  wavelength: float = None, adp_mode: str = 'auto',
                  adp_aniso_sigma: str = 'auto', rigid_body: bool = True,
                  rigid_body_iter: int = 30, allow_overlap: bool = False,
-                 num_cpus: int = 1,
+                 num_cpus: int = 2,
                  *args, **kwargs):
         self.output_prefix = output_prefix
         self.asu_id = asu_id
@@ -201,6 +201,12 @@ class TorchRefRunner(Callback):
         or else from SLURM_CPUS_PER_TASK (every core of the job), overwriting
         the others, so it is set too.
 
+        OMP_WAIT_POLICY=PASSIVE stops torch's idle OpenMP workers spinning on
+        the cores torchref's own CPU kernels need. torchref's command-line tools
+        set it, but importing torchref does not. On a HEWL refinement with
+        torchref 0.7.0 it cut wall time by a quarter and CPU time by half, with
+        identical results. A value already in the environment is kept.
+
         `--device cpu` alone is not enough once torch can see a GPU: torchref
         probes for an accelerator and puts some scaler targets on it anyway,
         leaving a refinement split across devices, and the worker opens a CUDA
@@ -212,6 +218,7 @@ class TorchRefRunner(Callback):
         for var in ("TORCHREF_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
                     "OPENBLAS_NUM_THREADS", "NUMBA_NUM_THREADS"):
             env[var] = threads
+        env.setdefault("OMP_WAIT_POLICY", "PASSIVE")
         if str(self.device) == "cpu":
             env["CUDA_VISIBLE_DEVICES"] = ""
         return env

@@ -334,14 +334,14 @@ def test_cpu_worker_cannot_see_the_gpu(tmp_path, monkeypatch):
 
 
 def test_the_worker_is_limited_to_num_cpus(tmp_path, monkeypatch):
-    """Every thread pool the worker uses is sized by num_cpus (default 1),
+    """Every thread pool the worker uses is sized by num_cpus (default 2),
     whatever the training process's environment says."""
     from abismal.callbacks.torchref import TorchRefRunner
     monkeypatch.setenv("OMP_NUM_THREADS", "64")
     variables = ("TORCHREF_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
                  "OPENBLAS_NUM_THREADS", "NUMBA_NUM_THREADS")
     default = TorchRefRunner(str(tmp_path), None).worker_env()
-    assert all(default[v] == "1" for v in variables)
+    assert all(default[v] == "2" for v in variables)
     four = TorchRefRunner(str(tmp_path), None, num_cpus=4).worker_env()
     assert all(four[v] == "4" for v in variables)
     with pytest.raises(ValueError):
@@ -366,6 +366,16 @@ def test_the_worker_really_runs_with_that_many_threads(tmp_path):
 def test_the_cli_passes_torchref_num_cpus(tmp_path):
     from abismal.command_line.parser import parser
     args = parser.parse_args(["-o", str(tmp_path), "-d", "2", "x.mtz"])
-    assert args.torchref_num_cpus == 1
+    assert args.torchref_num_cpus == 2
     args = parser.parse_args(["-o", str(tmp_path), "-d", "2", "x.mtz", "--torchref-num-cpus", "3"])
     assert args.torchref_num_cpus == 3
+
+
+def test_idle_openmp_workers_do_not_spin(tmp_path, monkeypatch):
+    """torchref's CLI sets OMP_WAIT_POLICY=PASSIVE and importing it does not, so
+    the worker sets it; a value the user chose is left alone."""
+    from abismal.callbacks.torchref import TorchRefRunner
+    monkeypatch.delenv("OMP_WAIT_POLICY", raising=False)
+    assert TorchRefRunner(str(tmp_path), None).worker_env()["OMP_WAIT_POLICY"] == "PASSIVE"
+    monkeypatch.setenv("OMP_WAIT_POLICY", "ACTIVE")
+    assert TorchRefRunner(str(tmp_path), None).worker_env()["OMP_WAIT_POLICY"] == "ACTIVE"

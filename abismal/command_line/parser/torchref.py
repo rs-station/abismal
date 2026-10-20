@@ -119,10 +119,11 @@ args_and_kwargs = (
             "--torchref-num-cpus",
         ), {
             "type": int,
-            "default": 1,
-            "help": "CPU threads each torchref refinement may use (default=1). "
+            "default": 2,
+            "help": "CPU threads each torchref refinement may use (default=2). "
                     "Refinement runs alongside training, so it is kept small by "
-                    "default; raise it when the machine has cores to spare.",
+                    "default; with torchref 0.7.0 a HEWL refinement took 102 s "
+                    "on 1 thread, 65 s on 2 and 60 s on 4.",
         }
     ),
 
