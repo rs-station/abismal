@@ -331,3 +331,41 @@ def test_cpu_worker_cannot_see_the_gpu(tmp_path, monkeypatch):
     assert cpu.worker_env()["CUDA_VISIBLE_DEVICES"] == ""
     gpu = TorchRefRunner(str(tmp_path), None, device="cuda")
     assert gpu.worker_env()["CUDA_VISIBLE_DEVICES"] == "0"
+
+
+def test_the_worker_is_limited_to_num_cpus(tmp_path, monkeypatch):
+    """Every thread pool the worker uses is sized by num_cpus (default 1),
+    whatever the training process's environment says."""
+    from abismal.callbacks.torchref import TorchRefRunner
+    monkeypatch.setenv("OMP_NUM_THREADS", "64")
+    variables = ("TORCHREF_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+                 "OPENBLAS_NUM_THREADS", "NUMBA_NUM_THREADS")
+    default = TorchRefRunner(str(tmp_path), None).worker_env()
+    assert all(default[v] == "1" for v in variables)
+    four = TorchRefRunner(str(tmp_path), None, num_cpus=4).worker_env()
+    assert all(four[v] == "4" for v in variables)
+    with pytest.raises(ValueError):
+        TorchRefRunner(str(tmp_path), None, num_cpus=0)
+
+
+@pytest.mark.timeout(300)
+def test_the_worker_really_runs_with_that_many_threads(tmp_path):
+    """The variables take effect in a fresh interpreter like the worker's."""
+    import subprocess
+    from abismal.callbacks.torchref import TorchRefRunner
+    pytest.importorskip("torchref")
+    env = TorchRefRunner(str(tmp_path), None, num_cpus=2).worker_env()
+    out = subprocess.run(
+        # torchref first, as the worker imports it: it reconfigures threading on import.
+        [sys.executable, "-c", "import torchref, torch, numba; print(torch.get_num_threads(), numba.config.NUMBA_NUM_THREADS)"],
+        capture_output=True, text=True, env=env, timeout=300,
+    )
+    assert out.stdout.split() == ["2", "2"], out.stderr
+
+
+def test_the_cli_passes_torchref_num_cpus(tmp_path):
+    from abismal.command_line.parser import parser
+    args = parser.parse_args(["-o", str(tmp_path), "-d", "2", "x.mtz"])
+    assert args.torchref_num_cpus == 1
+    args = parser.parse_args(["-o", str(tmp_path), "-d", "2", "x.mtz", "--torchref-num-cpus", "3"])
+    assert args.torchref_num_cpus == 3

@@ -148,6 +148,7 @@ def main(args=None):
                 rigid_body=not parser.torchref_no_rigid_body,
                 rigid_body_iter=parser.torchref_rigid_body_iter,
                 allow_overlap=parser.torchref_allow_overlap,
+                num_cpus=parser.torchref_num_cpus,
             )
             callbacks.append(torchref_runner)
 

@@ -116,6 +116,18 @@ args_and_kwargs = (
 
     (
         (
+            "--torchref-num-cpus",
+        ), {
+            "type": int,
+            "default": 1,
+            "help": "CPU threads each torchref refinement may use (default=1). "
+                    "Refinement runs alongside training, so it is kept small by "
+                    "default; raise it when the machine has cores to spare.",
+        }
+    ),
+
+    (
+        (
             "--torchref-no-rigid-body",
         ), {
             "help": "Skip the per-chain rigid-body step torchref runs before "
