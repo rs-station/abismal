@@ -819,10 +819,17 @@ class AbismalRunner:
 
         if not self._viewer_initialized:
             # First render: create the iframe; subsequent renders will postMessage it.
+            #
+            # Not marked `isolated`: iframe_html is already sealed in its own srcdoc
+            # iframe, and JupyterLab honours `isolated` by wrapping the output in a
+            # second one. The reload broadcast below reaches only the iframes in the
+            # notebook's own document, so with the extra frame it stopped at the
+            # wrapper and the viewer stayed on its first epoch while the label
+            # above it kept advancing.
             self.viewer_widget.outputs = ({
                 'output_type': 'display_data',
                 'data': {'text/html': viewer.iframe_html},
-                'metadata': {'text/html': {'isolated': True}},
+                'metadata': {},
             },)
             self._viewer_initialized = True
         else:
