@@ -275,3 +275,87 @@ def test_the_reflection_selector_honours_its_initial_directory(tree):
     selector = ReflectionFileSelector(initial_directory=tree)
 
     assert selector._current_dir == tree.resolve()
+
+
+# ---------------------------------------------------------------------------
+# pickers open beside the last file picked
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def two_dirs(tmp_path, monkeypatch):
+    """A working directory and a data directory elsewhere, each with files."""
+    work = tmp_path / "work"
+    data = tmp_path / "elsewhere" / "data"
+    for d in (work, data):
+        d.mkdir(parents=True)
+        (d / "a.mtz").write_text("x")
+        (d / "model.pdb").write_text("x")
+    monkeypatch.chdir(work)
+    return work, data
+
+
+def _pick(selector, directory, name):
+    selector._browse_button.click()
+    selector.set_directory(directory)
+    selector._file_list.value = name
+    selector._select_button.click()
+
+
+def test_pickers_open_beside_the_last_file_picked(two_dirs):
+    work, data = two_dirs
+    early = PathSelector(description="pdb", mode="file")   # built before any pick
+    first = PathSelector(description="mtz", mode="file")
+    _pick(first, data, "a.mtz")
+
+    later = PathSelector(description="r_free", mode="file")
+    assert later._current_dir == data.resolve()
+    early._browse_button.click()
+    assert early._current_dir == data.resolve()
+
+
+def test_a_picker_with_a_value_still_opens_at_its_value(two_dirs):
+    work, data = two_dirs
+    own = PathSelector(description="pdb", mode="file", value=str(work / "model.pdb"))
+    _pick(PathSelector(description="mtz", mode="file"), data, "a.mtz")
+
+    own._browse_button.click()
+    assert own._current_dir == work.resolve()
+
+
+def test_choosing_an_output_directory_does_not_move_the_pickers(two_dirs):
+    work, data = two_dirs
+    out = PathSelector(description="out_dir", mode="save")
+    out._browse_button.click()
+    out.set_directory(data)
+    out._select_button.click()
+
+    assert PathSelector(description="mtz", mode="file")._current_dir == work.resolve()
+
+
+def test_adding_reflection_files_counts_as_a_pick(two_dirs):
+    from abismal.gui.components.file_selector import ReflectionFileSelector
+    work, data = two_dirs
+    files = ReflectionFileSelector()
+    files.set_directory(data)
+    files.file_list.value = ("a.mtz",)
+    files.add_button.click()
+
+    assert PathSelector(description="pdb", mode="file")._current_dir == data.resolve()
+
+
+def test_before_any_pick_a_picker_reopens_where_it_was_left(two_dirs):
+    work, data = two_dirs
+    selector = PathSelector(description="pdb", mode="file")
+    selector._browse_button.click()
+    selector.set_directory(data)
+    selector._cancel_button.click()
+
+    selector._browse_button.click()
+    assert selector._current_dir == data.resolve()
+
+
+def test_picking_does_not_change_what_relative_paths_resolve_against(two_dirs):
+    work, data = two_dirs
+    _pick(PathSelector(description="mtz", mode="file"), data, "a.mtz")
+
+    assert Path(default_directory()).resolve() == work.resolve()
