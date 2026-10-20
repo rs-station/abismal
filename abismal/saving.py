@@ -69,6 +69,13 @@ def _load(path, map_location):
     return payload
 
 
+# Options added after checkpoints began recording their arguments, with the value
+# that reproduces what a checkpoint saved before them was built with. Today's
+# default would not: --hidden-multiplier now defaults to 2/3, but those models
+# had hidden layers twice --d-model wide.
+_BEFORE_THEY_EXISTED = {"hidden_multiplier": 2.0}
+
+
 def _args(payload, path):
     """The saved arguments over today's defaults, so new options keep theirs."""
     if "args" not in payload:
@@ -80,6 +87,7 @@ def _args(payload, path):
         )
     from abismal.command_line.parser import parser
     args = {a.dest: a.default for a in parser._actions if a.dest != "help"}
+    args.update(_BEFORE_THEY_EXISTED)
     args.update(payload["args"])
     return Namespace(**args)
 

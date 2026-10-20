@@ -213,8 +213,9 @@ def test_separate(conventional_mtz):
     )
 
 
-def test_glu(conventional_mtz):
-    flags = base_flags + ('--gated',)
+def test_plain_feed_forward_layers(conventional_mtz):
+    """Gated (GLU) layers are the default; --no-gated still trains."""
+    flags = base_flags + ('--no-gated', '--pre-activation', 'relu', '--activation', 'relu')
     files = [
         conventional_mtz,
     ]
