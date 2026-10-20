@@ -122,6 +122,15 @@ def _base_metrics(df, predicate):
     ]
 
 
+def _lone_point_marker(values):
+    """A marker for a series with a single point, which a line alone cannot show.
+
+    After the first epoch every series is one point; lines stay unmarked once
+    there are two.
+    """
+    return 'o' if values.notna().sum() == 1 else None
+
+
 def _plot_metrics(ax, df, metrics):
     """One Dark2 colour per metric; solid for training, dashed for validation."""
     import seaborn as sns
@@ -130,11 +139,31 @@ def _plot_metrics(ax, df, metrics):
     # with more than the eight Dark2 provides -- it wraps, but consistently.
     palette = sns.color_palette('Dark2', max(len(metrics), 3))
     for color, base in zip(palette, metrics):
-        ax.plot(df['Epoch'], df[base], color=color, ls='-', label=base)
+        ax.plot(df['Epoch'], df[base], color=color, ls='-', label=base,
+                marker=_lone_point_marker(df[base]))
         val = f'val_{base}'
         if val in df.columns:
-            ax.plot(df['Epoch'], df[val], color=color, ls='--', label=val)
+            ax.plot(df['Epoch'], df[val], color=color, ls='--', label=val,
+                    marker=_lone_point_marker(df[val]))
     ax.grid(which='both', axis='both', ls='-.')
+
+
+def _draw_peaks(ax, peak_data):
+    """Anomalous peak height against epoch: colour by atom type, line style by
+    residue. A site with a single epoch so far -- every site after the first --
+    also gets a marker, since a one-point line draws nothing."""
+    import seaborn as sns
+
+    # Explicit orders, so the markers below take the same colours as the lines.
+    hue_order = sorted(peak_data['AtomType'].unique())
+    style_order = list(dict.fromkeys(peak_data['Residue']))
+    common = dict(x='Epoch', y='peakz', hue='AtomType', style='Residue',
+                  palette='Dark2', hue_order=hue_order, style_order=style_order, ax=ax)
+    sns.lineplot(peak_data, **common)
+    epochs_seen = peak_data.groupby('Residue')['Epoch'].transform('nunique')
+    lone = peak_data[epochs_seen == 1]
+    if not lone.empty:
+        sns.scatterplot(lone, legend=False, s=70, **common)
 
 
 class AbismalRunner:
@@ -675,10 +704,7 @@ class AbismalRunner:
         with _FIGURE_LOCK:
             fig = Figure(figsize=(7, 4))
             ax = fig.subplots()
-            sns.lineplot(
-                peak_data, x='Epoch', y='peakz', hue='AtomType', style='Residue',
-                palette='Dark2', ax=ax,
-            )
+            _draw_peaks(ax, peak_data)
             sns.move_legend(ax, 'upper left', bbox_to_anchor=(1, 1))
             ax.grid(which='both', axis='both', ls='-.')
             ax.set_ylabel(r"Anomalous Peak Height ($\sigma$)")

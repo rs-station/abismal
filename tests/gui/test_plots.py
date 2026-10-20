@@ -9,6 +9,8 @@ import base64
 import io
 from pathlib import Path
 
+import matplotlib.colors
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -296,8 +298,8 @@ def _draw_peaks_axis(runner):
     The widget holds a PNG, so figure properties are recovered by rebuilding
     the figure the same way _update_peaks does rather than by reading pixels.
     """
-    import seaborn as sns
     from matplotlib.figure import Figure
+    from abismal.gui.runner import _draw_peaks
 
     data = runner._read_peaks()
     n_epochs = data["Epoch"].nunique()
@@ -306,10 +308,7 @@ def _draw_peaks_axis(runner):
     data = data[counts >= min_points]
 
     ax = Figure().subplots()
-    sns.lineplot(
-        data, x="Epoch", y="peakz", hue="AtomType", style="Residue",
-        palette="Dark2", ax=ax,
-    )
+    _draw_peaks(ax, data)
     return ax
 
 
@@ -460,3 +459,85 @@ def test_two_threads_can_draw_at_once(runner_factory, tmp_path):
     assert not any(t.is_alive() for t in threads)
     assert not failures, failures
     assert png_of(runner.peaks_widget) is not None
+
+
+
+# ---------------------------------------------------------------------------
+# a lone point is visible
+# ---------------------------------------------------------------------------
+
+def test_a_one_epoch_metric_gets_a_marker_and_later_ones_do_not():
+    """After the first epoch a line has one point and draws nothing; a marker
+    shows it. From the second epoch on, the lines stand alone."""
+    import pandas as pd
+    from matplotlib.figure import Figure
+    from abismal.gui.runner import _plot_metrics
+
+    one = pd.DataFrame({"Epoch": [1], "loss": [3.0], "val_loss": [4.0]})
+    ax = Figure().subplots()
+    _plot_metrics(ax, one, ["loss"])
+    assert all(line.get_marker() == "o" for line in ax.get_lines())
+
+    two = pd.DataFrame({"Epoch": [1, 2], "loss": [3.0, 2.0], "val_loss": [4.0, 3.5]})
+    ax = Figure().subplots()
+    _plot_metrics(ax, two, ["loss"])
+    assert all(line.get_marker() in (None, "None", "") for line in ax.get_lines())
+
+
+def test_a_validation_series_with_one_value_gets_a_marker():
+    """Validation can lag training (or appear once), so each series is judged on
+    its own points."""
+    import numpy as np
+    import pandas as pd
+    from matplotlib.figure import Figure
+    from abismal.gui.runner import _plot_metrics
+
+    df = pd.DataFrame({"Epoch": [1, 2], "loss": [3.0, 2.0], "val_loss": [np.nan, 3.5]})
+    ax = Figure().subplots()
+    _plot_metrics(ax, df, ["loss"])
+    markers = {line.get_label(): line.get_marker() for line in ax.get_lines()}
+    assert markers["val_loss"] == "o"
+    assert markers["loss"] in (None, "None", "")
+
+
+def _markers(ax):
+    """The scatter collections that mark lone points; seaborn's line plot adds
+    error-band collections of its own, which are not markers."""
+    from matplotlib.collections import PathCollection
+    return [c for c in ax.collections if isinstance(c, PathCollection)]
+
+
+def test_first_epoch_peaks_are_drawn_as_markers(runner_factory, tmp_path):
+    out_dir = tmp_path / "run"
+    write_peaks(out_dir / "torchref_0_asu_0_epoch_1", [
+        ("A", 30, "CYS", 11.0), ("A", 12, "MET", 31.0),
+    ])
+    ax = _draw_peaks_axis(runner_factory(out_dir=str(out_dir), has_phenix=True))
+
+    points = np.concatenate([c.get_offsets() for c in _markers(ax)])
+    assert sorted(points[:, 1].tolist()) == [11.0, 31.0]
+
+
+def test_markers_share_the_colour_of_their_atom_type(runner_factory, tmp_path):
+    """A site seen once so far sits beside sites with lines; its marker must be
+    coloured like the lines of its atom type."""
+    out_dir = tmp_path / "run"
+    write_peaks(out_dir / "torchref_0_asu_0_epoch_1", [("A", 30, "CYS", 11.0)])
+    write_peaks(out_dir / "torchref_0_asu_0_epoch_2", [
+        ("A", 30, "CYS", 12.0), ("A", 80, "CYS", 21.0),
+    ])
+    ax = _draw_peaks_axis(runner_factory(out_dir=str(out_dir), has_phenix=True))
+
+    cys_30 = _line_with_ydata(ax, [11.0, 12.0])
+    assert len(_markers(ax)) == 1
+    marker_colour = _markers(ax)[0].get_facecolors()[0][:3]
+    assert np.allclose(marker_colour, matplotlib.colors.to_rgb(cys_30.get_color()))
+    assert cys_30.get_marker() in (None, "None", "")
+
+
+def test_sites_with_several_epochs_get_no_markers(runner_factory, tmp_path):
+    out_dir = tmp_path / "run"
+    for epoch in (1, 2, 3):
+        write_peaks(out_dir / f"torchref_0_asu_0_epoch_{epoch}", [("A", 30, "CYS", 10.0 + epoch)])
+    ax = _draw_peaks_axis(runner_factory(out_dir=str(out_dir), has_phenix=True))
+    assert not _markers(ax)
