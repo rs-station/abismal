@@ -22,117 +22,21 @@ def _is_colab():
         return False
 
 
-def _running_servers():
-    """Every jupyter server this user has running, or [] if we cannot ask."""
-    try:
-        from jupyter_server.serverapp import list_running_servers
-        return [info for info in list_running_servers() if info]
-    except Exception:
-        # No jupyter_server, or a runtime directory we cannot read. Either way
-        # there is nothing to learn here, and this runs at widget construction.
-        return []
-
-
-def _this_server(servers):
-    """Whichever running server spawned this kernel, as best as can be told.
-
-    ipykernel puts the spawning server's pid in JPY_PARENT_PID, which settles it
-    outright. Failing that, fall back to the root the kernel's cwd sits under --
-    the deepest one, since nested roots both match.
-    """
-    if not servers:
-        return None
-
-    parent = os.environ.get('JPY_PARENT_PID', '')
-    if parent.isdigit():
-        for info in servers:
-            if info.get('pid') == int(parent):
-                return info
-
-    cwd = os.path.realpath(os.getcwd())
-    containing = [
-        info for info in servers
-        if info.get('root_dir') and (
-            cwd == os.path.realpath(info['root_dir'])
-            or cwd.startswith(os.path.realpath(info['root_dir']) + os.sep)
-        )
-    ]
-    if containing:
-        return max(containing, key=lambda info: len(os.path.realpath(info['root_dir'])))
-    return servers[0]
-
-
-def _jupyter_launch_directory():
-    """The directory ``jupyter lab`` was actually run from, or None.
-
-    The server process does not chdir at startup, so its cwd *is* the directory
-    it was launched from. That is not ``root_dir``: launching as ``jupyter lab
-    some/dir/nb.ipynb`` sets root_dir to the notebook's own directory, and
-    ``--ServerApp.root_dir`` sets it to wherever you say, while the process stays
-    where it started. Nor is it the kernel's cwd, which jupyter sets to the
-    notebook's directory.
-
-    In descending order of how much it can be trusted:
-
-    1. ``/proc/<server pid>/cwd`` -- the live answer, Linux only.
-    2. ``PWD`` -- the shell's directory at launch, inherited by the server and
-       through it by this kernel. Only consulted when JPY_PARENT_PID says we are
-       under a server, since otherwise it is just our own cwd by another name.
-       Missing if the server was started by something that does not set it.
-    3. ``root_dir`` -- equal to the launch directory whenever ``jupyter lab`` was
-       started with no file argument, and wrong when it was not. A guess.
-    """
-    info = _this_server(_running_servers())
-
-    pids = []
-    if info and info.get('pid'):
-        pids.append(info['pid'])
-    parent = os.environ.get('JPY_PARENT_PID', '')
-    parent = int(parent) if parent.isdigit() else None
-    if parent is not None and parent not in pids:
-        pids.append(parent)
-
-    for pid in pids:
-        try:
-            return os.path.realpath(os.readlink(f'/proc/{pid}/cwd'))
-        except OSError:
-            continue
-
-    if parent is not None:
-        pwd = os.environ.get('PWD')
-        if pwd and os.path.isdir(pwd):
-            return os.path.realpath(pwd)
-
-    if info and info.get('root_dir'):
-        return os.path.realpath(info['root_dir'])
-    return None
-
-
 def default_directory():
     """Where the file pickers open, and what relative paths resolve against.
 
-    The directory jupyter was launched from, which is the one the user was
-    standing in when they started -- not the kernel's cwd, which is wherever the
-    .ipynb happens to sit and is the abismal checkout for anyone who opened the
-    shipped notebook in place.
+    The kernel's working directory, which Jupyter sets to the notebook's own
+    directory: the user's copy of the notebook is where they work, and Python
+    resolves relative paths against it anyway. (`abismal.gui` copies the
+    shipped notebook into the directory it is run from, so this is never the
+    abismal checkout.)
 
-    Deliberately not the server's ``root_dir``, which the two differ from whenever
-    jupyter was pointed at a notebook elsewhere. Nothing downstream needs root_dir
-    any more -- the 3D viewer embeds its files rather than fetching them over
-    /files/ -- so out_dir is free to sit wherever the user was working.
-
-    On Colab this is /content, and that check comes first. Colab sets
-    JPY_PARENT_PID, so the launch-directory lookup below does not fail there --
-    it *succeeds*, and returns the cwd of a supervisor process the user has
-    never seen. A wrong answer that looks like a right one, arriving before the
-    fallback that would have been correct. Off Colab, the cwd.
+    On Colab, /content: the notebook there lives on Drive or in memory, and the
+    kernel's cwd is /content in any case, but checking first keeps it so if a
+    cell changes directory.
     """
     if _is_colab() and os.path.isdir('/content'):
         return '/content'
-
-    launched_from = _jupyter_launch_directory()
-    if launched_from:
-        return launched_from
     return os.getcwd()
 
 
