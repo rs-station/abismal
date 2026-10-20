@@ -53,7 +53,8 @@ class StillsLoader(DataLoader):
         cell = np.zeros(6)
         l = 0
         from tqdm import tqdm
-        print("Determining unit cell ...")
+        from abismal.status import status
+        status("Estimating the unit cell from the DIALS models")
         for elist in tqdm(elist_list):
             crystals = elist.crystals()
             cell += np.array([c.get_unit_cell().parameters() for c in crystals]).sum(0)

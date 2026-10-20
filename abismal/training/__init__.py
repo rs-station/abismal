@@ -151,6 +151,7 @@ class Trainer:
         self.verbose = verbose
         self._train_loss = functools.partial(_loss_and_metrics, model, training=True)
         self._test_loss = functools.partial(_loss_and_metrics, model, training=False)
+        self._compiled = compile is not None
         if compile is not None:
             # What is compiled returns only the loss and the (detached) metrics.
             # Compiling the model itself also made its unused prediction an
@@ -217,13 +218,15 @@ class Trainer:
         metrics.update(tracked)
         return metrics
 
-    def _run(self, iterator, steps, step_fn, progress):
+    def _run(self, iterator, steps, step_fn, progress, after_first=None):
         means = _RunningMeans()
         i = 0
         last_print = 0.
         for batch in iterator:
             means.update(step_fn(batch), weight=batch.num_images)
             i += 1
+            if i == 1 and after_first is not None:
+                after_first()
             if progress is not None and (time.time() - last_print > 0.5 or i == steps):
                 last_print = time.time()
                 progress(i, means)
@@ -264,6 +267,12 @@ class Trainer:
         for callback in self.callbacks:
             callback.on_train_begin()
 
+        from abismal.status import status
+        compiled = self._compiled
+        # torch.compile builds its kernels during the first steps, which can take
+        # minutes with nothing else to show for it.
+        status("Compiling the model; the first steps take a minute or two" if compiled else "Training")
+
         for epoch in range(epochs):
             for callback in self.callbacks:
                 callback.on_epoch_begin(epoch)
@@ -275,14 +284,19 @@ class Trainer:
             means, steps = self._run(
                 iterator, steps_per_epoch, self.train_step,
                 self._progress(steps_per_epoch, start),
+                after_first=(lambda: status("Training")) if compiled and epoch == 0 else None,
             )
             if not train.repeat:
                 iterator.close()
             logs = means.result()
 
             if validation_data is not None:
+                if compiled and epoch == 0:
+                    status("Compiling the validation step")
                 val_iter = self._batches(validation_data, validation_data.repeat, "_val_iter")
                 val_means, _ = self._run(val_iter, validation_steps, self.test_step, None)
+                if compiled and epoch == 0:
+                    status("Training")
                 if not validation_data.repeat:
                     val_iter.close()
                 logs.update(val_means.result(prefix="val_"))
