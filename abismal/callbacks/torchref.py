@@ -1,7 +1,7 @@
 import os
 import sys
 from abismal.callbacks.base import Callback
-from os.path import exists, abspath, dirname, join
+from os.path import exists, abspath, basename, dirname, join
 from os import mkdir
 from subprocess import Popen
 from warnings import warn
@@ -74,6 +74,7 @@ class TorchRefRunner(Callback):
         inside its own result directory and training carries on reporting
         success. Surface the returncode instead, once, with the path to look in.
         """
+        from abismal.status import refinement
         still_running = []
         for process, result_dir in self.processes:
             if block:
@@ -81,6 +82,7 @@ class TorchRefRunner(Callback):
             elif process.poll() is None:
                 still_running.append((process, result_dir))
                 continue
+            refinement("failed" if process.returncode else "finished", basename(result_dir))
             if process.returncode:
                 warn(
                     f"torchref worker for {result_dir} exited with "
@@ -101,6 +103,9 @@ class TorchRefRunner(Callback):
 
         Blocking here is free -- training is over.
         """
+        if self.processes or self._skipped_final_epoch is not None:
+            from abismal.status import status
+            status("Waiting for the last refinements to finish")
         self._reap(block=True)
         if self._skipped_final_epoch is not None:
             epoch = self._skipped_final_epoch
@@ -121,6 +126,9 @@ class TorchRefRunner(Callback):
             # others and the trainer for cores, so skip instead. The next
             # multiple of epoch_stride will pick up better-converged data
             # anyway. Set allow_overlap to refine every epoch regardless.
+            from abismal.status import refinement
+            refinement("skipped", f"{self.output_prefix}_asu_{self.asu_id}_epoch_{epoch + 1}",
+                       f"({len(self.processes)} still running)")
             warn(
                 f"skipping torchref at epoch {epoch + 1}: "
                 f"{len(self.processes)} earlier run(s) still going",
@@ -184,6 +192,8 @@ class TorchRefRunner(Callback):
         with open(stderr, 'w') as e, open(stdout, 'w') as o:
             p = Popen(command, cwd=result_dir, stderr=e, stdout=o, env=self.worker_env())
             self.processes.append((p, result_dir))
+        from abismal.status import refinement
+        refinement("started", basename(result_dir))
 
     def worker_env(self):
         """

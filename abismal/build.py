@@ -30,6 +30,15 @@ def facts_from(dm, train):
     }
 
 
+def _empirical_wilson(WilsonPrior, rac, data, standardize):
+    """A Wilson prior with Σ from the data, or a placeholder Σ without data."""
+    if data is None:
+        return WilsonPrior(rac)
+    from abismal.status import status
+    status("Estimating the Wilson prior from the data")
+    return WilsonPrior.with_empirical_sigma(rac, data, standardize=standardize)
+
+
 def build_model(args, facts, data=None, precision="float32"):
     """
     Build the `VariationalMergingModel` that `args` describe for data with these
@@ -106,13 +115,13 @@ def build_model(args, facts, data=None, precision="float32"):
         elif args.posterior_type == "intensity":
             from abismal.prior.intensity.wilson import WilsonPrior
             if args.prior_distribution == 'empirical_wilson':
-                prior = WilsonPrior.with_empirical_sigma(rac, data, standardize=standardize_inputs) if data is not None else WilsonPrior(rac)
+                prior = _empirical_wilson(WilsonPrior, rac, data, standardize_inputs)
             else:
                 prior = WilsonPrior(rac)
         else:
             from abismal.prior.structure_factor.wilson import WilsonPrior
             if args.prior_distribution == 'empirical_wilson':
-                prior = WilsonPrior.with_empirical_sigma(rac, data, standardize=standardize_inputs) if data is not None else WilsonPrior(rac)
+                prior = _empirical_wilson(WilsonPrior, rac, data, standardize_inputs)
             else:
                 prior = WilsonPrior(rac)
         loc_init = prior.flat_distribution().mean

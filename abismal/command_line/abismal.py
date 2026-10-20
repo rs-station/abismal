@@ -51,12 +51,15 @@ def main(args=None):
 
     logger.info(f"Training on {device}, compile={compile_model}, precision={precision}")
     logger.info("Configuring data input")
+    from abismal.status import status
+    status("Reading the data")
     dm = DataManager.from_parser(parser)
     train, test = dm.get_train_test_splits()
     if test is not None:
         logger.info("There is a test set for validation")
 
     from abismal.build import build_model, build_optimizer, facts_from
+    status("Building the model")
     model = build_model(parser, facts_from(dm, train), data=train, precision=precision)
 
     if parser.separate_friedel_mates:

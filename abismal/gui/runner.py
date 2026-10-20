@@ -149,6 +149,42 @@ def _plot_metrics(ax, df, metrics):
     ax.grid(which='both', axis='both', ls='-.')
 
 
+_STATUS_RE = re.compile(r'^\[status\] (.+?)\s*$')
+_REFINEMENT_RE = re.compile(r'^\[refinement\] (started|finished|failed|skipped) (\S+)')
+_CYCLE_RE = re.compile(r'^Cycle\s+(\d+)/(\d+):.*Rfree=([0-9.]+)')
+
+
+def _refinement_stage(result_dir):
+    """What a running torchref worker is doing, read from the end of its log.
+
+    The worker's stdout marks each stage as it starts; the last marker seen is the
+    stage it is in.
+    """
+    try:
+        lines = (Path(result_dir) / 'stdout.txt').read_text().splitlines()
+    except OSError:
+        return 'starting'
+    stage = 'setting up'
+    for line in lines:
+        cycle = _CYCLE_RE.match(line)
+        if cycle:
+            stage = f'macrocycle {cycle.group(1)}/{cycle.group(2)} (R<sub>free</sub> {cycle.group(3)})'
+        elif 'fitting SIMU' in line or line.lstrip().startswith('sigma='):
+            stage = 'fitting the ADP restraint weight'
+        elif 'rigid-body' in line or line.startswith('Rigid body'):
+            stage = 'rigid-body refinement'
+        elif 'anomalous peaks' in line or line.startswith('peak_local_max'):
+            stage = 'finding anomalous peaks'
+    return stage
+
+
+def _epoch_of(name):
+    try:
+        return int(name.rsplit('_epoch_', 1)[-1])
+    except ValueError:
+        return None
+
+
 _R_WORKER = re.compile(r'^R(work|free)=([0-9.]+)\s*$', re.M)
 _R_PHENIX = re.compile(r'Final R-work = ([0-9.]+), R-free = ([0-9.]+)')
 
@@ -281,6 +317,12 @@ class AbismalRunner:
         self.progress_label = widgets.Label(
             'Waiting...', layout=widgets.Layout(min_width='120px')
         )
+        # What the run is doing, from its `[status]` lines (abismal.status).
+        self.status_label = widgets.HTML('')
+        # Refinements by result directory name -> 'started' | 'finished' |
+        # 'failed' | 'skipped', from the `[refinement]` lines.
+        self._refinements = {}
+        self.refinement_status = widgets.HTML('')
         self.stop_button = widgets.Button(
             description='Stop',
             button_style='danger',
@@ -443,6 +485,7 @@ class AbismalRunner:
         sections = [
             widgets.HTML("<b>Progress</b>"),
             progress_row,
+            self.status_label,
             widgets.HTML("<b>Training History</b>"),
             self.history_widget,
             # Side by side where there is room, the peaks below the R values where
@@ -455,6 +498,7 @@ class AbismalRunner:
         if self.has_phenix:
             sections += [
                 widgets.HTML("<b>Refinement Results</b>"),
+                self.refinement_status,
                 self.viewer_label,
                 self.viewer_widget,
                 self._js_widget,
@@ -578,6 +622,8 @@ class AbismalRunner:
                     (self.log_widget, ['value']),
                     (self.progress_widget, ['value', 'max', 'bar_style']),
                     (self.progress_label, ['value']),
+                    (self.status_label, ['value']),
+                    (self.refinement_status, ['value']),
                     (self.stop_button, ['disabled']),
                     (self.history_widget, ['outputs']),
                     (self.peaks_label.layout, ['display']),
@@ -626,6 +672,54 @@ class AbismalRunner:
             'metadata': {},
         },)
 
+    def _handle_line(self, line):
+        """Pick the run's `[status]` and `[refinement]` lines out of its output."""
+        m = _STATUS_RE.match(line)
+        if m:
+            text = f'<span style="color:#555">{html.escape(m.group(1))}</span>'
+            self._run_on_main_thread(lambda: setattr(self.status_label, 'value', text))
+            return
+        m = _REFINEMENT_RE.match(line)
+        if m:
+            event, name = m.groups()
+            # A skipped epoch only replaces nothing: it never ran.
+            if event != 'skipped' or name not in self._refinements:
+                self._refinements[name] = event
+            self._render_refinements()
+
+    def _render_refinements(self):
+        """List the running refinements with their current stage, and a summary of
+        the rest, under Refinement Results."""
+        if not self._refinements:
+            return
+        by_epoch = sorted(self._refinements.items(), key=lambda kv: (_epoch_of(kv[0]) or 0, kv[0]))
+        several = len({name.split('_asu_')[0] for name, _ in by_epoch}) > 1
+        def label(name):
+            epoch = _epoch_of(name)
+            prefix = f'{name.split("_asu_")[0]}, ' if several else ''
+            return f'{prefix}epoch {epoch}'
+        lines = []
+        for name, state in by_epoch:
+            if state == 'started':
+                stage = _refinement_stage(os.path.join(self.out_dir, name))
+                lines.append(f'&#9654; <b>{html.escape(label(name))}</b>: {stage}')
+        done = [label(n) for n, s in by_epoch if s == 'finished']
+        failed = [n for n, s in by_epoch if s == 'failed']
+        skipped = [label(n) for n, s in by_epoch if s == 'skipped']
+        if done:
+            lines.append(f'Finished: {len(done)} (latest {html.escape(done[-1])})')
+        for name in failed:
+            lines.append(
+                f'<span style="color:#b00">Failed: {html.escape(label(name))} '
+                f'(see {html.escape(os.path.join(name, "stderr.txt"))})</span>'
+            )
+        if skipped:
+            lines.append(f'Skipped while another was running: {", ".join(map(html.escape, skipped))}')
+        if not any(s == 'started' for _, s in by_epoch):
+            lines.insert(0, 'No refinement running')
+        value = '<div style="line-height:1.5">' + '<br>'.join(lines) + '</div>'
+        self._run_on_main_thread(lambda: setattr(self.refinement_status, 'value', value))
+
     def _update_progress(self, cur, total):
         def apply():
             self.progress_widget.max = total
@@ -652,6 +746,7 @@ class AbismalRunner:
                 line = f.readline()
                 if line:
                     self._append_log(line)
+                    self._handle_line(line)
                     m = epoch_re.match(line)
                     if m:
                         self._update_progress(int(m.group(1)), int(m.group(2)))
@@ -661,6 +756,7 @@ class AbismalRunner:
                     # Process done — drain any lines written just before exit.
                     for line in f:
                         self._append_log(line)
+                        self._handle_line(line)
                         m = epoch_re.match(line)
                         if m:
                             self._update_progress(
@@ -679,11 +775,13 @@ class AbismalRunner:
                     self.progress_widget.value = self.progress_widget.max
                     self.progress_widget.bar_style = 'success'
                     self.progress_label.value = 'Finished'
+                    self.status_label.value = ''
                 self._run_on_main_thread(finish_ok)
             else:
                 def finish_fail(rc=rc):
                     self.progress_widget.bar_style = 'danger'
                     self.progress_label.value = f'Failed (exit {rc})'
+                    self.status_label.value = ''
                 self._run_on_main_thread(finish_fail)
         else:
             def finish_unknown():
@@ -721,6 +819,8 @@ class AbismalRunner:
             self._update_viewer()
             self._update_peaks()
             self._update_r_factors()
+            # The stage of a running refinement changes without a line in our log.
+            self._render_refinements()
 
     def _update_history(self):
         history_file = Path(self.out_dir) / "history.csv"

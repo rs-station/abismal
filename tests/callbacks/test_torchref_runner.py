@@ -331,3 +331,25 @@ def test_cpu_worker_cannot_see_the_gpu(tmp_path, monkeypatch):
     assert cpu.worker_env()["CUDA_VISIBLE_DEVICES"] == ""
     gpu = TorchRefRunner(str(tmp_path), None, device="cuda")
     assert gpu.worker_env()["CUDA_VISIBLE_DEVICES"] == "0"
+
+
+def test_refinement_events_are_announced(tmp_path, capsys):
+    """The GUI lists running refinements from these lines."""
+    from abismal.callbacks.torchref import TorchRefRunner
+
+    class Done:
+        returncode = 0
+        def poll(self): return 0
+        def wait(self): return 0
+
+    class Broken(Done):
+        returncode = 1
+
+    runner = TorchRefRunner(str(tmp_path), None)
+    runner.processes = [(Done(), str(tmp_path / "torchref_asu_0_epoch_1")),
+                        (Broken(), str(tmp_path / "torchref_asu_0_epoch_2"))]
+    with pytest.warns(RuntimeWarning):
+        runner._reap()
+    out = capsys.readouterr().out.splitlines()
+    assert "[refinement] finished torchref_asu_0_epoch_1" in out
+    assert "[refinement] failed torchref_asu_0_epoch_2" in out

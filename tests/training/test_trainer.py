@@ -159,3 +159,12 @@ def test_epoch_metrics_weight_batches_by_images():
     means.update({"NLL": torch.tensor(20.)}, weight=2)
     # Unweighted this would be 15; by images it is barely moved from 10
     assert abs(means.result()["NLL"] - (10. * 100 + 20. * 2) / 102) < 1e-5
+
+
+def test_the_trainer_says_when_it_starts_training(capsys):
+    """Uncompiled, it says Training at once; the GUI shows these [status] lines."""
+    model = build_small_model()
+    train, test = _streams(model)
+    Trainer(model, Adam(parameter_groups(model)), verbose=0).fit(train, epochs=1, validation_data=test)
+    lines = [l for l in capsys.readouterr().out.splitlines() if l.startswith("[status] ")]
+    assert lines == ["[status] Training"]
