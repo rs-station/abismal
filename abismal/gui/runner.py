@@ -1,5 +1,6 @@
 import html
 import json
+import math
 import threading
 import glob
 import os
@@ -148,6 +149,65 @@ def _plot_metrics(ax, df, metrics):
     ax.grid(which='both', axis='both', ls='-.')
 
 
+_R_WORKER = re.compile(r'^R(work|free)=([0-9.]+)\s*$', re.M)
+_R_PHENIX = re.compile(r'Final R-work = ([0-9.]+), R-free = ([0-9.]+)')
+
+
+def _refinement_r_factors(result_dir):
+    """(Rwork, Rfree) of one refinement result directory, or None.
+
+    The torchref worker prints them as its last `Rwork=` and `Rfree=` lines.
+    Not its PDB header: torchref before 0.7.0 copied REMARK 3 from the input
+    model, so the header there reports the starting model's R values. phenix
+    logs `Final R-work = ..., R-free = ...`, and writes the same numbers into
+    its model's REMARK 3, read here when the log is gone.
+    """
+    d = Path(result_dir)
+    if d.name.startswith('torchref'):
+        try:
+            found = dict(_R_WORKER.findall((d / 'stdout.txt').read_text()))
+        except OSError:
+            return None
+        if 'work' in found and 'free' in found:
+            return float(found['work']), float(found['free'])
+        return None
+    for log in sorted(d.glob('*.log')):
+        try:
+            matches = _R_PHENIX.findall(log.read_text())
+        except OSError:
+            continue
+        if matches:
+            return tuple(float(v) for v in matches[-1])
+    for pdb in sorted(d.glob('*.pdb')):
+        try:
+            import gemmi
+            refinement = gemmi.read_pdb(str(pdb)).meta.refinement
+        except Exception:
+            continue
+        # gemmi reports a value missing from the header as NaN, which is truthy.
+        if refinement and all(math.isfinite(v) and v > 0 for v in (refinement[0].r_work, refinement[0].r_free)):
+            return refinement[0].r_work, refinement[0].r_free
+    return None
+
+
+def _draw_r_factors(ax, data):
+    """Rwork (solid) and Rfree (dashed) against epoch, one colour per refinement."""
+    import seaborn as sns
+
+    series = list(dict.fromkeys(data['Refinement']))
+    palette = sns.color_palette('Dark2', max(len(series), 3))
+    for color, name in zip(palette, series):
+        rows = data[data['Refinement'] == name].sort_values('Epoch')
+        suffix = f' ({name})' if len(series) > 1 else ''
+        for column, ls in (('Rwork', '-'), ('Rfree', '--')):
+            ax.plot(rows['Epoch'], rows[column], color=color, ls=ls,
+                    label=column + suffix, marker=_lone_point_marker(rows[column]))
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('R')
+    ax.grid(which='both', axis='both', ls='-.')
+    ax.legend(fontsize='small', framealpha=0.85)
+
+
 def _draw_peaks(ax, peak_data):
     """Anomalous peak height against epoch: colour by atom type, line style by
     residue. A site with a single epoch so far -- every site after the first --
@@ -235,6 +295,14 @@ class AbismalRunner:
             value="<b>Anomalous Peak Heights</b>",
             layout=widgets.Layout(display='none'),
         )
+        # Beside the peak heights, and likewise hidden until a refinement has
+        # finished; every refinement reports R values, anomalous or not.
+        self.r_factors_widget = widgets.Output()
+        self.r_factors_label = widgets.HTML(
+            value="<b>R<sub>work</sub> / R<sub>free</sub></b>",
+            layout=widgets.Layout(display='none'),
+        )
+        self._r_factors_signature = None
         if has_phenix:
             self._viewer_id = str(uuid.uuid4())
             self._viewer_initialized = False
@@ -377,8 +445,12 @@ class AbismalRunner:
             progress_row,
             widgets.HTML("<b>Training History</b>"),
             self.history_widget,
-            self.peaks_label,
-            self.peaks_widget,
+            # Side by side where there is room, the peaks below the R values where
+            # there is not.
+            widgets.HBox([
+                widgets.VBox([self.r_factors_label, self.r_factors_widget]),
+                widgets.VBox([self.peaks_label, self.peaks_widget]),
+            ], layout=widgets.Layout(flex_flow='row wrap')),
         ]
         if self.has_phenix:
             sections += [
@@ -510,6 +582,8 @@ class AbismalRunner:
                     (self.history_widget, ['outputs']),
                     (self.peaks_label.layout, ['display']),
                     (self.peaks_widget, ['outputs']),
+                    (self.r_factors_label.layout, ['display']),
+                    (self.r_factors_widget, ['outputs']),
                 ]
                 if self.has_phenix:
                     widgets_and_traits += [
@@ -646,6 +720,7 @@ class AbismalRunner:
         if self.has_phenix:
             self._update_viewer()
             self._update_peaks()
+            self._update_r_factors()
 
     def _update_history(self):
         history_file = Path(self.out_dir) / "history.csv"
@@ -702,7 +777,7 @@ class AbismalRunner:
         from matplotlib.figure import Figure
 
         with _FIGURE_LOCK:
-            fig = Figure(figsize=(7, 4))
+            fig = Figure(figsize=(6, 3.6))
             ax = fig.subplots()
             _draw_peaks(ax, peak_data)
             sns.move_legend(ax, 'upper left', bbox_to_anchor=(1, 1))
@@ -714,6 +789,57 @@ class AbismalRunner:
         self._peaks_signature = signature
         self._run_on_main_thread(
             lambda: setattr(self.peaks_label.layout, 'display', '')
+        )
+
+    def _result_dirs(self):
+        """Every refinement result directory under out_dir, either backend."""
+        dirs = []
+        for prefix in ("eff", "torchref"):
+            dirs.extend(glob.glob(str(Path(self.out_dir) / f"{prefix}_*_asu_*_epoch_*")))
+        return sorted(dirs)
+
+    def _read_r_factors(self):
+        """Rwork and Rfree per finished refinement, tagged with epoch and with the
+        refinement ("torchref_0", "eff_1", ...) for runs that refine more than one
+        model. None if there are none yet."""
+        rows = []
+        for d in self._result_dirs():
+            name, _, epoch = Path(d).name.partition('_asu_')
+            try:
+                epoch = int(epoch.split('_epoch_')[-1])
+            except ValueError:
+                continue
+            r = _refinement_r_factors(d)
+            if r is not None:
+                rows.append({'Refinement': name, 'Epoch': epoch, 'Rwork': r[0], 'Rfree': r[1]})
+        return pd.DataFrame(rows) if rows else None
+
+    def _update_r_factors(self):
+        """Plot Rwork and Rfree against epoch beside the peak heights."""
+        dirs = self._result_dirs()
+        if not dirs:
+            return
+        # Redraw only when a result has appeared or changed, as for the peaks.
+        signature = tuple(
+            (f, _mtime(f)) for d in dirs
+            for f in sorted(glob.glob(os.path.join(d, 'stdout.txt')) + glob.glob(os.path.join(d, '*.log')))
+        )
+        if signature == self._r_factors_signature:
+            return
+        data = self._read_r_factors()
+        if data is None:
+            return
+
+        from matplotlib.figure import Figure
+
+        with _FIGURE_LOCK:
+            fig = Figure(figsize=(3.6, 3.6))
+            _draw_r_factors(fig.subplots(), data)
+            fig.tight_layout()
+            self._show_figure(self.r_factors_widget, fig)
+        self._r_factors_signature = signature
+        self._run_on_main_thread(
+            lambda: setattr(self.r_factors_label.layout, 'display', '')
         )
 
     def _peaks_files(self):
@@ -897,6 +1023,10 @@ class AbismalRunner:
             time.sleep(self.poll_interval)
             prev = self._last_pdb
             self._update_viewer()
+            # Refinements usually finish after training, so the charts follow too;
+            # each redraws only when its files have changed.
+            self._update_peaks()
+            self._update_r_factors()
             if self._last_pdb == prev:
                 unchanged += 1
             else:
