@@ -10,11 +10,12 @@
 # Everything lands in deploy/s3df/install/ (git-ignored), next to this script:
 #
 #   install/bin/micromamba   the package manager used to build the environment
-#   install/env/             python, torch (CUDA), abismal[gui,torchref] from this clone, jupyterlab
+#   install/env/             python, torch (CUDA), abismal[gui,torchref] (editable, from this
+#                            clone), jupyterlab
 #   install/demo/hewl/       the lysozyme example data and its reference files
 #
 # Users then source deploy/s3df/demo_setup.sh from this clone; see README.md. To update,
-# `git pull` and run this again.
+# `git pull`; run this again only when dependencies change.
 #
 # Usage:
 #   deploy/s3df/install_env.sh [--torch-index URL] [--with-dials]
@@ -68,7 +69,9 @@ if [ "$WITH_DIALS" = 1 ]; then
     "$MAMBA" install -y -q -p "$ENV" -c conda-forge dials
 fi
 
-PACKAGES=("$REPO[gui,torchref]" jupyterlab ipykernel)
+# abismal is installed in editable mode, so that `git pull` in this clone updates it;
+# rerun this script only when dependencies change.
+PACKAGES=(-e "$REPO[gui,torchref]" jupyterlab ipykernel)
 if [ "$TORCH_INDEX" != pypi ]; then
     # pip counts 2.13.0+cu129 and PyPI's 2.13.0 as one release and may keep either, so
     # ask for the local build by name: first the version pip would choose (which honours

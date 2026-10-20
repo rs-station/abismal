@@ -21,7 +21,8 @@ git clone -b s3df-demo https://github.com/rs-station/abismal /sdf/group/<facilit
 This builds `deploy/s3df/install/` inside the clone (git-ignored): Python 3.12, PyTorch with CUDA,
 abismal with its GUI and torchref installed from the clone itself, and JupyterLab. It also stages the
 lysozyme example data and its reference files, makes the clone world-readable, and ends with a check.
-To update, `git pull` in the clone and run the script again.
+abismal is installed in editable mode, so `git pull` in the clone updates it; rerun the script only
+when dependencies change.
 
 Options:
 - `--torch-index <url>`: the PyTorch wheel index to take torch from. The default is the CUDA 12.9
