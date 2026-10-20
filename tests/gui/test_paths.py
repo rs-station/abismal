@@ -5,8 +5,6 @@ needs a kernel: `Button.click()` runs its handlers synchronously, and the browse
 is shown and hidden by setting `layout.display`, which reads straight back.
 """
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -20,7 +18,7 @@ from abismal.gui.components.file_selector import (
 
 @pytest.fixture(autouse=True)
 def not_on_colab(monkeypatch):
-    """Everything here exercises the launch-directory logic, which is off-Colab only.
+    """Everything here exercises the off-Colab default directory.
 
     default_directory() short-circuits to /content as soon as google.colab
     imports, so on Colab -- or inside the Colab runtime container the debug loop
@@ -248,155 +246,20 @@ def test_an_unreadable_directory_is_survivable(tree):
 # where relative paths resolve
 # ---------------------------------------------------------------------------
 
-needs_proc = pytest.mark.skipif(
-    not os.path.isdir("/proc/self"), reason="reads the server's cwd from /proc"
-)
+def test_default_directory_is_the_kernels_cwd(monkeypatch, tmp_path):
+    """The notebook's directory -- Jupyter starts the kernel there -- wherever
+    the server itself was launched from, as on Open OnDemand, where that is the
+    home or job directory and has nothing to do with the user's work."""
+    notebook_dir = tmp_path / "abismal-demo"
+    notebook_dir.mkdir()
+    monkeypatch.setenv("PWD", str(tmp_path))
+    monkeypatch.setenv("JPY_PARENT_PID", str(os.getpid()))
+    monkeypatch.chdir(notebook_dir)
 
-# Above /proc/sys/kernel/pid_max on any sane system, so /proc/<it>/cwd cannot
-# exist and cannot be a recycled pid either.
-NO_SUCH_PID = 2 ** 30
-
-
-@pytest.fixture
-def server_process():
-    """Start a process with a chosen cwd, to stand in for a jupyter server.
-
-    What makes the launch directory knowable is the server process's own cwd, so
-    a fake server has to be a real process sitting in a real directory.
-    """
-    started = []
-
-    def start(directory):
-        proc = subprocess.Popen(
-            [sys.executable, "-c", "import sys; sys.stdin.read()"],
-            cwd=str(directory), stdin=subprocess.PIPE,
-        )
-        started.append(proc)
-        return proc.pid
-
-    yield start
-
-    for proc in started:
-        proc.kill()
-        proc.wait()
-
-
-def fake_servers(monkeypatch, *infos):
-    fake = type(sys)("jupyter_server.serverapp")
-    fake.list_running_servers = lambda: list(infos)
-    monkeypatch.setitem(sys.modules, "jupyter_server.serverapp", fake)
-    monkeypatch.setitem(sys.modules, "jupyter_server", type(sys)("jupyter_server"))
-
-
-@needs_proc
-def test_default_directory_is_where_jupyter_was_launched(
-    monkeypatch, tmp_path, server_process
-):
-    """`jupyter lab checkout/abismal_gui.ipynb` puts root_dir *and* the kernel's
-    cwd in the checkout, which is what dropped results next to the .ipynb. The
-    server process stays in the directory it was started from."""
-    launched_from = tmp_path / "data"
-    checkout = tmp_path / "opt" / "abismal"
-    checkout.mkdir(parents=True)
-    launched_from.mkdir()
-    pid = server_process(launched_from)
-    fake_servers(monkeypatch, {"pid": pid, "root_dir": str(checkout)})
-    monkeypatch.setenv("JPY_PARENT_PID", str(pid))
-    monkeypatch.chdir(checkout)
-
-    assert default_directory() == str(launched_from.resolve())
-
-
-@needs_proc
-def test_the_server_that_spawned_this_kernel_wins(
-    monkeypatch, tmp_path, server_process
-):
-    """More than one server can be running, and JPY_PARENT_PID says outright
-    which one this kernel belongs to."""
-    theirs = tmp_path / "theirs"
-    ours = tmp_path / "ours"
-    theirs.mkdir()
-    ours.mkdir()
-    our_pid = server_process(ours)
-    fake_servers(
-        monkeypatch,
-        {"pid": server_process(theirs), "root_dir": str(theirs)},
-        {"pid": our_pid, "root_dir": str(ours)},
-    )
-    monkeypatch.setenv("JPY_PARENT_PID", str(our_pid))
-
-    assert default_directory() == str(ours.resolve())
-
-
-@needs_proc
-def test_without_a_parent_pid_the_deepest_containing_root_wins(
-    monkeypatch, tmp_path, server_process
-):
-    """Nested roots both contain the kernel, so the deepest is the one that
-    actually spawned it."""
-    outer_root = tmp_path / "outer"
-    inner_root = outer_root / "inner"
-    inner_root.mkdir(parents=True)
-    outer_launch = tmp_path / "outer-launch"
-    inner_launch = tmp_path / "inner-launch"
-    outer_launch.mkdir()
-    inner_launch.mkdir()
-    fake_servers(
-        monkeypatch,
-        {"pid": server_process(outer_launch), "root_dir": str(outer_root)},
-        {"pid": server_process(inner_launch), "root_dir": str(inner_root)},
-    )
-    monkeypatch.delenv("JPY_PARENT_PID", raising=False)
-    monkeypatch.chdir(inner_root)
-
-    assert default_directory() == str(inner_launch.resolve())
-
-
-def test_pwd_stands_in_where_proc_cannot_be_read(monkeypatch, tmp_path):
-    """No /proc off Linux. PWD is the shell's directory at launch, inherited by
-    the server and through it by this kernel, so it survives the same trip."""
-    launched_from = tmp_path / "data"
-    launched_from.mkdir()
-    fake_servers(monkeypatch, {"pid": NO_SUCH_PID, "root_dir": str(tmp_path)})
-    monkeypatch.setenv("JPY_PARENT_PID", str(NO_SUCH_PID))
-    monkeypatch.setenv("PWD", str(launched_from))
-
-    assert default_directory() == str(launched_from.resolve())
-
-
-def test_the_server_root_is_the_last_resort(monkeypatch, tmp_path):
-    """With nothing to identify the kernel's server, root_dir is the only thing
-    left -- right whenever jupyter lab was started with no file argument."""
-    root = tmp_path / "root"
-    root.mkdir()
-    fake_servers(monkeypatch, {"pid": NO_SUCH_PID, "root_dir": str(root)})
-    monkeypatch.delenv("JPY_PARENT_PID", raising=False)
-
-    assert default_directory() == str(root.resolve())
-
-
-def test_pwd_is_ignored_outside_a_kernel(monkeypatch, tmp_path):
-    """Nothing spawned us, so PWD is just our own cwd under another name -- and
-    a stale one if anything has chdir'd since."""
-    monkeypatch.setitem(sys.modules, "jupyter_server.serverapp", None)
-    monkeypatch.delenv("JPY_PARENT_PID", raising=False)
-    monkeypatch.setenv("PWD", "/somewhere/stale")
-    monkeypatch.chdir(tmp_path)
-
-    assert Path(default_directory()).resolve() == tmp_path.resolve()
-
-
-def test_falling_back_to_the_cwd_without_a_server(monkeypatch, tmp_path):
-    monkeypatch.setitem(sys.modules, "jupyter_server.serverapp", None)
-    monkeypatch.delenv("JPY_PARENT_PID", raising=False)
-    monkeypatch.chdir(tmp_path)
-
-    assert Path(default_directory()).resolve() == tmp_path.resolve()
+    assert Path(default_directory()).resolve() == notebook_dir.resolve()
 
 
 def test_a_bare_selector_opens_in_the_base_directory(monkeypatch, tmp_path):
-    monkeypatch.setitem(sys.modules, "jupyter_server.serverapp", None)
-    monkeypatch.delenv("JPY_PARENT_PID", raising=False)
     monkeypatch.chdir(tmp_path)
 
     selector = PathSelector(description="x")

@@ -238,21 +238,13 @@ def _iter(widget):
 # where the file pickers open
 # ---------------------------------------------------------------------------
 
-def test_content_beats_a_live_proc_cwd_on_colab(monkeypatch):
-    """Regression: /content used to be unreachable on Colab.
-
-    The fallback was written as though the launch-directory lookup would fail
-    there. It does not. Colab sets JPY_PARENT_PID, so /proc/<pid>/cwd resolves
-    -- to the cwd of a supervisor process the user has never seen -- and that
-    plausible-looking wrong answer returned before the fallback ever ran. Only
-    the ordering makes /content reachable, so only the ordering is tested.
-    """
+def test_content_on_colab(monkeypatch):
+    """/content on Colab, even if a cell has changed the kernel's directory."""
     import os
     from abismal.gui.components import file_selector as fs
 
     real_isdir = os.path.isdir
     monkeypatch.setattr(fs, "_is_colab", lambda: True)
-    monkeypatch.setenv("JPY_PARENT_PID", str(os.getpid()))
     monkeypatch.setattr(
         fs.os.path, "isdir", lambda p: p == "/content" or real_isdir(p)
     )
@@ -260,7 +252,7 @@ def test_content_beats_a_live_proc_cwd_on_colab(monkeypatch):
     assert fs.default_directory() == "/content"
 
 
-def test_the_launch_directory_still_wins_off_colab(monkeypatch):
+def test_the_kernels_cwd_off_colab(monkeypatch, tmp_path):
     """The Colab branch must not capture the ordinary JupyterLab case."""
     import os
     from abismal.gui.components import file_selector as fs
@@ -270,9 +262,9 @@ def test_the_launch_directory_still_wins_off_colab(monkeypatch):
     monkeypatch.setattr(
         fs.os.path, "isdir", lambda p: p == "/content" or real_isdir(p)
     )
-    monkeypatch.setattr(fs, "_jupyter_launch_directory", lambda: "/somewhere/else")
+    monkeypatch.chdir(tmp_path)
 
-    assert fs.default_directory() == "/somewhere/else"
+    assert os.path.realpath(fs.default_directory()) == os.path.realpath(tmp_path)
 
 
 # ---------------------------------------------------------------------------

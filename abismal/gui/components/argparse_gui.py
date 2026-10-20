@@ -242,12 +242,10 @@ class ArgparseGUIBase:
     def _path_default(cls, action, mode):
         """Prefill or placeholder text for a path field, from the CLI default.
 
-        A relative default -- out_dir's "." -- means "right here", which on the
-        command line is the cwd but in the notebook has to be the base directory
-        the pickers use, or output lands next to the .ipynb. Resolve it and put
-        it in the field as a real value, both so it is visible and so the child
-        process is handed an absolute path rather than inheriting the kernel's
-        idea of where "." is.
+        A relative default -- out_dir's "." -- means "right here", the base
+        directory the pickers use. Resolve it and put it in the field as a real
+        value, both so it is visible and so the child process is handed an
+        absolute path rather than a relative one.
         """
         default = action.default
         if mode == 'save':
@@ -270,10 +268,9 @@ class ArgparseGUIBase:
     def _resolved_out_dir(parsed):
         """parsed.out_dir as an absolute path.
 
-        The kernel and the child disagree about "." -- the child is launched with
-        cwd=default_directory(), the kernel's cwd is the notebook's directory --
-        and the runner opens console.log itself, so a relative out_dir would have
-        it watching a different directory than the one being written to.
+        The runner opens console.log itself, and the child is launched with
+        cwd=default_directory(); resolving here keeps the two pointed at the same
+        directory even if the kernel's cwd changes after the form is built.
         """
         return str((Path(default_directory()) / Path(parsed.out_dir)).resolve())
 
