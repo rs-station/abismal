@@ -34,6 +34,7 @@ class TorchRefRunner(Callback):
                  wavelength: float = None, adp_mode: str = 'auto',
                  adp_aniso_sigma: str = 'auto', rigid_body: bool = True,
                  rigid_body_iter: int = 30, allow_overlap: bool = False,
+                 num_cpus: int = 1,
                  *args, **kwargs):
         self.output_prefix = output_prefix
         self.asu_id = asu_id
@@ -50,6 +51,9 @@ class TorchRefRunner(Callback):
         self.rigid_body = rigid_body
         self.rigid_body_iter = rigid_body_iter
         self.allow_overlap = allow_overlap
+        if num_cpus < 1:
+            raise ValueError(f"num_cpus must be at least 1, not {num_cpus}")
+        self.num_cpus = num_cpus
         self.output_directory = abspath(output_directory)
         self.processes = []
         # Epoch whose refinement the overlap guard skipped, if that skip is
@@ -187,8 +191,15 @@ class TorchRefRunner(Callback):
 
     def worker_env(self):
         """
-        The worker's environment: the training process's, with the GPU hidden
-        when refinement runs on the CPU.
+        The worker's environment: the training process's, with its CPU threads
+        limited to `num_cpus` and the GPU hidden when refinement runs on the CPU.
+
+        torch, MKL/OpenBLAS and numba each start a thread pool sized to every
+        core they can see; on a shared node that can be far more than the job
+        was given, and the refinement then competes with training for them.
+        torchref sets those pools itself when imported, from TORCHREF_NUM_THREADS
+        or else from SLURM_CPUS_PER_TASK (every core of the job), overwriting
+        the others, so it is set too.
 
         `--device cpu` alone is not enough once torch can see a GPU: torchref
         probes for an accelerator and puts some scaler targets on it anyway,
@@ -197,6 +208,10 @@ class TorchRefRunner(Callback):
         with CPU-only torch, which hid the problem.
         """
         env = dict(os.environ)
+        threads = str(self.num_cpus)
+        for var in ("TORCHREF_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+                    "OPENBLAS_NUM_THREADS", "NUMBA_NUM_THREADS"):
+            env[var] = threads
         if str(self.device) == "cpu":
             env["CUDA_VISIBLE_DEVICES"] = ""
         return env
