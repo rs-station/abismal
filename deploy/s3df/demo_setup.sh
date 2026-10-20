@@ -19,7 +19,9 @@
 #   3. creates ~/abismal-demo with a copy of the demo notebook, and links the example
 #      data there (read-only, shared);
 #   4. registers an "abismal (S3DF)" Jupyter kernel, in case the session starts a Jupyter
-#      other than the shared one.
+#      other than the shared one;
+#   5. makes JupyterLab open on the demo notebook instead of the user's last session
+#      (jupyter/jupyter_server_config.py), without touching their own saved layout.
 #
 # Override the defaults by setting these before the source line:
 #   ABISMAL_DEMO_DIR      where the user's demo copy goes (default ~/abismal-demo)
@@ -48,6 +50,9 @@ _abismal_demo_setup() {
     export TRITON_CACHE_DIR="$cache/triton"
     export MPLCONFIGDIR="$cache/matplotlib"
     export ABISMAL_DEMO_DIR="$demo"
+    # Open JupyterLab on the demo notebook rather than the user's last session; see
+    # jupyter/jupyter_server_config.py. Their own Jupyter settings still apply.
+    export JUPYTER_CONFIG_PATH="$here/jupyter${JUPYTER_CONFIG_PATH:+:$JUPYTER_CONFIG_PATH}"
 
     # The user's own copy of the notebook, so edits and outputs stay theirs; never
     # overwrite one they already have.

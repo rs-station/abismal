@@ -53,6 +53,10 @@ The script writes only to your own space:
 - compile caches in your scratch directory (or `~/.cache` without one);
 - a Jupyter kernel named *abismal (S3DF)*.
 
+JupyterLab opens on the demo notebook, with the file browser in `~/abismal-demo`, whatever was open
+in earlier sessions; demo sessions keep their layout in `~/abismal-demo/.jupyter-workspaces`, so the
+user's own JupyterLab layout is neither restored nor changed (`jupyter/jupyter_server_config.py`).
+
 It never overwrites an edited notebook. To put things elsewhere, set `ABISMAL_DEMO_DIR` or
 `ABISMAL_CACHE_DIR` before the source line.
 
