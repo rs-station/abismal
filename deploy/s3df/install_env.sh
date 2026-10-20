@@ -78,6 +78,15 @@ elif [ "$WITH_DIALS" = 1 ] && ! "$PY" -c "import dxtbx, dials" >/dev/null 2>&1; 
     "$MAMBA" install -y -q -p "$ENV" -c conda-forge "${CONDA_PACKAGES[@]}"
 fi
 
+# The environment's own C++ runtime, preloaded for everything below as demo_setup.sh
+# does for users: conda-forge's numpy, gemmi and DIALS need a newer libstdc++ than an
+# older system's, which pip's torch would otherwise load first (see demo_setup.sh).
+RUNTIME=""
+for lib in libstdc++.so.6 libgcc_s.so.1; do
+    [ -e "$ENV/lib/$lib" ] && RUNTIME="${RUNTIME:+$RUNTIME }$ENV/lib/$lib"
+done
+[ -n "$RUNTIME" ] && export LD_PRELOAD="$RUNTIME${LD_PRELOAD:+ $LD_PRELOAD}"
+
 # abismal is installed in editable mode, so that `git pull` in this clone updates it;
 # rerun this script only when dependencies change.
 PACKAGES=(-e "$REPO[gui,torchref]" jupyterlab ipykernel)

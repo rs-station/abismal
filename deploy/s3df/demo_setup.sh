@@ -45,6 +45,19 @@ _abismal_demo_setup() {
     fi
     export PATH="$install/env/bin:$PATH"
 
+    # Use the environment's own C++ runtime in every process of the session. Its
+    # conda-forge packages (numpy, gemmi, DIALS) are built against a newer libstdc++
+    # than an older system has; pip's torch finds libstdc++ through the system's
+    # library path instead. Whichever loads first serves the whole process, so
+    # `import torch` before gemmi failed on S3DF with
+    #   /lib64/libstdc++.so.6: version `CXXABI_1.3.15' not found
+    # Preloading the environment's runtime makes it the one, in any import order.
+    local runtime="" lib
+    for lib in libstdc++.so.6 libgcc_s.so.1; do
+        [ -e "$install/env/lib/$lib" ] && runtime="${runtime:+$runtime }$install/env/lib/$lib"
+    done
+    [ -n "$runtime" ] && export LD_PRELOAD="$runtime${LD_PRELOAD:+ $LD_PRELOAD}"
+
     mkdir -p "$cache" "$demo"
     export TORCHINDUCTOR_CACHE_DIR="$cache/inductor"
     export TRITON_CACHE_DIR="$cache/triton"
@@ -64,12 +77,13 @@ _abismal_demo_setup() {
     [ -e "$demo/hewl" ] || ln -s "$install/demo/hewl" "$demo/hewl"
     mkdir -p "$demo/runs"
 
-    local kernels="${XDG_DATA_HOME:-$HOME/.local/share}/jupyter/kernels/abismal-s3df"
-    if [ ! -f "$kernels/kernel.json" ]; then
-        "$install/env/bin/python" -m ipykernel install --user --name abismal-s3df \
-            --display-name "abismal (S3DF)" >/dev/null 2>&1 \
-            || echo "abismal demo: could not register the kernel (the shared Jupyter still has it)" >&2
-    fi
+    # Registered every session (it takes a second), so a kernel registered by an
+    # earlier version of this script picks up the runtime preload too.
+    local kernel_env=()
+    [ -n "$runtime" ] && kernel_env=(--env LD_PRELOAD "$runtime")
+    "$install/env/bin/python" -m ipykernel install --user --name abismal-s3df \
+        --display-name "abismal (S3DF)" "${kernel_env[@]}" >/dev/null 2>&1 \
+        || echo "abismal demo: could not register the kernel (the shared Jupyter still has it)" >&2
 
     echo "abismal demo: environment $install/env, notebook $demo/abismal_s3df_demo.ipynb, caches $cache"
 }
