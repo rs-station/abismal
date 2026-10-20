@@ -541,3 +541,177 @@ def test_sites_with_several_epochs_get_no_markers(runner_factory, tmp_path):
         write_peaks(out_dir / f"torchref_0_asu_0_epoch_{epoch}", [("A", 30, "CYS", 10.0 + epoch)])
     ax = _draw_peaks_axis(runner_factory(out_dir=str(out_dir), has_phenix=True))
     assert not _markers(ax)
+
+
+# ---------------------------------------------------------------------------
+# R-work / R-free beside the peak heights
+# ---------------------------------------------------------------------------
+
+def write_torchref_result(directory, rwork, rfree):
+    """A torchref result directory as the worker leaves it: its R values close
+    stdout.txt, and the PDB header carries the *input* model's (torchref before
+    0.7.0 copied REMARK 3), which must not be what is plotted."""
+    directory.mkdir(parents=True, exist_ok=True)
+    directory.joinpath("stdout.txt").write_text(
+        f"Cycle  5/5: Rwork={rwork + 0.01:.4f}  Rfree={rfree + 0.01:.4f}\n"
+        f"Rwork={rwork:.4f}\nRfree={rfree:.4f}\nadp_aniso_sigma=0.2\n"
+    )
+    directory.joinpath("refined.pdb").write_text(
+        "REMARK   3   R VALUE            (WORKING SET) : 0.9999\n"
+        "REMARK   3   FREE R VALUE                     : 0.9999\n"
+    )
+
+
+def write_phenix_result(directory, rwork, rfree, log=True):
+    directory.mkdir(parents=True, exist_ok=True)
+    if log:
+        directory.joinpath("refine_001.log").write_text(
+            "Start R-work = 0.3000, R-free = 0.3100\n"
+            f"Final R-work = {rwork:.4f}, R-free = {rfree:.4f}\n"
+        )
+    # The opening of a real phenix.refine REMARK 3 block: gemmi records a
+    # refinement only once it has seen the DATA USED IN REFINEMENT section.
+    directory.joinpath("refine_001.pdb").write_text(
+        "REMARK   3\n"
+        "REMARK   3 REFINEMENT.\n"
+        "REMARK   3   PROGRAM     : PHENIX (1.21.2_5419: ???)\n"
+        "REMARK   3\n"
+        "REMARK   3  X-RAY DATA.\n"
+        "REMARK   3  \n"
+        "REMARK   3  REFINEMENT TARGET : ML\n"
+        "REMARK   3  \n"
+        "REMARK   3  DATA USED IN REFINEMENT.\n"
+        "REMARK   3   RESOLUTION RANGE HIGH (ANGSTROMS) : 1.40    \n"
+        "REMARK   3   RESOLUTION RANGE LOW  (ANGSTROMS) : 25.78   \n"
+        "REMARK   3  \n"
+        "REMARK   3  FIT TO DATA USED IN REFINEMENT.\n"
+        f"REMARK   3   R VALUE            (WORKING SET) : {rwork:.4f}\n"
+        f"REMARK   3   FREE R VALUE                     : {rfree:.4f}\n"
+        "CRYST1   10.000   10.000   10.000  90.00  90.00  90.00 P 1\n"
+        "ATOM      1  CA  GLY A   1       1.000   1.000   1.000  1.00 20.00           C\n"
+        "END\n"
+    )
+
+
+def test_torchref_r_values_come_from_the_worker_not_the_header(tmp_path):
+    from abismal.gui.runner import _refinement_r_factors
+    d = tmp_path / "torchref_0_asu_0_epoch_1"
+    write_torchref_result(d, 0.1370, 0.1447)
+    assert _refinement_r_factors(d) == (0.1370, 0.1447)
+
+
+def test_phenix_r_values_come_from_the_log_or_else_the_model(tmp_path):
+    from abismal.gui.runner import _refinement_r_factors
+    with_log = tmp_path / "eff_0_asu_0_epoch_1"
+    write_phenix_result(with_log, 0.2147, 0.2366)
+    assert _refinement_r_factors(with_log) == (0.2147, 0.2366)
+    without = tmp_path / "eff_0_asu_0_epoch_2"
+    write_phenix_result(without, 0.2100, 0.2300, log=False)
+    assert _refinement_r_factors(without) == pytest.approx((0.2100, 0.2300))
+
+
+def test_an_unfinished_refinement_has_no_r_values(tmp_path):
+    from abismal.gui.runner import _refinement_r_factors
+    d = tmp_path / "torchref_0_asu_0_epoch_1"
+    d.mkdir()
+    d.joinpath("stdout.txt").write_text("Cycle  1/5: Rwork=0.2  Rfree=0.21\n")
+    assert _refinement_r_factors(d) is None
+
+
+def test_the_r_chart_appears_once_a_refinement_finishes(runner_factory, tmp_path):
+    out_dir = tmp_path / "run"
+    runner = runner_factory(out_dir=str(out_dir), has_phenix=True)
+    runner._update_r_factors()
+    assert runner.r_factors_label.layout.display == "none"
+    assert png_of(runner.r_factors_widget) is None
+
+    write_torchref_result(out_dir / "torchref_0_asu_0_epoch_1", 0.20, 0.22)
+    runner._update_r_factors()
+    assert runner.r_factors_label.layout.display == ""
+    assert png_of(runner.r_factors_widget) is not None
+
+
+def test_a_non_anomalous_run_still_gets_r_values(runner_factory, tmp_path):
+    """No peaks.csv, so no peak chart -- but the R chart applies to every run."""
+    out_dir = tmp_path / "run"
+    write_phenix_result(out_dir / "eff_0_asu_0_epoch_1", 0.21, 0.23)
+    runner = runner_factory(out_dir=str(out_dir), has_phenix=True)
+    runner._poll()
+    assert png_of(runner.r_factors_widget) is not None
+    assert runner.peaks_label.layout.display == "none"
+
+
+def test_the_r_chart_is_redrawn_only_when_a_result_changes(runner_factory, tmp_path):
+    out_dir = tmp_path / "run"
+    write_torchref_result(out_dir / "torchref_0_asu_0_epoch_1", 0.20, 0.22)
+    runner = runner_factory(out_dir=str(out_dir), has_phenix=True)
+    runner._update_r_factors()
+    first = runner.r_factors_widget.outputs
+    runner._update_r_factors()
+    assert runner.r_factors_widget.outputs is first
+    write_torchref_result(out_dir / "torchref_0_asu_0_epoch_2", 0.18, 0.21)
+    runner._update_r_factors()
+    assert runner.r_factors_widget.outputs is not first
+
+
+def _draw_r_axis(runner):
+    from matplotlib.figure import Figure
+    from abismal.gui.runner import _draw_r_factors
+    ax = Figure().subplots()
+    _draw_r_factors(ax, runner._read_r_factors())
+    return ax
+
+
+def test_rwork_is_solid_and_rfree_dashed_in_one_colour(runner_factory, tmp_path):
+    out_dir = tmp_path / "run"
+    for epoch, (w, f) in enumerate([(0.25, 0.27), (0.21, 0.24), (0.19, 0.23)], start=1):
+        write_torchref_result(out_dir / f"torchref_0_asu_0_epoch_{epoch}", w, f)
+    ax = _draw_r_axis(runner_factory(out_dir=str(out_dir), has_phenix=True))
+    lines = {line.get_label(): line for line in ax.get_lines()}
+    assert list(lines["Rwork"].get_ydata()) == [0.25, 0.21, 0.19]
+    assert list(lines["Rfree"].get_ydata()) == [0.27, 0.24, 0.23]
+    assert lines["Rwork"].get_linestyle() == "-" and lines["Rfree"].get_linestyle() == "--"
+    assert lines["Rwork"].get_color() == lines["Rfree"].get_color()
+    assert all(line.get_marker() in (None, "None", "") for line in lines.values())
+
+
+def test_one_epoch_of_r_values_is_marked(runner_factory, tmp_path):
+    out_dir = tmp_path / "run"
+    write_torchref_result(out_dir / "torchref_0_asu_0_epoch_1", 0.25, 0.27)
+    ax = _draw_r_axis(runner_factory(out_dir=str(out_dir), has_phenix=True))
+    assert all(line.get_marker() == "o" for line in ax.get_lines())
+
+
+def test_each_refined_model_gets_its_own_colour(runner_factory, tmp_path):
+    out_dir = tmp_path / "run"
+    for epoch in (1, 2):
+        write_torchref_result(out_dir / f"torchref_0_asu_0_epoch_{epoch}", 0.20, 0.22)
+        write_torchref_result(out_dir / f"torchref_1_asu_0_epoch_{epoch}", 0.30, 0.32)
+    ax = _draw_r_axis(runner_factory(out_dir=str(out_dir), has_phenix=True))
+    lines = {line.get_label(): line for line in ax.get_lines()}
+    assert set(lines) == {"Rwork (torchref_0)", "Rfree (torchref_0)", "Rwork (torchref_1)", "Rfree (torchref_1)"}
+    assert lines["Rwork (torchref_0)"].get_color() != lines["Rwork (torchref_1)"].get_color()
+
+
+def test_the_post_training_watcher_keeps_both_charts_current(runner_factory, tmp_path, monkeypatch):
+    """Refinement usually finishes after training: the last epoch's peaks and R
+    values arrive while only the post-training watcher is still looking."""
+    out_dir = tmp_path / "run"
+    runner = runner_factory(out_dir=str(out_dir), has_phenix=True)
+    runner.poll_interval = 0
+    runner._monitoring_active = True
+    write_torchref_result(out_dir / "torchref_0_asu_0_epoch_1", 0.20, 0.22)
+    write_peaks(out_dir / "torchref_0_asu_0_epoch_1", [("A", 30, "CYS", 11.0)])
+    runner._post_training_phenix_watcher(max_unchanged=1)
+    assert png_of(runner.r_factors_widget) is not None
+    assert png_of(runner.peaks_widget) is not None
+
+
+def test_a_model_header_without_r_values_gives_none(tmp_path):
+    """gemmi reports a missing R value as NaN; that must not reach the plot."""
+    from abismal.gui.runner import _refinement_r_factors
+    d = tmp_path / "eff_0_asu_0_epoch_1"
+    write_phenix_result(d, 0.21, 0.23, log=False)
+    pdb = d / "refine_001.pdb"
+    pdb.write_text("".join(l for l in pdb.read_text().splitlines(True) if "R VALUE" not in l))
+    assert _refinement_r_factors(d) is None
