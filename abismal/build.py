@@ -121,9 +121,11 @@ def build_model(args, facts, data=None, precision="float32"):
         scale_init = args.init_scale * scale_init
     elif args.prior_distribution == 'auto_wilson':
         from abismal.prior.structure_factor.wilson import AutoWilsonPrior
-        prior = AutoWilsonPrior(rac)
+        prior = AutoWilsonPrior(rac, learn_k=not args.auto_wilson_fixed_scale)
+        # As for the flat Wilson prior: start the posteriors at the prior's
+        # mean and a scale of init_scale times its standard deviation.
         loc_init = prior.flat_distribution().mean
-        scale_init = args.init_scale * loc_init
+        scale_init = args.init_scale * prior.flat_distribution().stddev
     elif args.prior_distribution == "normal":
         from abismal.prior.normal import NormalPrior
 

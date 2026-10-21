@@ -92,6 +92,16 @@ args_and_kwargs = (
 
     (
         (
+            "--auto-wilson-fixed-scale",
+        ),{
+            "help": "With --prior-distribution auto_wilson, learn only the B factor of "
+                    "the Wilson prior and keep its scale k at 1.",
+            "action": "store_true",
+        }
+    ),
+
+    (
+        (
             "--scale-prior-distribution",
         ),{
             "help": "The scale prior to use.  "

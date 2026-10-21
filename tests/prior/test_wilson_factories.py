@@ -44,3 +44,21 @@ def test_wilson_distribution_dispatches_per_reflection():
         weibull_min.logpdf(1.0, 2.0, scale=np.sqrt(2.0 * 1.5)),
     ])
     np.testing.assert_allclose(lp, expected, rtol=1e-4, atol=1e-5)
+
+
+def test_auto_wilson_learns_b_and_optionally_k():
+    import torch
+    from model_helpers import build_cli_model, synthetic_batch
+    from abismal import tracking
+    for flags, learns_k in (((), True), (("--auto-wilson-fixed-scale",), False)):
+        model, _ = build_cli_model("--prior-distribution", "auto_wilson", *flags)
+        prior = model.prior
+        names = {n for n, _ in prior.named_parameters()}
+        assert "_b" in names
+        assert ("_k" in names) == learns_k
+        model.train()
+        with tracking.track() as t:
+            model(synthetic_batch(model).map(torch.as_tensor), training=True)
+        t.total_loss().backward()
+        assert prior._b.grad is not None and prior._b.grad != 0
+        assert "WilsonB" in t.metrics

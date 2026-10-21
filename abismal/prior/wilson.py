@@ -111,11 +111,24 @@ class WilsonPriorBase(PriorBase):
 
 
 class AutoWilsonPriorBase(WilsonPriorBase):
-    def __init__(self, *args, **kwargs):
+    """
+    A Wilson prior whose Σ falls off with resolution, Σ = k exp(-b / d**2), with
+    b and optionally k learned. b is reported as the Wilson B of the intensities,
+    2b in Å² (the metric WilsonB).
+    """
+    def __init__(self, *args, learn_k=True, **kwargs):
         super().__init__(*args, **kwargs)
-        b_init = 0.
-        self.b = torch.nn.Parameter(torch.tensor(b_init))
-        self._k = torch.nn.Parameter(torch.tensor(0.))
+        # b in units of 10 Å²: Adam moves a parameter about lr per step, and a
+        # typical b (5-15 Å²) is out of reach of 1e-3 per step in 10k steps.
+        self._b = torch.nn.Parameter(torch.tensor(0.))
+        if learn_k:
+            self._k = torch.nn.Parameter(torch.tensor(0.))
+        else:
+            self.register_buffer('_k', torch.tensor(0.))
+
+    @property
+    def b(self):
+        return 10. * self._b
 
     @property
     def k(self):
@@ -124,6 +137,6 @@ class AutoWilsonPriorBase(WilsonPriorBase):
     @property
     def sigma(self):
         tracking.add_metric(self.k, 'WilsonK')
-        tracking.add_metric(self.b, 'WilsonB')
+        tracking.add_metric(2. * self.b, 'WilsonB')
         sigma = torch.exp(-self.b * torch.reciprocal(torch.square(self.rac.dHKL)) + self._k)
         return sigma
