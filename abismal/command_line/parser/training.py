@@ -29,8 +29,8 @@ args_and_kwargs = (
         (
             "--epochs",
         ),{
-            "help": "The number of training epochs to run with default 30.",
-            "default": 30,
+            "help": "The number of training epochs to run with default 10.",
+            "default": 10,
             "type": int,
         }
     ),
@@ -68,8 +68,8 @@ args_and_kwargs = (
         (
             "--batch-size",
         ),{
-            "help": "The size (number of images) in each training batch",
-            "default": 100,
+            "help": "The size (number of images) in each training batch with default 1000.",
+            "default": 1000,
             "type": int,
         }
     ),
