@@ -98,3 +98,14 @@ def test_the_default_model_is_finite_before_training():
     with torch.no_grad():
         out = model(synthetic_batch(model).map(torch.as_tensor), training=False)
     assert torch.isfinite(out).all()
+
+
+def test_a_checkpoint_from_before_posterior_features_is_rebuilt_without_them(tmp_path):
+    model, _ = build_cli_model("--no-posterior-features")
+    save_model(model, tmp_path / "m.pt")
+    payload = torch.load(tmp_path / "m.pt", weights_only=True)
+    del payload["args"]["posterior_features"]
+    torch.save(payload, tmp_path / "m.pt")
+    loaded = load_model(tmp_path / "m.pt")
+    assert loaded.scale_model.posterior_features == 0
+    assert _same_weights(model, loaded)

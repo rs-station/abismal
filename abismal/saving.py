@@ -71,9 +71,9 @@ def _load(path, map_location):
 
 # Options added after checkpoints began recording their arguments, with the value
 # that reproduces what a checkpoint saved before them was built with. Today's
-# default would not: --hidden-multiplier now defaults to 2/3, but those models
-# had hidden layers twice --d-model wide.
-_BEFORE_THEY_EXISTED = {"hidden_multiplier": 2.0}
+# defaults would not: --hidden-multiplier now defaults to 2/3, but those models
+# had hidden layers twice --d-model wide, and they had no posterior features.
+_BEFORE_THEY_EXISTED = {"hidden_multiplier": 2.0, "posterior_features": False}
 
 
 def _args(payload, path):
