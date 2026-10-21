@@ -87,9 +87,10 @@ args_and_kwargs = (
         (
             "--early-stopping-patience",
         ),{
-            "help": "How many epochs to wait after training progress stalls.",
+            "help": "Stop training once --early-stopping-criterion has not improved for this "
+                    "many epochs. Off by default: training runs for --epochs.",
             "type" : int,
-            "default": 5,
+            "default": None,
         }
     ),
 
