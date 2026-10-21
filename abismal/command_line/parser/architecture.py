@@ -97,6 +97,16 @@ args_and_kwargs = (
         },
     ),
     (
+        ("--no-posterior-features",),
+        {
+            "help": "Do not give the scale model's pooled image representation the current "
+            "posterior mean and standard deviation of each reflection (without gradient), "
+            "which it gets by default.",
+            "action": "store_false",
+            "dest": "posterior_features",
+        },
+    ),
+    (
         ("--metadata-noise-factor",),
         {
             "help": "Standard deviation of the Gaussian noise added to the metadata during training. "

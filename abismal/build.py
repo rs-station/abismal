@@ -225,6 +225,7 @@ def build_model(args, facts, data=None, precision="float32"):
         metadata_noise_factor=args.metadata_noise_factor,
         precision=precision,
         share_weights=True,
+        posterior_features=2 if args.posterior_features else 0,
     )
 
     if args.studentt_dof is not None:
