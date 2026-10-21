@@ -74,14 +74,15 @@ def main(args=None):
         weight_saver,
         freezer,
     ]
-    monitor = parser.early_stopping_criterion
-    mode = 'min'
-    if 'CC' in monitor:
-        mode = 'max'
-    if 'KL' in monitor:
-        mode = 'max'
-    early_stopping = EarlyStopping(monitor=monitor, patience=parser.early_stopping_patience, mode=mode)
-    callbacks.append(early_stopping)
+    if parser.early_stopping_patience is not None:
+        monitor = parser.early_stopping_criterion
+        mode = 'min'
+        if 'CC' in monitor:
+            mode = 'max'
+        if 'KL' in monitor:
+            mode = 'max'
+        early_stopping = EarlyStopping(monitor=monitor, patience=parser.early_stopping_patience, mode=mode)
+        callbacks.append(early_stopping)
 
     if parser.eff_files is not None:
         for i, eff_file in enumerate(map(str, parser.eff_files)):

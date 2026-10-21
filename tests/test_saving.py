@@ -75,3 +75,37 @@ def test_a_checkpoint_without_arguments_cannot_be_rebuilt(tmp_path):
 def test_a_hand_built_model_cannot_be_saved(tmp_path):
     with pytest.raises(ValueError, match="not built by abismal.build"):
         save_model(build_small_model(), tmp_path / "m.pt")
+
+
+def test_a_checkpoint_from_before_hidden_multiplier_keeps_its_hidden_width(tmp_path):
+    """Checkpoints saved before --hidden-multiplier existed had hidden layers twice
+    --d-model wide; today's default of 2/3 must not be applied to them."""
+    model, _ = build_cli_model("--hidden-multiplier", "2", "--no-gated", "--pre-activation", "relu", "--activation", "relu")
+    save_model(model, tmp_path / "m.pt")
+    payload = torch.load(tmp_path / "m.pt", weights_only=True)
+    del payload["args"]["hidden_multiplier"]
+    torch.save(payload, tmp_path / "m.pt")
+    assert _same_weights(model, load_model(tmp_path / "m.pt"))
+
+
+def test_the_default_model_is_finite_before_training():
+    """An untrained model's standardization used to divide by a variance of
+    m2/0 = inf, making every input row zero, and RMS normalization of a zero row
+    is 0/0. Standardization with no data seen is now the identity."""
+    from model_helpers import synthetic_batch
+    model, _ = build_cli_model()
+    model.eval()
+    with torch.no_grad():
+        out = model(synthetic_batch(model).map(torch.as_tensor), training=False)
+    assert torch.isfinite(out).all()
+
+
+def test_a_checkpoint_from_before_posterior_features_is_rebuilt_without_them(tmp_path):
+    model, _ = build_cli_model("--no-posterior-features")
+    save_model(model, tmp_path / "m.pt")
+    payload = torch.load(tmp_path / "m.pt", weights_only=True)
+    del payload["args"]["posterior_features"]
+    torch.save(payload, tmp_path / "m.pt")
+    loaded = load_model(tmp_path / "m.pt")
+    assert loaded.scale_model.posterior_features == 0
+    assert _same_weights(model, loaded)

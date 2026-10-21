@@ -29,8 +29,8 @@ args_and_kwargs = (
         (
             "--epochs",
         ),{
-            "help": "The number of training epochs to run with default 30.",
-            "default": 30,
+            "help": "The number of training epochs to run with default 10.",
+            "default": 10,
             "type": int,
         }
     ),
@@ -68,8 +68,8 @@ args_and_kwargs = (
         (
             "--batch-size",
         ),{
-            "help": "The size (number of images) in each training batch",
-            "default": 100,
+            "help": "The size (number of images) in each training batch with default 1000.",
+            "default": 1000,
             "type": int,
         }
     ),
@@ -87,9 +87,10 @@ args_and_kwargs = (
         (
             "--early-stopping-patience",
         ),{
-            "help": "How many epochs to wait after training progress stalls.",
+            "help": "Stop training once --early-stopping-criterion has not improved for this "
+                    "many epochs. Off by default: training runs for --epochs.",
             "type" : int,
-            "default": 5,
+            "default": None,
         }
     ),
 

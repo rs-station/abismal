@@ -183,6 +183,7 @@ class ImageScaler(torch.nn.Module):
             bijector_name='softplus',
             pre_activation=None,
             hkl_to_imodel=False,
+            posterior_features=0,
             gated=False,
             output_bias=True,
             dropout=None,
@@ -227,6 +228,10 @@ class ImageScaler(torch.nn.Module):
             (a key of `FeedForward.norm_dict`) or an activation name.
         hkl_to_imodel : bool (optional)
             Optionally allow the neural network to access the miller indices while computing the image representation vector.
+        posterior_features : int (optional)
+            The number of per-reflection features of the current structure factor
+            estimates that `forward` receives as `features` and appends to the image
+            representation's inputs. The default, 0, uses none.
         gated : bool (optional)
             Optionally use a gated architecture instead of a vanilla residual multilayer perceptron
         output_bias : bool (optional)
@@ -260,6 +265,7 @@ class ImageScaler(torch.nn.Module):
         self.bijector_name = bijector_name
         self.pre_activation = pre_activation
         self.hkl_to_imodel = hkl_to_imodel
+        self.posterior_features = posterior_features
         self.gated = gated
         self.output_bias = output_bias
         self.hidden_units = hidden_units
@@ -288,6 +294,7 @@ class ImageScaler(torch.nn.Module):
             dimage = metadata_length + n
             if hkl_to_imodel:
                 dimage = dimage + 3
+            dimage = dimage + posterior_features
 
             self.input_image = linear(dimage, mlp_width, input_bias, kernel_initializer)
             self.input_scale = linear(metadata_length, mlp_width, input_bias, kernel_initializer) #Should use_bias?
@@ -351,7 +358,7 @@ class ImageScaler(torch.nn.Module):
         den = (counts[image_id] - 1.).clamp_min(1.)
         return num / den[:, None]
 
-    def forward(self, inputs, mc_samples=32, training=None):
+    def forward(self, inputs, mc_samples=32, training=None, features=None):
         """
         Parameters
         ----------
@@ -359,6 +366,10 @@ class ImageScaler(torch.nn.Module):
             Flat, per-reflection tensors and the image each reflection belongs to.
         mc_samples : int
         training : bool
+        features : torch.Tensor (optional)
+            Per-reflection features of the current structure factor estimates,
+            shape (reflections, posterior_features). Required when
+            `posterior_features` is nonzero.
 
         Returns
         -------
@@ -378,6 +389,9 @@ class ImageScaler(torch.nn.Module):
         image = [metadata, iobs, sigiobs]
         if self.hkl_to_imodel:
             image.append(0.02 * hkl.to(metadata.dtype))
+        if self.posterior_features:
+            # They reach only the (leave-one-out) pooled image representation.
+            image.append(features.to(metadata.dtype))
 
         image = torch.cat(image, dim=-1)
         if self.batch_normalize:

@@ -93,6 +93,28 @@ class VariationalMergingModel(torch.nn.Module):
             return self._call_independent(inputs, mc_samples=mc_samples, training=training)
         return self._call_dependent(inputs, mc_samples=mc_samples, training=training)
 
+    def _posterior_features(self, asu_id, hkl, dtype):
+        """
+        The current posterior mean and standard deviation of each reflection under
+        the identity operator, for a scale model that takes them, else None.
+
+        They carry no gradient: the scale model reads the estimates but does not
+        move them. Reflections outside the ASU get zeros rather than the stand-in
+        posterior `gather` would give them.
+        """
+        if not getattr(self.scale_model, 'posterior_features', 0):
+            return None
+        with torch.no_grad():
+            posterior = self.surrogate_posterior
+            if posterior.independent:
+                q = posterior.distribution(asu_id, hkl)
+                features = torch.stack([q.mean, q.stddev], -1).reshape(-1, 2)
+            else:
+                q = posterior.flat_distribution()
+                features = posterior.rac.gather(torch.stack([q.mean, q.stddev], -1), asu_id, hkl).reshape(-1, 2)
+            valid = posterior.rac.valid(asu_id, hkl).reshape(-1, 1)
+            return features.to(dtype) * valid.to(dtype)
+
     def _image_log_likelihood(self, ll, valid, image_id, num_images):
         """
         Average log likelihood of each image over the reflections a reindexing
@@ -140,6 +162,7 @@ class VariationalMergingModel(torch.nn.Module):
             inputs,
             mc_samples=mc_samples,
             training=training,
+            features=self._posterior_features(asu_id, hkl_in, iobs.dtype),
         )
 
         ll = None
@@ -210,6 +233,7 @@ class VariationalMergingModel(torch.nn.Module):
             inputs,
             mc_samples=mc_samples,
             training=training,
+            features=self._posterior_features(asu_id, hkl_in, iobs.dtype),
         )
 
         ll = None
