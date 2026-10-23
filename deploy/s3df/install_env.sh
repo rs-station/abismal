@@ -155,5 +155,7 @@ if command -v nvidia-smi >/dev/null 2>&1 && ! "$PY" -c "import torch, sys; sys.e
     echo "    $0 --torch-index https://download.pytorch.org/whl/cu126"
 fi
 echo
-echo "Installed in $INSTALL. Users paste this into the Jupyter app's custom-script field:"
+echo "Installed in $INSTALL. For the demo, users paste this into the Jupyter app's custom-script field:"
 echo "  source $HERE/demo_setup.sh"
+echo "To use abismal their own way (CLI, batch jobs, their own Jupyter), they source instead:"
+echo "  source $HERE/setup.sh"

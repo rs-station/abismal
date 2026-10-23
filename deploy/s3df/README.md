@@ -63,6 +63,41 @@ user's own JupyterLab layout is neither restored nor changed (`jupyter/abismal_d
 It never overwrites an edited notebook. To put things elsewhere, set `ABISMAL_DEMO_DIR` or
 `ABISMAL_CACHE_DIR` before the source line.
 
+## For users: run abismal your own way
+
+To use the shared environment without the demo, for the command line, batch jobs, or the GUI in a
+Jupyter session of your own, source `setup.sh` instead:
+
+```bash
+source /sdf/group/<facility>/abismal/deploy/s3df/setup.sh
+```
+
+Put it in a terminal, at the top of a batch script, in `~/.bashrc`, or in the Jupyter app's
+custom-script field. Like `demo_setup.sh`, it must be sourced, not run. It:
+- puts the environment first on `PATH`, so `abismal`, `abismal.gui`, `abismal.cchalf`, `python` and
+  `jupyter` come from it;
+- preloads the environment's own C++ runtime (see Troubleshooting);
+- sends compile caches to your scratch directory (or `~/.cache` without one);
+- registers the *abismal (S3DF)* Jupyter kernel, so any Jupyter can run the GUI notebook. Set
+  `ABISMAL_REGISTER_KERNEL=0` before sourcing to skip this.
+
+It creates no demo directory and leaves JupyterLab's layout alone. Then, for example:
+
+```bash
+abismal --help
+abismal -o run1 --anomalous -d 1.8 data.mtz     # a merge on the command line
+abismal.gui                                      # the GUI notebook in a new JupyterLab
+```
+
+In a Slurm batch job, request a GPU and source the script before calling `abismal`:
+
+```bash
+#!/bin/bash
+#SBATCH --partition=<gpu partition> --gpus=1 --cpus-per-task=4 --account=<account>
+source /sdf/group/<facility>/abismal/deploy/s3df/setup.sh
+abismal -o run1 --anomalous -d 1.8 data.mtz
+```
+
 ## Troubleshooting
 
 - **"no environment at …" in the session log**: the path in the source line is not the clone the
