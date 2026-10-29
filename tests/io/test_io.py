@@ -57,7 +57,8 @@ def test_stream_loader(stills_stream):
     records = list(loader.get_dataset(num_cpus=1))
     assert len(records) == 3
     for r in records:
-        check_record(r, 12)
+        # background, s1 (3), ewald_offset, angular_ewald_offset, ewald offset vector (3): no Miller indices
+        check_record(r, 9)
         assert (r[0] == 1).all()
         assert (r[2] >= 4.).all()
         assert np.allclose(r[3], 1.)

@@ -108,10 +108,12 @@ class StreamLoader(StreamLoaderBase):
         """
 
         if peak_list_columns is None:
+            # The first five columns are H, K, L, I, SigI; everything after them is the scale model's per-reflection
+            # metadata. That must not include the Miller indices: a scale that can depend on which reflection it is
+            # trades freely against the reflection's merged intensity (an unidentifiable per-reflection gauge).
             peak_list_columns = [
                 'H', 'K', 'L', 
                 'I', 'SigI', 
-                'H', 'K', 'L', 
                 'background', 
                 's1x', 's1y', 's1z', 
                 'ewald_offset', 'angular_ewald_offset',
