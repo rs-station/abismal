@@ -54,3 +54,46 @@ def test_weighted_pearsonr_matches_numpy_with_unit_weights():
     r = weighted_pearsonr(torch.as_tensor(x), torch.as_tensor(y))
     expected = [np.corrcoef(a, b)[0, 1] for a, b in zip(x, y)]
     assert np.allclose(r.numpy(), expected)
+
+
+@pytest.mark.parametrize('df', [None, 32.])
+def test_ev11_likelihood(df):
+    from abismal.likelihood import Ev11Likelihood
+    likelihood = Ev11Likelihood(a=2., b=0.1, degrees_of_freedom=df)
+    ipred = torch.rand((10, 5)) + 1.
+    iobs, sigiobs = torch.rand((2, 10, 1)).unbind(0)
+    l = likelihood(ipred, iobs, sigiobs)
+    sd = np.sqrt(2. * sigiobs.numpy() ** 2 + (0.1 * ipred.numpy().mean(-1, keepdims=True)) ** 2)
+    expected = norm.logpdf(ipred.numpy(), iobs.numpy(), sd) if df is None else student_t.logpdf(ipred.numpy(), df, iobs.numpy(), sd)
+    assert np.allclose(l.detach().numpy(), expected, rtol=1e-5, atol=1e-5)
+
+    # The variance's intensity is detached: the prediction gets gradient through the location alone.
+    ipred.requires_grad_(True)
+    likelihood(ipred, iobs, sigiobs).sum().backward()
+    z = (ipred.detach() - iobs) / torch.from_numpy(sd).float()
+    loc_grad = -z / torch.from_numpy(sd).float() if df is None else None
+    if loc_grad is not None:
+        assert torch.allclose(ipred.grad, loc_grad, rtol=1e-4, atol=1e-5)
+    assert likelihood.log_a.grad is not None and likelihood.log_b.grad is not None
+
+
+def test_ev11_recovers_a_from_a_posterior_with_the_right_width():
+    # n observations of each reflection with noise variance a = 4 (σ = 1, s = 1, b ≈ 0). The posterior from n
+    # observations under a flat prior is N(mean, a/n). The expected log likelihood over it, maximized in a, gives a
+    # back: the posterior's own variance corrects for each observation's pull on the mean, with no leave-one-out.
+    from abismal.likelihood import Ev11Likelihood
+    torch.manual_seed(0)
+    nref, n, a_true, mc = 2000, 4, 4., 64
+    x = 10. + a_true ** 0.5 * torch.randn(nref, n)
+    mu, sd = x.mean(-1, keepdim=True), (a_true / n) ** 0.5
+    iobs = x.reshape(-1, 1)
+    sigiobs = torch.ones_like(iobs)
+    likelihood = Ev11Likelihood(a=1., b=1e-6)
+    likelihood.log_b.requires_grad_(False)
+    opt = torch.optim.Adam([likelihood.log_a], lr=0.05)
+    for _ in range(300):
+        z = (mu + sd * torch.randn(nref, mc)).repeat_interleave(n, 0)
+        opt.zero_grad()
+        (-likelihood(z, iobs, sigiobs).mean()).backward()
+        opt.step()
+    assert abs(float(likelihood.a) / a_true - 1.) < 0.05

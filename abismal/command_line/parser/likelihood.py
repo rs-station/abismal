@@ -16,4 +16,15 @@ args_and_kwargs=(
             "default": 32.,
         }
     ),
+    (
+        (
+            "--error-model",
+        ),{
+            "help": "'ev11' learns the Evans (2011) error model Var(I) = a·σ² + b²·(s·Î)² with the rest of the model, "
+                    "s·Î the predicted intensity (detached in the variance). The default, 'none', uses the reported "
+                    "uncertainties.",
+            "default": "none",
+            "choices": ["none", "ev11"],
+        }
+    ),
 )

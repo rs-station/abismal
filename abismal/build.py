@@ -45,7 +45,7 @@ def build_model(args, facts, data=None, precision="float32"):
     from abismal.symmetry import ReciprocalASU, ReciprocalASUGraph, merge_dmin
     from abismal.merging import VariationalMergingModel
     from abismal.scaling import ImageScaler
-    from abismal.likelihood import StudentTLikelihood, NormalLikelihood
+    from abismal.likelihood import StudentTLikelihood, NormalLikelihood, Ev11Likelihood
 
     cell = gemmi.UnitCell(*facts["cell"])
     spacegroup = gemmi.SpaceGroup(facts["spacegroup"])
@@ -228,7 +228,9 @@ def build_model(args, facts, data=None, precision="float32"):
         posterior_features=2 if args.posterior_features else 0,
     )
 
-    if args.studentt_dof is not None:
+    if args.error_model == 'ev11':
+        likelihood = Ev11Likelihood(degrees_of_freedom=args.studentt_dof)
+    elif args.studentt_dof is not None:
         likelihood = StudentTLikelihood(args.studentt_dof)
     else:
         likelihood = NormalLikelihood()
