@@ -27,4 +27,14 @@ args_and_kwargs=(
             "choices": ["none", "ev11"],
         }
     ),
+    (
+        (
+            "--no-error-model-detach",
+        ),{
+            "help": "--error-model ev11: let the predicted intensity in the variance carry gradient to the scales and "
+                    "the surrogate posterior (detached by default).",
+            "dest": "error_model_detach",
+            "action": "store_false",
+        }
+    ),
 )

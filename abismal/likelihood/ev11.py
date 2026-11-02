@@ -12,15 +12,16 @@ class Ev11Likelihood(LocationScale):
 
         Var(I_obs) = a·σ² + b²·(s·Î)²
 
-    σ is the integration error and s·Î the predicted intensity averaged over the Monte Carlo samples, detached (s the
-    scale, Î the surrogate posterior's intensity). a and b are trained on the ELBO with everything else.
+    σ is the integration error and s·Î the predicted intensity averaged over the Monte Carlo samples (s the scale, Î
+    the surrogate posterior's intensity), detached by default. a and b are trained on the ELBO with everything else.
 
     No leave-one-out is needed. The ELBO averages the likelihood over the surrogate posterior, so each observation's
     expected squared residual is (I_obs − s·μ)² + s²·σ_q². The σ_q² term cancels the bias from the observation having
     pulled the posterior toward itself (the EM update for a variance). This holds only if σ_q is calibrated.
     """
-    def __init__(self, a=1., b=0.01, degrees_of_freedom=None):
+    def __init__(self, a=1., b=0.01, degrees_of_freedom=None, detach=True):
         super().__init__()
+        self.detach = detach
         self.log_a = torch.nn.Parameter(torch.tensor(math.log(a)))
         self.log_b = torch.nn.Parameter(torch.tensor(math.log(b)))
         self.degrees_of_freedom = degrees_of_freedom
@@ -35,8 +36,8 @@ class Ev11Likelihood(LocationScale):
 
     def variance(self, ipred, sigiobs):
         # ipred is (reflections, mc samples) and sigiobs is (reflections, 1). The proportional term uses the sample
-        # mean of s·I, detached: a variance that followed each sample would reshape the posterior, not just weight it.
-        imean = ipred.detach().mean(-1, keepdim=True)
+        # mean of s·I. Detached (the default), the scales and posterior cannot move it to change their own variance.
+        imean = (ipred.detach() if self.detach else ipred).mean(-1, keepdim=True)
         return self.a * torch.square(sigiobs) + torch.square(self.b * imean)
 
     def forward(self, ipred, iobs, sigiobs):

@@ -97,3 +97,15 @@ def test_ev11_recovers_a_from_a_posterior_with_the_right_width():
         (-likelihood(z, iobs, sigiobs).mean()).backward()
         opt.step()
     assert abs(float(likelihood.a) / a_true - 1.) < 0.05
+
+
+def test_ev11_without_the_detach_passes_gradient_through_the_variance():
+    from abismal.likelihood import Ev11Likelihood
+    ipred = (torch.rand((10, 5)) + 1.).requires_grad_(True)
+    iobs, sigiobs = torch.rand((2, 10, 1)).unbind(0)
+    grads = []
+    for detach in (True, False):
+        ipred.grad = None
+        Ev11Likelihood(b=0.5, detach=detach)(ipred, iobs, sigiobs).sum().backward()
+        grads.append(ipred.grad.clone())
+    assert not torch.allclose(grads[0], grads[1])
