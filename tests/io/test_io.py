@@ -243,3 +243,11 @@ def test_plain_iteration_of_a_stream_uses_up_no_first_pass():
     for batch in islice(iter(stream), 3):
         assert batch.first_pass.all()
     assert next(stream.iterate(prefetch=0)).first_pass.all()
+
+
+def test_an_image_twice_in_one_batch_is_new_only_once():
+    from abismal.io.pipeline import batched
+    images = [tuple(np.full((1, w), float(i), 'float32') for w in (1, 3, 1, 1, 4, 1, 1)) for i in range(2)]
+    seen = set()
+    batch = next(batched([images[0], images[1], images[0]], 3, seen))
+    assert batch.first_pass.tolist() == [True, True, False]

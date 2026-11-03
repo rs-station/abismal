@@ -215,8 +215,11 @@ def batched(iterable, batch_size, seen=None):
             return
         first_pass = None
         if seen is not None:
-            first_pass = [id(image) not in seen for image in images]
-            seen.update(id(image) for image in images)
+            # One at a time: a shuffle buffer spanning two passes can put an image in a batch twice.
+            first_pass = []
+            for image in images:
+                first_pass.append(id(image) not in seen)
+                seen.add(id(image))
         yield Batch.collate(images, first_pass)
 
 
