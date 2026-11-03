@@ -196,11 +196,15 @@ def reservoir_shuffle(iterable, buffer_size, rng=None):
             buffer.pop()
 
 
-def batched(iterable, batch_size):
+def batched(iterable, batch_size, seen=None):
     """Collate consecutive images into `Batch`es of `batch_size` images.
 
     The last batch holds the remainder, like tf.data's `ragged_batch` with
     `drop_remainder=False`.
+
+    `seen`, a set, is kept up to date with the images handed out (by identity:
+    `ImageCache` replays the same objects on every pass) and sets each batch's
+    `first_pass`. Without it every image counts as new.
     """
     if batch_size < 1:
         raise ValueError(f"batch_size must be positive, got {batch_size}")
@@ -209,7 +213,11 @@ def batched(iterable, batch_size):
         images = list(islice(it, batch_size))
         if not images:
             return
-        yield Batch.collate(images)
+        first_pass = None
+        if seen is not None:
+            first_pass = [id(image) not in seen for image in images]
+            seen.update(id(image) for image in images)
+        yield Batch.collate(images, first_pass)
 
 
 class prefetch:
@@ -334,6 +342,11 @@ class BatchStream:
     `seed` seeds the shuffle; None, the default, gives a different order on
     every run, as tf.data's unseeded shuffle did. Either way each new iterator
     draws a new order.
+
+    `iterate` remembers the images it has handed out, across iterators, and
+    marks each batch's new ones in `Batch.first_pass`, so the model can count
+    every image once however many passes it trains for. Plain iteration, for
+    reading the data outside training, neither consults nor changes that.
     """
     def __init__(self, cache, split='train', batch_size=100, shuffle_buffer_size=0, repeat=False, seed=None):
         self.cache = cache
@@ -342,6 +355,7 @@ class BatchStream:
         self.shuffle_buffer_size = shuffle_buffer_size
         self.repeat = repeat
         self.rng = np.random.default_rng(seed)
+        self._seen = set()
 
     def images(self, repeat=None):
         """The split's images, unshuffled and unbatched."""
@@ -349,9 +363,9 @@ class BatchStream:
             repeat = self.repeat
         return self.cache.iterate(self.split, repeat=repeat)
 
-    def batches(self):
+    def batches(self, seen=None):
         images = reservoir_shuffle(self.images(), self.shuffle_buffer_size, self.rng)
-        return batched(images, self.batch_size)
+        return batched(images, self.batch_size, seen)
 
     def __iter__(self):
         return self.batches()
@@ -366,11 +380,12 @@ class BatchStream:
 
         `prefetch=0` runs everything in the caller's thread instead.
         """
+        batches = self.batches(self._seen)
         if prefetch and prefetch > 0:
-            return _prefetch(self.batches(), fn=transfer, depth=prefetch)
+            return _prefetch(batches, fn=transfer, depth=prefetch)
         if transfer is None:
-            return self.batches()
-        return map(transfer, self.batches())
+            return batches
+        return map(transfer, batches)
 
     @property
     def done(self):

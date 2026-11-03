@@ -19,10 +19,13 @@ args_and_kwargs = (
         (
             "--kl-reflection-weights",
         ),{
-            "help": "Weight each observation's structure factor KL by 1/n_h, the inverse of its reflection's "
-                    "observation count, standardized to mean one over the reflections. The counts accumulate during "
-                    "the first epoch and are then frozen. Independent posteriors only.",
-            "action": "store_true",
+            "help": "Weight each observation's structure factor KL by its reflection's inverse observation count, "
+                    "1/n_h, each image counted once. 'exact': 1/n_h, the ELBO itself, a reflection's prior counting "
+                    "once against its n_h likelihood terms. 'standardized': 1/n_h over its mean over the reflections, "
+                    "--kl-weight setting the overall strength. 'none' (default): no weight, the prior counting once "
+                    "per observation. Independent posteriors only.",
+            "default": "none",
+            "choices": ["none", "standardized", "exact"],
         }
     ),
 

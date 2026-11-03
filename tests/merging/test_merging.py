@@ -112,32 +112,32 @@ def test_the_kl_of_an_independent_posterior_counts_valid_observations_only():
     assert torch.isclose(model._observation_mean(kl, valid), torch.tensor(3.))
 
 
-def test_kl_reflection_weights_are_inverse_counts_with_mean_one_and_freeze():
-    from abismal.callbacks.standardization_freezer import StandardizationFreezer
-    model = build_small_model(kl_reflection_weights=True)
-    rac = model.surrogate_posterior.rac
-    hkl = rac.Hunique[:3].reshape(-1, 3)
-    asu = torch.zeros(len(hkl), 1, dtype=torch.long)
+def _three_reflections(model):
+    hkl = model.surrogate_posterior.rac.Hunique[:3].reshape(-1, 3)
+    return torch.zeros(len(hkl), 1, dtype=torch.long), hkl
+
+
+@pytest.mark.parametrize('mode, expected', [('standardized', [12. / 7., 6. / 7., 3. / 7.]), ('exact', [1., .5, .25])])
+def test_kl_reflection_weights_are_inverse_counts(mode, expected):
+    model = build_small_model(kl_reflection_weights=mode)
+    asu, hkl = _three_reflections(model)
     assert torch.equal(model._kl_reflection_weight(asu, hkl).reshape(-1), torch.ones(3))  # nothing counted yet
-
-    # Counts of 1, 2 and 4: inverses 1, 1/2, 1/4, whose mean is 7/12.
-    for rows in ([0, 1, 2], [1, 2], [2], [2]):
-        model._count_observations(asu[rows], hkl[rows])
-    assert torch.equal(model.kl_counts[:3], torch.tensor([1., 2., 4.], dtype=model.kl_counts.dtype))
+    for rows in ([0, 1, 2], [1, 2], [2], [2]):  # counts of 1, 2 and 4
+        model._count_observations(asu[rows], hkl[rows], torch.ones(len(rows), dtype=torch.bool))
     w = model._kl_reflection_weight(asu, hkl).reshape(-1)
-    assert torch.allclose(w, torch.tensor([1., .5, .25], dtype=w.dtype) * 12. / 7.)
-    assert torch.isclose(w.mean(), torch.tensor(1., dtype=w.dtype))
+    assert torch.allclose(w, torch.tensor(expected, dtype=w.dtype))
 
-    freezer = StandardizationFreezer()
-    freezer.model = model
-    freezer.on_epoch_end(0)
-    model._count_observations(asu, hkl)
-    assert torch.equal(model.kl_counts[:3], torch.tensor([1., 2., 4.], dtype=model.kl_counts.dtype))
+
+def test_observation_counts_skip_images_already_counted():
+    model = build_small_model(kl_reflection_weights='exact')
+    asu, hkl = _three_reflections(model)
+    model._count_observations(asu, hkl, torch.tensor([True, False, True]))
+    assert torch.equal(model.kl_counts[:3], torch.tensor([1., 0., 1.], dtype=model.kl_counts.dtype))
 
 
 def test_kl_reflection_weights_reach_the_kl_of_a_forward_pass():
     from model_helpers import synthetic_batch
-    model = build_small_model(kl_reflection_weights=True)
+    model = build_small_model(kl_reflection_weights='exact')
     batch = synthetic_batch(model).map(torch.as_tensor)
     with tracking.track() as tracked:
         model(batch, training=True)

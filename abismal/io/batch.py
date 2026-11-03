@@ -23,23 +23,31 @@ class Batch(NamedTuple):
     iobs: Any        # [N,1] float32
     sigiobs: Any     # [N,1] float32
     image_id: Any    # [N]   int64
+    first_pass: Any  # [N]   bool, this reflection's image has not been in an earlier batch of the stream
     num_images: int  # B
 
     def map(self, fn):
         """Apply `fn` to every array field, keeping `num_images`."""
-        return Batch(*(fn(a) for a in self[:8]), self.num_images)
+        return Batch(*(fn(a) for a in self[:9]), self.num_images)
 
     @property
     def inputs(self):
         return tuple(self[:7])
 
     @classmethod
-    def collate(cls, images):
-        """Concatenate a list of per-image 7-tuples into one Batch."""
+    def collate(cls, images, first_pass=None):
+        """
+        Concatenate a list of per-image 7-tuples into one Batch. `first_pass` says, per image, whether it is new to
+        the stream (`BatchStream.iterate`); by default all are.
+        """
         images = list(images)
         if len(images) == 0:
             raise ValueError("Cannot collate an empty list of images")
         fields = [np.concatenate(f, axis=0) for f in zip(*images)]
         lengths = [len(image[0]) for image in images]
         image_id = np.repeat(np.arange(len(images), dtype=np.int64), lengths)
-        return cls(*fields, image_id, len(images))
+        if first_pass is None:
+            rows = np.ones(len(image_id), dtype=bool)
+        else:
+            rows = np.asarray(first_pass, dtype=bool)[image_id]
+        return cls(*fields, image_id, rows, len(images))

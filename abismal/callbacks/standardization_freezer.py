@@ -18,6 +18,3 @@ class StandardizationFreezer(Callback):
                 if not self.model.standardize_metadata.frozen:
                     print("Freezing metadata standardization layer...")
                     self.model.standardize_metadata.frozen.fill_(True)
-            if getattr(self.model, 'kl_reflection_weights', False) and not self.model.kl_counts_frozen:
-                print("Freezing the reflections' observation counts...")
-                self.model.kl_counts_frozen.fill_(True)

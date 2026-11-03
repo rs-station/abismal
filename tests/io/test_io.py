@@ -219,3 +219,27 @@ def test_separate_friedel_mates(conventional_mtz):
         plus = (isym % 2 == 1) | centric
         assert np.array_equal(batch.asu_id.ravel(), np.where(plus, 0, 1))
         assert set(np.unique(batch.asu_id)) <= {0, 1}
+
+
+def _stream(n=5, batch_size=2):
+    from abismal.io.pipeline import ImageCache, BatchStream
+    images = [tuple(np.full((i + 1, w), float(i), 'float32') for w in (1, 3, 1, 1, 4, 1, 1)) for i in range(n)]
+    return BatchStream(ImageCache(iter(images)), 'train', batch_size=batch_size, repeat=True, seed=0)
+
+
+def test_a_stream_marks_each_image_new_once_across_passes_and_iterators():
+    from itertools import islice
+    stream = _stream()
+    new = []
+    for iterator_batches in (3, 4):  # two iterators, more than a pass in all
+        for batch in islice(stream.iterate(prefetch=0), iterator_batches):
+            new.extend(sorted({float(i) for i in batch.iobs[batch.first_pass, 0]}))
+    assert sorted(new) == [0., 1., 2., 3., 4.]
+
+
+def test_plain_iteration_of_a_stream_uses_up_no_first_pass():
+    from itertools import islice
+    stream = _stream()
+    for batch in islice(iter(stream), 3):
+        assert batch.first_pass.all()
+    assert next(stream.iterate(prefetch=0)).first_pass.all()

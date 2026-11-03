@@ -74,17 +74,21 @@ class Standardize(torch.nn.Module):
         )
 
     @torch.no_grad()
-    def update(self, x):
-        """Fold the rows of `x`, shape (n, units), into the running moments."""
+    def update(self, x, rows=None):
+        """
+        Fold the rows of `x`, shape (n, units), into the running moments: those `rows` (bool, n) selects, if given, so
+        that an image the stream has already shown is not counted again.
+        """
         x = x.reshape(-1, self.units)
-        k = x.shape[0]
+        w = torch.ones(x.shape[0], 1, dtype=x.dtype, device=x.device) if rows is None else rows.reshape(-1, 1).to(x.dtype)
+        k = w.sum()
         # Gate every write on `frozen` instead of branching in Python, which
         # would be read once when a compiled step is traced and never again.
         live = ~self.frozen
         count = torch.where(live, self.count + k, self.count)
         diff = x - self.mean
-        new_mean = self.mean + diff.sum(0) / count
-        m2 = self.m2 + (diff * (x - new_mean)).sum(0)
+        new_mean = self.mean + (w * diff).sum(0) / count.clamp_min(1.)
+        m2 = self.m2 + (w * diff * (x - new_mean)).sum(0)
         self.count.copy_(count)
         self.mean.copy_(torch.where(live, new_mean, self.mean))
         self.m2.copy_(torch.where(live, m2, self.m2))
@@ -94,9 +98,9 @@ class Standardize(torch.nn.Module):
             return (data - self.flat_mean) / self.flat_std
         return data / self.flat_std
 
-    def forward(self, data, training=True):
+    def forward(self, data, training=True, rows=None):
         if training:
-            self.update(data)
+            self.update(data, rows)
         return self.standardize(data)
 class StandardizeMetadata(Standardize):
     def __init__(self, units, max_counts=np.inf, epsilon=1e-6, **kwargs):
@@ -104,7 +108,7 @@ class StandardizeMetadata(Standardize):
         super().__init__(units, center=True, max_counts=max_counts, epsilon=epsilon)
 
     def forward(self, inputs, training=None):
-        metadata_out = super().forward(inputs.metadata, training=training)
+        metadata_out = super().forward(inputs.metadata, training=training, rows=inputs.first_pass)
         return inputs._replace(metadata=metadata_out)
 class StandardizeIntensities(Standardize):
     def __init__(self, units=1, max_counts=np.inf, epsilon=1e-6, **kwargs):
@@ -112,7 +116,7 @@ class StandardizeIntensities(Standardize):
         super().__init__(units, center=False, max_counts=max_counts, epsilon=epsilon)
 
     def forward(self, inputs, training=None):
-        iout = super().forward(inputs.iobs, training=training)
+        iout = super().forward(inputs.iobs, training=training, rows=inputs.first_pass)
         sigout = self.standardize(inputs.sigiobs)
         tracking.add_metric(self.mean.squeeze(), "Imean")
         tracking.add_metric(self.std.squeeze(), "Istd")

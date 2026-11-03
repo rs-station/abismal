@@ -20,7 +20,7 @@ class VariationalMergingModel(torch.nn.Module):
             epsilon=1e-6,
             reindexing_ops=None,
             standardize=False,
-            kl_reflection_weights=False,
+            kl_reflection_weights='none',
         ):
         super().__init__()
         self.epsilon = epsilon
@@ -31,10 +31,9 @@ class VariationalMergingModel(torch.nn.Module):
         self.mc_samples = mc_samples
         self.kl_weight = kl_weight
         self.kl_reflection_weights = kl_reflection_weights
-        if kl_reflection_weights:
-            # Observations of each reflection, accumulated while training and frozen with the standardization.
+        if kl_reflection_weights != 'none':
+            # Observations of each reflection, each image counted once (Batch.first_pass).
             self.register_buffer('kl_counts', torch.zeros(surrogate_posterior.rac.asu_size, dtype=torch.float64))
-            self.register_buffer('kl_counts_frozen', torch.zeros((), dtype=torch.bool))
         if reindexing_ops is None:
             reindexing_ops = ["x,y,z"]
         self.reindexing_ops = [Op(op) for op in reindexing_ops]
@@ -143,26 +142,27 @@ class VariationalMergingModel(torch.nn.Module):
         return image_ll
 
     @torch.no_grad()
-    def _count_observations(self, asu_id, hkl):
-        """Add a batch to the reflections' observation counts, unless they are frozen."""
+    def _count_observations(self, asu_id, hkl, first_pass):
+        """Add the batch's images that are new to the stream to the reflections' observation counts."""
         rac = self.surrogate_posterior.rac
         ids = rac._miller_ids(asu_id, hkl).reshape(-1)
         ids = torch.where(ids >= 0, ids, rac.asu_size)  # a sentinel slot past the end, as in register_seen
         counts = torch.zeros(rac.asu_size + 1, dtype=self.kl_counts.dtype, device=ids.device)
-        counts.index_add_(0, ids, torch.ones_like(ids, dtype=counts.dtype))
-        self.kl_counts += counts[:-1] * (~self.kl_counts_frozen).to(counts.dtype)
+        counts.index_add_(0, ids, first_pass.reshape(-1).to(counts.dtype))
+        self.kl_counts += counts[:-1]
 
     @torch.no_grad()
     def _kl_reflection_weight(self, asu_id, hkl):
         """
-        Each observation's weight on its reflection's KL: 1/n_h, standardized to mean one over the reflections seen so
-        far, so that the prior's relative strength between reflections follows their multiplicity and --kl-weight sets
-        the overall strength. 1 for everything before any reflection has been counted.
+        Each observation's weight on its reflection's KL. 'exact': 1/n_h, so that a reflection's prior counts once
+        against its n_h likelihood terms, the ELBO itself. 'standardized': 1/n_h over its mean over the reflections seen
+        so far, so that --kl-weight sets the overall strength. 1 for everything before any reflection has been counted.
         """
         seen = self.kl_counts > 0
         inverse = 1. / self.kl_counts.clamp_min(1.)
-        mean = (inverse * seen).sum() / seen.sum().clamp_min(1)
-        weight = torch.where(seen.any(), inverse / mean.clamp_min(1e-30), torch.ones_like(inverse))
+        if self.kl_reflection_weights == 'standardized':
+            inverse = inverse / ((inverse * seen).sum() / seen.sum().clamp_min(1)).clamp_min(1e-30)
+        weight = torch.where(seen.any(), inverse, torch.ones_like(inverse))
         return self.surrogate_posterior.rac.gather(weight, asu_id, hkl)
 
     def _observation_mean(self, x, valid):
@@ -306,7 +306,7 @@ class VariationalMergingModel(torch.nn.Module):
 
             _valid = self.surrogate_posterior.rac.valid(asu_id, _hkl)
             _kl_div = _kl_div * _valid.to(_kl_div.dtype)
-            if self.kl_reflection_weights:
+            if self.kl_reflection_weights != 'none':
                 _kl_div = _kl_div * self._kl_reflection_weight(asu_id, _hkl).reshape(_kl_div.shape).to(_kl_div.dtype)
             _image_ll = self._image_log_likelihood(_ll, _valid, image_id, num_images)
 
@@ -320,8 +320,8 @@ class VariationalMergingModel(torch.nn.Module):
 
         if training:
             self.surrogate_posterior.register_seen(asu_id, hkl)
-            if self.kl_reflection_weights:
-                self._count_observations(asu_id, hkl)
+            if self.kl_reflection_weights != 'none':
+                self._count_observations(asu_id, hkl, inputs.first_pass)
 
         self.likelihood.register_metrics(ipred, iobs, sigiobs)
 
