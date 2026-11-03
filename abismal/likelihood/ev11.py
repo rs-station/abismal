@@ -19,11 +19,12 @@ class Ev11Likelihood(LocationScale):
     expected squared residual is (I_obs − s·μ)² + s²·σ_q². The σ_q² term cancels the bias from the observation having
     pulled the posterior toward itself (the EM update for a variance). This holds only if σ_q is calibrated.
     """
-    def __init__(self, a=1., b=0.01, degrees_of_freedom=None, detach=True):
+    def __init__(self, a=1., b=0.01, degrees_of_freedom=None, detach=True, fixed=False):
         super().__init__()
         self.detach = detach
-        self.log_a = torch.nn.Parameter(torch.tensor(math.log(a)))
-        self.log_b = torch.nn.Parameter(torch.tensor(math.log(b)))
+        # fixed: a and b stay at their given values (not trained, so the optimizer never sees them).
+        self.log_a = torch.nn.Parameter(torch.tensor(math.log(a)), requires_grad=not fixed)
+        self.log_b = torch.nn.Parameter(torch.tensor(math.log(b)), requires_grad=not fixed)
         self.degrees_of_freedom = degrees_of_freedom
 
     @property

@@ -37,4 +37,28 @@ args_and_kwargs=(
             "action": "store_false",
         }
     ),
+    (
+        (
+            "--error-model-a",
+        ),{
+            "help": "--error-model ev11: the starting (or, with --fix-error-model, fixed) a. Default 1.",
+            "default": 1., "type": float,
+        }
+    ),
+    (
+        (
+            "--error-model-b",
+        ),{
+            "help": "--error-model ev11: the starting (or, with --fix-error-model, fixed) b. Default 0.01.",
+            "default": 0.01, "type": float,
+        }
+    ),
+    (
+        (
+            "--fix-error-model",
+        ),{
+            "help": "--error-model ev11: hold a and b at --error-model-a and --error-model-b instead of learning them.",
+            "action": "store_true",
+        }
+    ),
 )

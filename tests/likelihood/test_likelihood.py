@@ -109,3 +109,10 @@ def test_ev11_without_the_detach_passes_gradient_through_the_variance():
         Ev11Likelihood(b=0.5, detach=detach)(ipred, iobs, sigiobs).sum().backward()
         grads.append(ipred.grad.clone())
     assert not torch.allclose(grads[0], grads[1])
+
+
+def test_a_fixed_ev11_model_has_nothing_to_train():
+    from abismal.likelihood import Ev11Likelihood
+    likelihood = Ev11Likelihood(a=0.994, b=0.047, fixed=True)
+    assert not any(p.requires_grad for p in likelihood.parameters())
+    assert abs(float(likelihood.a) - 0.994) < 1e-6 and abs(float(likelihood.b) - 0.047) < 1e-6

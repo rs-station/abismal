@@ -229,7 +229,8 @@ def build_model(args, facts, data=None, precision="float32"):
     )
 
     if args.error_model == 'ev11':
-        likelihood = Ev11Likelihood(degrees_of_freedom=args.studentt_dof, detach=args.error_model_detach)
+        likelihood = Ev11Likelihood(a=args.error_model_a, b=args.error_model_b, degrees_of_freedom=args.studentt_dof,
+                                    detach=args.error_model_detach, fixed=args.fix_error_model)
     elif args.studentt_dof is not None:
         likelihood = StudentTLikelihood(args.studentt_dof)
     else:
