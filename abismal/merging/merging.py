@@ -96,7 +96,9 @@ class VariationalMergingModel(torch.nn.Module):
     def _image_log_likelihood(self, ll, valid, image_id, num_images):
         """
         Average log likelihood of each image over the reflections a reindexing
-        operator can actually index and over the Monte Carlo samples.
+        operator can actually index and over the Monte Carlo samples, used to
+        choose each image's operator (the loss is per observation, see
+        _observation_log_likelihood).
 
         An operator can push a reflection past dmin and out of the ASU, where
         the gather silently returns reflection 0 instead. Score the operators
@@ -111,6 +113,15 @@ class VariationalMergingModel(torch.nn.Module):
         total = _per_image_sum(ll.sum(-1), image_id, num_images)
         image_ll = torch.where(nvalid > 0., total / (nvalid * mc).clamp_min(1.), -1e30)
         return image_ll
+
+    def _observation_log_likelihood(self, ll, valid):
+        """
+        The objective's log likelihood: the mean over the valid observations and Monte Carlo samples of the chosen
+        operators, so every observation counts once whatever image it is on. (The per-image means of
+        _image_log_likelihood only choose each image's operator.)
+        """
+        w = valid.to(ll.dtype)
+        return (ll * w).sum() / (w.sum() * ll.shape[-1]).clamp_min(1.)
 
     def _select(self, best, idx, image_id, candidate):
         """Take `candidate` where this operator won its image, `best` elsewhere."""
@@ -143,6 +154,8 @@ class VariationalMergingModel(torch.nn.Module):
         )
 
         ll = None
+        image_ll = None
+        valid = None
         ipred = None
         hkl = None
         q = self.surrogate_posterior.flat_distribution()
@@ -166,19 +179,21 @@ class VariationalMergingModel(torch.nn.Module):
             _ll = self.likelihood(_ipred, iobs, sigiobs)
 
             _valid = self.surrogate_posterior.rac.valid(asu_id, _hkl)
-            _ll = self._image_log_likelihood(_ll, _valid, image_id, num_images)
+            _image_ll = self._image_log_likelihood(_ll, _valid, image_id, num_images)
 
-            idx = None if ll is None else _ll > ll
+            idx = None if image_ll is None else _image_ll > image_ll
+            ll = self._select(ll, idx, image_id, _ll)
             ipred = self._select(ipred, idx, image_id, _ipred)
+            valid = self._select(valid, idx, image_id, _valid)
             hkl = self._select(hkl, idx, image_id, _hkl)
-            ll = _ll if ll is None else torch.where(idx, _ll, ll)
+            image_ll = _image_ll if image_ll is None else torch.where(idx, _image_ll, image_ll)
 
         if training:
             self.surrogate_posterior.register_seen(asu_id, hkl)
 
         self.likelihood.register_metrics(ipred, iobs, sigiobs)
 
-        ll = ll.mean()
+        ll = self._observation_log_likelihood(ll, valid)
         kl_div = kl_div.mean()
 
         tracking.add_metric(-ll, name='NLL')
@@ -213,6 +228,8 @@ class VariationalMergingModel(torch.nn.Module):
         )
 
         ll = None
+        image_ll = None
+        valid = None
         ipred = None
         hkl = None
         kl_div = None
@@ -235,20 +252,22 @@ class VariationalMergingModel(torch.nn.Module):
 
             _valid = self.surrogate_posterior.rac.valid(asu_id, _hkl)
             _kl_div = _kl_div * _valid.to(_kl_div.dtype)
-            _ll = self._image_log_likelihood(_ll, _valid, image_id, num_images)
+            _image_ll = self._image_log_likelihood(_ll, _valid, image_id, num_images)
 
-            idx = None if ll is None else _ll > ll
+            idx = None if image_ll is None else _image_ll > image_ll
+            ll = self._select(ll, idx, image_id, _ll)
             ipred = self._select(ipred, idx, image_id, _ipred)
+            valid = self._select(valid, idx, image_id, _valid)
             hkl = self._select(hkl, idx, image_id, _hkl)
             kl_div = self._select(kl_div, idx, image_id, _kl_div)
-            ll = _ll if ll is None else torch.where(idx, _ll, ll)
+            image_ll = _image_ll if image_ll is None else torch.where(idx, _image_ll, image_ll)
 
         if training:
             self.surrogate_posterior.register_seen(asu_id, hkl)
 
         self.likelihood.register_metrics(ipred, iobs, sigiobs)
 
-        ll = ll.mean()
+        ll = self._observation_log_likelihood(ll, valid)
 
         tracking.add_metric(-ll, name='NLL')
         tracking.add_loss(-ll)
