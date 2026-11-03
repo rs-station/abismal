@@ -1,7 +1,7 @@
 """Small real models and batches for tests that need them."""
 
 
-def build_small_model(metadata_length=3, dmin=4.0, posterior="foldednormal", prior="wilson", standardize=True, reindexing_ops=None):
+def build_small_model(metadata_length=3, dmin=4.0, posterior="foldednormal", prior="wilson", standardize=True, reindexing_ops=None, **kwargs):
     """A small but complete VariationalMergingModel, for tests that need a real one."""
     import gemmi
     from abismal.symmetry import ReciprocalASU, ReciprocalASUGraph
@@ -28,7 +28,7 @@ def build_small_model(metadata_length=3, dmin=4.0, posterior="foldednormal", pri
     scale_model = ImageScaler(metadata_length, mlp_width=8, mlp_depth=2, prior_name="lognormal")
     return VariationalMergingModel(
         scale_model, q, prior, NormalLikelihood(), mc_samples=4,
-        reindexing_ops=reindexing_ops, standardize=standardize,
+        reindexing_ops=reindexing_ops, standardize=standardize, **kwargs,
     )
 
 

@@ -243,6 +243,7 @@ def build_model(args, facts, data=None, precision="float32"):
         likelihood=likelihood,
         mc_samples=args.mc_samples,
         kl_weight=args.kl_weight,
+        kl_reflection_weights=args.kl_reflection_weights,
         reindexing_ops=reindexing_ops,
         standardize=standardize_inputs,
     )

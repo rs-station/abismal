@@ -110,3 +110,40 @@ def test_the_kl_of_an_independent_posterior_counts_valid_observations_only():
     kl = torch.tensor([[2.], [4.], [0.]])  # the third, unindexable, already masked to 0
     valid = torch.tensor([[True], [True], [False]])
     assert torch.isclose(model._observation_mean(kl, valid), torch.tensor(3.))
+
+
+def test_kl_reflection_weights_are_inverse_counts_with_mean_one_and_freeze():
+    from abismal.callbacks.standardization_freezer import StandardizationFreezer
+    model = build_small_model(kl_reflection_weights=True)
+    rac = model.surrogate_posterior.rac
+    hkl = rac.Hunique[:3].reshape(-1, 3)
+    asu = torch.zeros(len(hkl), 1, dtype=torch.long)
+    assert torch.equal(model._kl_reflection_weight(asu, hkl).reshape(-1), torch.ones(3))  # nothing counted yet
+
+    # Counts of 1, 2 and 4: inverses 1, 1/2, 1/4, whose mean is 7/12.
+    for rows in ([0, 1, 2], [1, 2], [2], [2]):
+        model._count_observations(asu[rows], hkl[rows])
+    assert torch.equal(model.kl_counts[:3], torch.tensor([1., 2., 4.], dtype=model.kl_counts.dtype))
+    w = model._kl_reflection_weight(asu, hkl).reshape(-1)
+    assert torch.allclose(w, torch.tensor([1., .5, .25], dtype=w.dtype) * 12. / 7.)
+    assert torch.isclose(w.mean(), torch.tensor(1., dtype=w.dtype))
+
+    freezer = StandardizationFreezer()
+    freezer.model = model
+    freezer.on_epoch_end(0)
+    model._count_observations(asu, hkl)
+    assert torch.equal(model.kl_counts[:3], torch.tensor([1., 2., 4.], dtype=model.kl_counts.dtype))
+
+
+def test_kl_reflection_weights_reach_the_kl_of_a_forward_pass():
+    from model_helpers import synthetic_batch
+    model = build_small_model(kl_reflection_weights=True)
+    batch = synthetic_batch(model).map(torch.as_tensor)
+    with tracking.track() as tracked:
+        model(batch, training=True)
+    assert model.kl_counts.sum() > 0  # training counted the batch
+    assert tracked.metrics['KL'] > 0
+    model._kl_reflection_weight = lambda asu_id, hkl: torch.zeros(len(hkl))
+    with tracking.track() as tracked:
+        model(batch, training=True)
+    assert tracked.metrics['KL'] == 0

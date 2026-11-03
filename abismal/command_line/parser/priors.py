@@ -17,6 +17,17 @@ args_and_kwargs = (
 
     (
         (
+            "--kl-reflection-weights",
+        ),{
+            "help": "Weight each observation's structure factor KL by 1/n_h, the inverse of its reflection's "
+                    "observation count, standardized to mean one over the reflections. The counts accumulate during "
+                    "the first epoch and are then frozen. Independent posteriors only.",
+            "action": "store_true",
+        }
+    ),
+
+    (
+        (
             "--scale-kl-weight",
         ),{
             "help": "The strength of the scale prior distribution with default 1.0.",
