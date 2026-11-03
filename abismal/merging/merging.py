@@ -98,7 +98,7 @@ class VariationalMergingModel(torch.nn.Module):
         Average log likelihood of each image over the reflections a reindexing
         operator can actually index and over the Monte Carlo samples, used to
         choose each image's operator (the loss is per observation, see
-        _observation_log_likelihood).
+        _observation_mean).
 
         An operator can push a reflection past dmin and out of the ASU, where
         the gather silently returns reflection 0 instead. Score the operators
@@ -114,14 +114,15 @@ class VariationalMergingModel(torch.nn.Module):
         image_ll = torch.where(nvalid > 0., total / (nvalid * mc).clamp_min(1.), -1e30)
         return image_ll
 
-    def _observation_log_likelihood(self, ll, valid):
+    def _observation_mean(self, x, valid):
         """
-        The objective's log likelihood: the mean over the valid observations and Monte Carlo samples of the chosen
-        operators, so every observation counts once whatever image it is on. (The per-image means of
-        _image_log_likelihood only choose each image's operator.)
+        The mean of a per-observation term over the valid observations of the chosen operators and its trailing
+        (Monte Carlo) axis: the objective's log likelihood and, for independent posteriors, its KL, so every
+        observation counts once whatever image it is on and observations nothing indexes count not at all. (The
+        per-image means of _image_log_likelihood only choose each image's operator.)
         """
-        w = valid.to(ll.dtype)
-        return (ll * w).sum() / (w.sum() * ll.shape[-1]).clamp_min(1.)
+        w = valid.to(x.dtype)
+        return (x * w).sum() / (w.sum() * x.shape[-1]).clamp_min(1.)
 
     def _select(self, best, idx, image_id, candidate):
         """Take `candidate` where this operator won its image, `best` elsewhere."""
@@ -193,7 +194,7 @@ class VariationalMergingModel(torch.nn.Module):
 
         self.likelihood.register_metrics(ipred, iobs, sigiobs)
 
-        ll = self._observation_log_likelihood(ll, valid)
+        ll = self._observation_mean(ll, valid)
         kl_div = kl_div.mean()
 
         tracking.add_metric(-ll, name='NLL')
@@ -267,12 +268,12 @@ class VariationalMergingModel(torch.nn.Module):
 
         self.likelihood.register_metrics(ipred, iobs, sigiobs)
 
-        ll = self._observation_log_likelihood(ll, valid)
+        ll = self._observation_mean(ll, valid)
 
         tracking.add_metric(-ll, name='NLL')
         tracking.add_loss(-ll)
 
-        kl_div = kl_div.mean()
+        kl_div = self._observation_mean(kl_div, valid)
         tracking.add_metric(kl_div, name='KL')
         tracking.add_loss(self.kl_weight * kl_div)
 

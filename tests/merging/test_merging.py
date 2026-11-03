@@ -100,6 +100,13 @@ def test_the_loss_weights_every_observation_once_whatever_image_it_is_on():
     ll = torch.tensor([[9.]] + [[0.]] * 9).repeat(1, 4)
     valid = torch.ones(10, 1, dtype=torch.bool)
     valid[-1] = False  # and an unindexable observation does not count
-    assert torch.isclose(model._observation_log_likelihood(ll, valid), torch.tensor(1.))
+    assert torch.isclose(model._observation_mean(ll, valid), torch.tensor(1.))
     image_id = torch.tensor([0] + [1] * 9)
     assert torch.allclose(model._image_log_likelihood(ll, valid, image_id, 2), torch.tensor([9., 0.]))
+
+
+def test_the_kl_of_an_independent_posterior_counts_valid_observations_only():
+    model = build_small_model()
+    kl = torch.tensor([[2.], [4.], [0.]])  # the third, unindexable, already masked to 0
+    valid = torch.tensor([[True], [True], [False]])
+    assert torch.isclose(model._observation_mean(kl, valid), torch.tensor(3.))
