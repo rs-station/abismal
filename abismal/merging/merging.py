@@ -56,11 +56,13 @@ class VariationalMergingModel(torch.nn.Module):
         seen = set()
         for name, module in [
             ("scale", self.scale_model),
+            # Before "q", whose parameters update lazily: the trend's are shared by every reflection.
+            ("trend", self.surrogate_posterior.trend),
             ("q", self.surrogate_posterior),
             ("ll", self.likelihood),
             ("p", self.prior),
         ]:
-            params = [
+            params = [] if module is None else [
                 p for p in module.parameters()
                 if p.requires_grad and id(p) not in seen
             ]
@@ -227,6 +229,8 @@ class VariationalMergingModel(torch.nn.Module):
 
             if self.surrogate_posterior.parameterization == 'structure_factor':
                 _ipred = torch.square(_ipred)
+            if self.surrogate_posterior.trend is not None:
+                _ipred = _ipred * self.surrogate_posterior.trend(asu_id, _hkl)
             _ipred = _ipred * scale
 
             _ll = self.likelihood(_ipred, iobs, sigiobs)
@@ -300,6 +304,8 @@ class VariationalMergingModel(torch.nn.Module):
 
             if self.surrogate_posterior.parameterization == 'structure_factor':
                 _ipred = torch.square(_ipred)
+            if self.surrogate_posterior.trend is not None:
+                _ipred = _ipred * self.surrogate_posterior.trend(asu_id, _hkl)
             _ipred = _ipred * scale
 
             _ll = self.likelihood(_ipred, iobs, sigiobs)

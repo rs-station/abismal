@@ -196,7 +196,7 @@ class Trainer:
 
         metrics = {"loss": loss.detach()}
         metrics.update(tracked)
-        labels = {"scale": "|∇s|", "q": "|∇q|", "ll": "|∇ll|", "p": "|∇p|"}
+        labels = {"scale": "|∇s|", "trend": "|∇T|", "q": "|∇q|", "ll": "|∇ll|", "p": "|∇p|"}
         for name, params in self.model.parameter_groups().items():
             grads = [p.grad for p in params if p.grad is not None]
             # Like keras, the likelihood and prior only report a gradient norm

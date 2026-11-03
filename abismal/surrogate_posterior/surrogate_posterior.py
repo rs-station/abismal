@@ -62,6 +62,8 @@ class PosteriorBase(torch.nn.Module):
         self.epsilon = epsilon
         self.rac = rac
         self.register_buffer('seen', torch.zeros(self.rac.asu_size, dtype=torch.bool))
+        # Optional learned falloff (abismal.surrogate_posterior.trend), applied to intensities on the way out.
+        self.trend = None
 
     @torch.no_grad()
     def register_seen(self, asu_id, hkl):
@@ -141,8 +143,11 @@ class PosteriorBase(torch.nn.Module):
             'L' : rs.DataSeries(l, dtype='H'),
         }
 
+        T = 1. if self.trend is None else _numpy(torch.exp(self.trend.log_trend()))
+
         try:
             I,SIGI = map(_numpy, self.get_flat_isigi())
+            I, SIGI = I * T, SIGI * T
             has_isigi = True
             data.update({
                 'I' : rs.DataSeries(I, dtype='J'),
@@ -153,6 +158,7 @@ class PosteriorBase(torch.nn.Module):
 
         try:
             F,SIGF = map(_numpy, self.get_flat_fsigf())
+            F, SIGF = F * np.sqrt(T), SIGF * np.sqrt(T)
             has_fsigf = True
             data.update({
                 'F' : rs.DataSeries(F, dtype='F'),

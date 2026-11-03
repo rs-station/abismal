@@ -31,6 +31,28 @@ args_and_kwargs = (
 
     (
         (
+            "--posterior-trend",
+        ),{
+            "help": "Learn a falloff T(d) that multiplies the surrogate posterior's intensities in the likelihood and "
+                    "the output, the posterior and its KL staying on a flat scale. 'wilson': log T = log k - b/d^2. "
+                    "'spline': log T piecewise linear in 1/d^2. 'none' (default): no trend.",
+            "default": "none",
+            "choices": ["none", "wilson", "spline"],
+        }
+    ),
+
+    (
+        (
+            "--posterior-trend-knots",
+        ),{
+            "help": "--posterior-trend spline: the number of knots, default 16.",
+            "default": 16,
+            "type": int,
+        }
+    ),
+
+    (
+        (
             "--scale-kl-weight",
         ),{
             "help": "The strength of the scale prior distribution with default 1.0.",
