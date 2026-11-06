@@ -61,4 +61,35 @@ args_and_kwargs=(
             "action": "store_true",
         }
     ),
+    (
+        (
+            "--error-model-fit",
+        ),{
+            "help": "--error-model ev11: how to learn a and b. 'elbo' (default): with the rest of the model, on the ELBO. "
+                    "'online': outside the ELBO, in closed form, from running sums of a weighted least-squares fit of "
+                    "the squared residuals against the mean prediction, updated every training step.",
+            "default": "elbo",
+            "choices": ["elbo", "online"],
+        }
+    ),
+    (
+        (
+            "--error-model-burnin",
+        ),{
+            "help": "--error-model-fit online: epochs to hold a and b at their starting values before the fit starts "
+                    "accumulating. Default 2.",
+            "default": 2,
+            "type": int,
+        }
+    ),
+    (
+        (
+            "--error-model-decay",
+        ),{
+            "help": "--error-model-fit online: forget the running sums with this time constant in steps. The default, "
+                    "0, keeps every batch since the burn-in (a cumulative fit).",
+            "default": 0,
+            "type": int,
+        }
+    ),
 )

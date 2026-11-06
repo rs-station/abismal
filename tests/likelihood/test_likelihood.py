@@ -116,3 +116,68 @@ def test_a_fixed_ev11_model_has_nothing_to_train():
     likelihood = Ev11Likelihood(a=0.994, b=0.047, fixed=True)
     assert not any(p.requires_grad for p in likelihood.parameters())
     assert abs(float(likelihood.a) - 0.994) < 1e-6 and abs(float(likelihood.b) - 0.047) < 1e-6
+
+
+def _ev11_batches(a, b, n=20000, steps=20, seed=0, outliers=0.):
+    """Batches of observations whose residuals have variance a·σ² + b²·p², as (ipred, iobs, sigiobs, valid)."""
+    g = torch.Generator().manual_seed(seed)
+    for _ in range(steps):
+        p = torch.exp(torch.randn(n, 1, generator=g) * 1.5)
+        sig = 0.2 + 0.3 * torch.sqrt(p) * torch.rand(n, 1, generator=g)
+        noise = torch.randn(n, 1, generator=g) * torch.sqrt(a * sig ** 2 + (b * p) ** 2)
+        if outliers:
+            wild = torch.rand(n, 1, generator=g) < outliers
+            noise = torch.where(wild, noise * 20., noise)
+        yield p.expand(n, 4).clone(), p + noise, sig, torch.ones(n, dtype=torch.bool)
+
+
+@pytest.mark.parametrize('a,b', [(1., 0.05), (20., 0.2), (2., 0.3)])
+def test_the_online_ev11_fit_recovers_a_and_b(a, b):
+    from abismal.likelihood import Ev11Likelihood
+    likelihood = Ev11Likelihood(a=1., b=0.01, fit='online')
+    for batch in _ev11_batches(a, b):
+        likelihood.online_update(*batch)
+    assert likelihood.a.item() == pytest.approx(a, rel=0.05)
+    assert likelihood.b.item() == pytest.approx(b, rel=0.05)
+
+
+def test_the_online_ev11_fit_with_a_t_shrugs_off_outliers():
+    from abismal.likelihood import Ev11Likelihood
+    fits = {}
+    for df in (None, 4.):
+        likelihood = Ev11Likelihood(a=1., b=0.01, fit='online', degrees_of_freedom=df)
+        for batch in _ev11_batches(4., 0.1, outliers=0.01):
+            likelihood.online_update(*batch)
+        fits[df] = likelihood.a.item()
+    # 1% of residuals 20x too large inflate the normal fit's a several-fold; the t's E-step weights mostly ignore them
+    assert fits[None] > 2 * fits[4.]
+    assert fits[4.] == pytest.approx(4., rel=0.5)
+
+
+def test_the_online_ev11_fit_waits_out_its_burnin_and_trains_nothing():
+    from abismal.likelihood import Ev11Likelihood
+    likelihood = Ev11Likelihood(a=1., b=0.01, fit='online', burnin_steps=5)
+    assert not any(p.requires_grad for p in likelihood.parameters())
+    batches = _ev11_batches(9., 0.1, steps=12)
+    for _ in range(5):
+        likelihood.online_update(*next(batches))
+    assert likelihood.a.item() == pytest.approx(1.) and likelihood.xx.abs().sum() == 0
+    for batch in batches:
+        likelihood.online_update(*batch)
+    assert likelihood.a.item() == pytest.approx(9., rel=0.05)
+
+
+def test_the_online_ev11_fit_updates_in_training_only():
+    from abismal.likelihood import Ev11Likelihood
+    from model_helpers import build_small_model, synthetic_batch
+    model = build_small_model()
+    model.likelihood = Ev11Likelihood(a=1., b=0.01, fit='online')
+    batch = synthetic_batch(model).map(torch.as_tensor)
+    with tracking.track() as t:
+        model(batch, training=True)
+    t.total_loss().backward()
+    assert model.likelihood.steps.item() == 1 and model.likelihood.xx[0, 0] > 0
+    theta = model.likelihood.theta.clone()
+    with tracking.track():
+        model(batch, training=False)
+    assert model.likelihood.steps.item() == 1 and torch.equal(model.likelihood.theta, theta)

@@ -248,6 +248,8 @@ class VariationalMergingModel(torch.nn.Module):
         if training:
             self.surrogate_posterior.register_seen(asu_id, hkl)
 
+        if training and getattr(self.likelihood, 'fit', None) == 'online':
+            self.likelihood.online_update(ipred, iobs, sigiobs, valid)
         self.likelihood.register_metrics(ipred, iobs, sigiobs)
 
         ll = self._observation_mean(ll, valid)
@@ -329,6 +331,8 @@ class VariationalMergingModel(torch.nn.Module):
             if self.kl_reflection_weights != 'none':
                 self._count_observations(asu_id, hkl, inputs.first_pass)
 
+        if training and getattr(self.likelihood, 'fit', None) == 'online':
+            self.likelihood.online_update(ipred, iobs, sigiobs, valid)
         self.likelihood.register_metrics(ipred, iobs, sigiobs)
 
         ll = self._observation_mean(ll, valid)
