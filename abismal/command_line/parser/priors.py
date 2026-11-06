@@ -53,6 +53,18 @@ args_and_kwargs = (
 
     (
         (
+            "--posterior-trend-aniso",
+        ),{
+            "help": "--posterior-trend spline: add an anisotropic temperature factor, log T -= s^T B s / 2, with B traceless "
+                    "and restricted to what the Laue symmetry allows. 'global': one B. 'bins': one B per knot, "
+                    "interpolated in 1/d^2. 'none' (default): isotropic.",
+            "default": "none",
+            "choices": ["none", "global", "bins"],
+        }
+    ),
+
+    (
+        (
             "--scale-kl-weight",
         ),{
             "help": "The strength of the scale prior distribution with default 1.0.",

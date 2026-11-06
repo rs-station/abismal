@@ -85,3 +85,63 @@ def _flat(sp, trend):
             yield ds['F'].to_numpy(float), ds['I'].to_numpy(float), ds['SIGF'].to_numpy(float)
     finally:
         sp.trend = saved
+
+
+_CELLS = {
+    'P 1': (40., 50., 60., 80., 95., 105.),
+    'P 1 2 1': (40., 50., 60., 90., 105., 90.),
+    'P 21 21 21': (40., 50., 60., 90., 90., 90.),
+    'P 43 21 2': (79., 79., 38., 90., 90., 90.),
+    'H 3': (90., 90., 60., 90., 90., 120.),
+    'P 61 2 2': (93., 93., 131., 90., 90., 120.),
+    'P 2 3': (50., 50., 50., 90., 90., 90.),
+}
+_ALLOWED = {'P 1': 5, 'P 1 2 1': 3, 'P 21 21 21': 2, 'P 43 21 2': 1, 'H 3': 1, 'P 61 2 2': 1, 'P 2 3': 0}
+
+
+def _rac(spacegroup):
+    from abismal.symmetry.reciprocal_asu import ReciprocalASU, ReciprocalASUCollection
+    import gemmi
+    return ReciprocalASUCollection(ReciprocalASU(gemmi.UnitCell(*_CELLS[spacegroup]), gemmi.SpaceGroup(spacegroup), 4.))
+
+
+@pytest.mark.parametrize('spacegroup', list(_CELLS))
+def test_the_anisotropic_b_has_the_freedom_the_laue_symmetry_allows(spacegroup):
+    t = ResolutionTrend(_rac(spacegroup), 'spline', knots=4, aniso='global')
+    assert np.linalg.matrix_rank(t.projection[0].numpy(), tol=1e-5) == _ALLOWED[spacegroup]
+
+
+@pytest.mark.parametrize('spacegroup', list(_CELLS))
+def test_symmetry_mates_get_the_same_anisotropic_falloff(spacegroup):
+    import gemmi
+    rac = _rac(spacegroup)
+    t = ResolutionTrend(rac, 'spline', knots=4, aniso='bins')
+    with torch.no_grad():
+        t._aniso.normal_()
+    b = t.b_tensors()[0].detach().numpy().astype(float)
+    assert np.allclose(b[:, :3].sum(-1), 0., atol=1e-4)  # traceless: the isotropic part is the spline's
+    cell, ops = gemmi.UnitCell(*_CELLS[spacegroup]), gemmi.SpaceGroup(spacegroup).operations()
+    frac = np.array(cell.frac.mat.tolist())
+    for h in ([1, 2, 3], [4, -1, 2], [0, 3, 5]):
+        s = np.array([op.apply_to_hkl(h) for op in ops.sym_ops], dtype=float) @ frac
+        sss = np.stack([s[:, 0] ** 2, s[:, 1] ** 2, s[:, 2] ** 2, 2 * s[:, 0] * s[:, 1], 2 * s[:, 0] * s[:, 2], 2 * s[:, 1] * s[:, 2]], -1)
+        quad = sss @ b.T  # each mate against every knot's B
+        assert np.allclose(quad, quad[:1], rtol=1e-4, atol=1e-4)
+
+
+@pytest.mark.parametrize('aniso', ['global', 'bins'])
+def test_an_anisotropic_trend_starts_isotropic_and_trains(aniso):
+    model = build_small_model()
+    rac = model.surrogate_posterior.rac
+    model.surrogate_posterior.trend = ResolutionTrend(rac, 'spline', knots=4, aniso=aniso)
+    assert torch.equal(model.surrogate_posterior.trend.log_trend(), ResolutionTrend(rac, 'spline', knots=4).log_trend())
+    batch = synthetic_batch(model).map(torch.as_tensor)
+    with tracking.track() as t:
+        model(batch, training=True)
+    t.total_loss().backward()
+    assert model.surrogate_posterior.trend._aniso.grad.abs().sum() > 0
+
+
+def test_an_anisotropic_trend_needs_a_spline():
+    with pytest.raises(ValueError):
+        ResolutionTrend(build_small_model().surrogate_posterior.rac, 'wilson', aniso='global')

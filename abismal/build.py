@@ -209,7 +209,7 @@ def build_model(args, facts, data=None, precision="float32"):
     surrogate_posterior = Posterior(**posterior_kwargs)
     if args.posterior_trend != 'none':
         from abismal.surrogate_posterior.trend import ResolutionTrend
-        surrogate_posterior.trend = ResolutionTrend(rac, args.posterior_trend, args.posterior_trend_knots)
+        surrogate_posterior.trend = ResolutionTrend(rac, args.posterior_trend, args.posterior_trend_knots, args.posterior_trend_aniso)
 
     scale_model = ImageScaler(
         metadata_length=facts["metadata_length"],
