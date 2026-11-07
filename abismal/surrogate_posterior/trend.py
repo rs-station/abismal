@@ -17,14 +17,21 @@ class ResolutionTrend(torch.nn.Module):
     quantiles of the reflections' 1/d**2. Parameters are in units of 0.1 of log T (of b for 'wilson'), because Adam
     moves a parameter about the learning rate per step.
 
+    anchor='lowres' pins the trend's level: T = 1 at the lowest-resolution knot ('spline') or at the lowest-resolution
+    reflection ('wilson', k fixed at 1). Without it, a constant can move between the trend and the scales at no cost to
+    the likelihood; with point scales and no scale prior nothing stops that drift.
+
     aniso='global' or 'bins' (spline only) adds an anisotropic temperature factor, log T -= s^T B s / 2 with s the
     Cartesian reciprocal vector of the reflection: one traceless B for the whole ASU, or one per knot, interpolated like
     the knot values. The isotropic part stays in the spline. B is averaged over the point group's rotations in the forward
     pass, so only the components the Laue symmetry allows ever get a gradient (5 in triclinic, 1 in hexagonal, none in
     cubic). Its parameters are in units where 1 moves log T by 10 at the edge of the data.
     """
-    def __init__(self, rac, kind='wilson', knots=16, aniso='none'):
+    def __init__(self, rac, kind='wilson', knots=16, aniso='none', anchor='none'):
         super().__init__()
+        if anchor not in ('none', 'lowres'):
+            raise ValueError(f"anchor must be 'none' or 'lowres', not {anchor!r}")
+        self.anchor = anchor
         if kind not in ('wilson', 'spline'):
             raise ValueError(f"kind must be 'wilson' or 'spline', not {kind!r}")
         if aniso not in ('none', 'global', 'bins'):
@@ -57,11 +64,22 @@ class ResolutionTrend(torch.nn.Module):
             n = len(self.knots) if aniso == 'bins' else 1
             self._aniso = torch.nn.Parameter(torch.zeros(len(rac.reciprocal_asus), n, 5))
 
+    def _knot_values(self):
+        """log T at the knots. anchor='lowres' holds the lowest-resolution knot at 0 (T = 1), so that the trend
+        carries only the shape of the falloff and not its level, which the scales could otherwise trade against it
+        without changing the likelihood."""
+        v = 10. * self._values
+        if self.anchor == 'lowres':
+            v = torch.cat([torch.zeros_like(v[:1]), v[1:]])
+        return v
+
     def log_trend(self):
         """log T of every reflection in the ASU, by Miller id."""
         if self.kind == 'wilson':
+            if self.anchor == 'lowres':
+                return -10. * self._b * (self.q - self.q.min())
             return 10. * (self._log_k - self._b * self.q)
-        v = 10. * self._values
+        v = self._knot_values()
         log_t = (1. - self.frac) * v[self.index] + self.frac * v[self.index + 1]
         if self.aniso == 'none':
             return log_t
@@ -84,7 +102,7 @@ class ResolutionTrend(torch.nn.Module):
             tracking.add_metric(10. * self._b.detach() * 2., 'TrendB')
             tracking.add_metric(torch.exp(10. * self._log_k.detach()), 'TrendK')
         else:
-            v = 10. * self._values.detach()
+            v = self._knot_values().detach()
             tracking.add_metric(v[0] - v[-1], 'TrendRange')
         if self.aniso != 'none':
             b = self.b_tensors().detach()

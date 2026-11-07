@@ -53,6 +53,18 @@ args_and_kwargs = (
 
     (
         (
+            "--posterior-trend-anchor",
+        ),{
+            "help": "--posterior-trend: 'lowres' holds T at 1 at the lowest resolution (the spline's first knot, or k = 1 "
+                    "for 'wilson'), so the trend carries the falloff's shape and the scales its level. 'none' (default): "
+                    "the level is free, and can drift against the scales when nothing else pins them.",
+            "default": "none",
+            "choices": ["none", "lowres"],
+        }
+    ),
+
+    (
+        (
             "--posterior-trend-aniso",
         ),{
             "help": "--posterior-trend spline: add an anisotropic temperature factor, log T -= s^T B s / 2, with B traceless "

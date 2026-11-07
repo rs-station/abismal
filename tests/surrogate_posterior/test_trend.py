@@ -145,3 +145,30 @@ def test_an_anisotropic_trend_starts_isotropic_and_trains(aniso):
 def test_an_anisotropic_trend_needs_a_spline():
     with pytest.raises(ValueError):
         ResolutionTrend(build_small_model().surrogate_posterior.rac, 'wilson', aniso='global')
+
+
+@pytest.mark.parametrize('kind', ['wilson', 'spline'])
+def test_an_anchored_trend_is_one_at_low_resolution_and_has_no_free_level(kind):
+    model = build_small_model()
+    rac = model.surrogate_posterior.rac
+    t = ResolutionTrend(rac, kind, knots=4, anchor='lowres')
+    with torch.no_grad():
+        for p in t.parameters():
+            p.normal_()
+    log_t = t.log_trend()
+    q = torch.as_tensor(rac.dHKL, dtype=torch.float32).reshape(-1) ** -2
+    assert log_t[q.argmin()].abs() < 1e-5
+    # The level parameter (the first knot, or log k) gets no gradient: only the shape is learned.
+    log_t.sum().backward()
+    level = t._values.grad[0] if kind == 'spline' else t._log_k.grad
+    assert level is None or level.abs() == 0
+
+
+def test_an_anchored_trend_trains_with_the_model():
+    model = build_small_model()
+    model.surrogate_posterior.trend = ResolutionTrend(model.surrogate_posterior.rac, 'spline', knots=4, anchor='lowres')
+    batch = synthetic_batch(model).map(torch.as_tensor)
+    with tracking.track() as t:
+        model(batch, training=True)
+    t.total_loss().backward()
+    assert model.surrogate_posterior.trend._values.grad[1:].abs().sum() > 0
