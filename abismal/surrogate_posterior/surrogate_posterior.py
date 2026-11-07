@@ -144,6 +144,7 @@ class PosteriorBase(torch.nn.Module):
         }
 
         T = 1. if self.trend is None else _numpy(torch.exp(self.trend.log_trend()))
+        trend_keys = []
 
         try:
             I,SIGI = map(_numpy, self.get_flat_isigi())
@@ -157,13 +158,20 @@ class PosteriorBase(torch.nn.Module):
             has_isigi = False
 
         try:
-            F,SIGF = map(_numpy, self.get_flat_fsigf())
-            F, SIGF = F * np.sqrt(T), SIGF * np.sqrt(T)
+            F_raw, SIGF_raw = map(_numpy, self.get_flat_fsigf())
+            F, SIGF = F_raw * np.sqrt(T), SIGF_raw * np.sqrt(T)
             has_fsigf = True
             data.update({
                 'F' : rs.DataSeries(F, dtype='F'),
                 'SIGF' : rs.DataSeries(SIGF, dtype='Q'),
             })
+            if self.trend is not None:
+                # The posterior's own structure factors, before the trend: on the flat scale the prior sees.
+                data.update({
+                    'F_RAW' : rs.DataSeries(F_raw, dtype='F'),
+                    'SIGF_RAW' : rs.DataSeries(SIGF_raw, dtype='Q'),
+                })
+                trend_keys = ['F_RAW', 'SIGF_RAW']
 
             sqrt_mult = np.sqrt(_numpy(self.rac.epsilon))
             data.update({
@@ -197,7 +205,7 @@ class PosteriorBase(torch.nn.Module):
             if rasu.anomalous:
                 out = out.unstack_anomalous()
                 keys = self.anomalous_keys.copy()
-                for k in extras:
+                for k in trend_keys + list(extras):
                     keys.append(f'{k}(+)')
                     keys.append(f'{k}(-)')
                 out = out[[k for k in keys if k in out]]

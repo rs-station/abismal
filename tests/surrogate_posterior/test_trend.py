@@ -172,3 +172,17 @@ def test_an_anchored_trend_trains_with_the_model():
         model(batch, training=True)
     t.total_loss().backward()
     assert model.surrogate_posterior.trend._values.grad[1:].abs().sum() > 0
+
+
+def test_the_untrended_structure_factors_are_written_too():
+    model = _with_trend('wilson')
+    sp = model.surrogate_posterior
+    sp.seen.fill_(True)
+    with torch.no_grad():
+        sp.trend._log_k.fill_(np.log(4.) / 10.)
+    ds = next(iter(sp.to_datasets())).stack_anomalous()
+    assert np.allclose(ds['F'].to_numpy(float), 2. * ds['F_RAW'].to_numpy(float), rtol=1e-4)
+    assert np.allclose(ds['SIGF'].to_numpy(float), 2. * ds['SIGF_RAW'].to_numpy(float), rtol=1e-4)
+    # no trend, no extra columns
+    sp.trend = None
+    assert 'F_RAW(+)' not in next(iter(sp.to_datasets())).columns
