@@ -181,3 +181,12 @@ def test_the_online_ev11_fit_updates_in_training_only():
     with tracking.track():
         model(batch, training=False)
     assert model.likelihood.steps.item() == 1 and torch.equal(model.likelihood.theta, theta)
+
+
+def test_the_online_ev11_fit_can_hold_b_and_fit_a_alone():
+    from abismal.likelihood import Ev11Likelihood
+    likelihood = Ev11Likelihood(a=1., b=0.1, fit='online', fit_b=False)
+    for batch in _ev11_batches(9., 0.1):
+        likelihood.online_update(*batch)
+    assert likelihood.b.item() == pytest.approx(0.1)
+    assert likelihood.a.item() == pytest.approx(9., rel=0.05)

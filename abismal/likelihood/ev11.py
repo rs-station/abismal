@@ -32,7 +32,7 @@ class Ev11Likelihood(LocationScale):
     the estimate by about 1/t), or decay by 1 − 1/decay_steps per step if decay_steps > 0.
     """
     def __init__(self, a=1., b=0.01, degrees_of_freedom=None, detach=True, fixed=False, fit='elbo', burnin_steps=0,
-                 decay_steps=0):
+                 decay_steps=0, fit_b=True):
         super().__init__()
         if fit not in ('elbo', 'online'):
             raise ValueError(f"fit must be 'elbo' or 'online', not {fit!r}")
@@ -45,6 +45,7 @@ class Ev11Likelihood(LocationScale):
         self.degrees_of_freedom = degrees_of_freedom
         if fit == 'online':
             self.burnin_steps = int(burnin_steps)
+            self.fit_b = fit_b
             self.decay = 1. - 1. / decay_steps if decay_steps > 0 else 1.
             # The estimate (a, b²), the normal equations' running sums and the training step count.
             self.register_buffer('theta', torch.tensor([a, b * b], dtype=torch.float64))
@@ -105,6 +106,10 @@ class Ev11Likelihood(LocationScale):
         both = (a > 0) & (b2 >= 0) & (det > 0)
         theta = torch.where(both, torch.stack([a, b2]),
                 torch.where(a > 0, torch.stack([a_only, torch.zeros_like(a)]), torch.stack([torch.zeros_like(a), b2_only])))
+        if not self.fit_b:
+            # b held at its starting value: a alone fits what the b term leaves, a = Σw·σ²·(y − b²p²) / Σw·σ⁴.
+            b2 = self.theta[1]
+            theta = torch.stack([((y1 - b2 * s12) / s11).clamp_min(0.), b2])
         # Keep the starting values until the sums hold data.
         ready = (s11 > 0) & torch.isfinite(theta).all() & (theta[0] > 0)
         self.theta.copy_(torch.where(ready, theta, self.theta))

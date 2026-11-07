@@ -84,6 +84,14 @@ args_and_kwargs=(
     ),
     (
         (
+            "--error-model-fit-a-only",
+        ),{
+            "help": "--error-model-fit online: fit a alone and hold b at --error-model-b.",
+            "action": "store_true",
+        }
+    ),
+    (
+        (
             "--error-model-decay",
         ),{
             "help": "--error-model-fit online: forget the running sums with this time constant in steps. The default, "
