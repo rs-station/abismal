@@ -40,8 +40,9 @@ class Ev11Likelihood(LocationScale):
         self.fit = fit
         # fixed: a and b stay at their given values (not trained, so the optimizer never sees them).
         trainable = fit == 'elbo' and not fixed
+        # fit_b=False: b stays at its starting value whichever way a is fitted.
         self.log_a = torch.nn.Parameter(torch.tensor(math.log(a)), requires_grad=trainable)
-        self.log_b = torch.nn.Parameter(torch.tensor(math.log(b)), requires_grad=trainable)
+        self.log_b = torch.nn.Parameter(torch.tensor(math.log(b)), requires_grad=trainable and fit_b)
         self.degrees_of_freedom = degrees_of_freedom
         if fit == 'online':
             self.burnin_steps = int(burnin_steps)

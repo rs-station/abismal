@@ -190,3 +190,9 @@ def test_the_online_ev11_fit_can_hold_b_and_fit_a_alone():
         likelihood.online_update(*batch)
     assert likelihood.b.item() == pytest.approx(0.1)
     assert likelihood.a.item() == pytest.approx(9., rel=0.05)
+
+
+def test_an_elbo_ev11_fit_can_hold_b_and_learn_a_alone():
+    from abismal.likelihood import Ev11Likelihood
+    likelihood = Ev11Likelihood(a=1., b=1e-6, fit_b=False)
+    assert likelihood.log_a.requires_grad and not likelihood.log_b.requires_grad

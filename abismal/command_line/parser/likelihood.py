@@ -86,7 +86,7 @@ args_and_kwargs=(
         (
             "--error-model-fit-a-only",
         ),{
-            "help": "--error-model-fit online: fit a alone and hold b at --error-model-b.",
+            "help": "--error-model ev11: fit a alone and hold b at --error-model-b (either --error-model-fit).",
             "action": "store_true",
         }
     ),
