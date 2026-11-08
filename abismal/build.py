@@ -232,6 +232,7 @@ def build_model(args, facts, data=None, precision="float32"):
         precision=precision,
         share_weights=True,
         posterior_features=2 if args.posterior_features else 0,
+        background_outputs={'none': 0, 'offset': 1, 'latent': 2}[args.background],
     )
 
     if args.error_model == 'ev11':
@@ -255,6 +256,9 @@ def build_model(args, facts, data=None, precision="float32"):
         kl_reflection_weights=args.kl_reflection_weights,
         reindexing_ops=reindexing_ops,
         standardize=standardize_inputs,
+        background=None if args.background == 'none' else args.background,
+        background_prior_width=args.background_prior_width,
+        background_sigma_column=args.background_sigma_column,
     )
 
     model.spec = {"args": dict(vars(args)), "facts": dict(facts)}

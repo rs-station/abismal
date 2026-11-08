@@ -191,6 +191,7 @@ class ImageScaler(torch.nn.Module):
             batch_normalize=True,
             metadata_noise_factor=0.1,
             precision="float32",
+            background_outputs=0,
         ):
         """
         This function has a lot of overrides, but comes with sensible defaults built in.
@@ -244,6 +245,9 @@ class ImageScaler(torch.nn.Module):
             The standard deviation of the Gaussian noise added to the metadata. This regularizes
             the model against overfitting on small data sets. The noise is only applied when
             `training` is True. The default is 0.1.
+        background_outputs : int (optional)
+            Extra outputs of the scale network for a background model (see VariationalMergingModel's `background`).
+            When nonzero, `forward` returns (scales, background parameters). The default, 0, adds none.
         precision : str (optional)
             'float32' (the default) or 'bfloat16'. With 'bfloat16' the networks
             run under autocast, which roughly halves their time and activation
@@ -273,6 +277,7 @@ class ImageScaler(torch.nn.Module):
         self.random_seed = random_seed
         self.batch_normalize = batch_normalize
         self.metadata_noise_factor = metadata_noise_factor
+        self.background_outputs = background_outputs
         if precision not in ("float32", "bfloat16"):
             raise ValueError(f"precision must be 'float32' or 'bfloat16', not {precision!r}")
         self.precision = precision
@@ -319,10 +324,8 @@ class ImageScaler(torch.nn.Module):
             else:
                 self.scale_network = network()
 
-            if self.posterior_name == 'delta':
-                self.output_dense = linear(mlp_width, 1, output_bias, kernel_initializer)
-            else:
-                self.output_dense = linear(mlp_width, 2, output_bias, kernel_initializer)
+            self.scale_outputs = 1 if self.posterior_name == 'delta' else 2
+            self.output_dense = linear(mlp_width, self.scale_outputs + background_outputs, output_bias, kernel_initializer)
 
     def _autocast(self, like):
         return torch.autocast(
@@ -412,6 +415,9 @@ class ImageScaler(torch.nn.Module):
             q_latent = self.scale_network(scale_in)
             q_params = self.output_dense(q_latent)
         q_params = q_params.float()
+        background = None
+        if self.background_outputs:
+            q_params, background = q_params[..., :self.scale_outputs], q_params[..., self.scale_outputs:]
 
         q = self.distribution_function(q_params)
 
@@ -429,4 +435,6 @@ class ImageScaler(torch.nn.Module):
 
         tracking.add_metric(z.mean(), name='Σ_mean')
         tracking.add_metric(z.std(correction=0), name='Σ_std')
+        if self.background_outputs:
+            return z, background
         return z

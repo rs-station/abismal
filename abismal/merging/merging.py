@@ -21,8 +21,24 @@ class VariationalMergingModel(torch.nn.Module):
             reindexing_ops=None,
             standardize=False,
             kl_reflection_weights='none',
+            background=None,
+            background_prior_width=1.,
+            background_sigma_column=None,
         ):
         super().__init__()
+        # An additive background term, I_pred = s * T * F**2 + B, from extra outputs of the scale network:
+        #   'offset': B = sigma * beta, beta a point estimate with the penalty beta**2 / (2 * background_prior_width**2)
+        #             per observation (a MAP prior N(0, width**2) on B / sigma);
+        #   'latent': B ~ q = N(sigbg * m, sigbg * s), KL(q || N(0, sigbg**2)) per observation, sigbg the integration
+        #             program's background uncertainty, raw metadata column `background_sigma_column`.
+        # The penalty and KL are averaged over the batch's observations, like the likelihood.
+        if background not in (None, 'offset', 'latent'):
+            raise ValueError(f"background must be None, 'offset' or 'latent', not {background!r}")
+        if background == 'latent' and background_sigma_column is None:
+            raise ValueError("background='latent' needs background_sigma_column")
+        self.background = background
+        self.background_prior_width = background_prior_width
+        self.background_sigma_column = background_sigma_column
         self.epsilon = epsilon
         self.likelihood = likelihood
         self.prior = prior
@@ -99,6 +115,32 @@ class VariationalMergingModel(torch.nn.Module):
         if self.surrogate_posterior.independent:
             return self._call_independent(inputs, mc_samples=mc_samples, training=training)
         return self._call_dependent(inputs, mc_samples=mc_samples, training=training)
+
+    def _split_background(self, scale, raw_metadata, sigiobs, mc_samples):
+        """The scales and the additive background B for each observation (0. without a background model)."""
+        if self.background is None:
+            return scale, 0.
+        scale, params = scale
+        if self.background == 'offset':
+            beta = params[:, :1]
+            b = sigiobs * beta
+            tracking.add_loss((0.5 * torch.square(beta / self.background_prior_width)).mean())
+        else:
+            sigbg = raw_metadata[:, self.background_sigma_column:self.background_sigma_column + 1].to(sigiobs.dtype)
+            if self.standardize_intensity is not None:
+                sigbg = self.standardize_intensity.standardize(sigbg)
+            sigbg = sigbg.clamp_min(1e-12)
+            m = params[:, :1]
+            s = torch.nn.functional.softplus(params[:, 1:2] + 0.5413) + 1e-4  # softplus(0.5413) = 1: q starts as the prior
+            b = sigbg * (m + s * torch.randn(m.shape[0], mc_samples, device=m.device, dtype=m.dtype))
+            kl = 0.5 * (m * m + s * s - 1.) - torch.log(s)
+            tracking.add_loss(kl.mean())
+            tracking.add_metric(kl.mean().detach(), 'KL_B')
+            tracking.add_metric(s.mean().detach(), 'B_s')
+        bmean = b.mean(-1) if b.dim() > 1 else b[:, 0]
+        tracking.add_metric((bmean / sigiobs[:, 0]).mean().detach(), 'B/σ')
+        tracking.add_metric((bmean / sigiobs[:, 0]).abs().mean().detach(), '|B|/σ')
+        return scale, b
 
     def _posterior_features(self, asu_id, hkl, dtype):
         """
@@ -192,6 +234,7 @@ class VariationalMergingModel(torch.nn.Module):
         if mc_samples is None:
             mc_samples = self.mc_samples
 
+        raw_metadata = inputs.metadata
         inputs = self.standardize_inputs(inputs, training=training)
 
         asu_id = inputs.asu_id
@@ -207,6 +250,7 @@ class VariationalMergingModel(torch.nn.Module):
             training=training,
             features=self._posterior_features(asu_id, hkl_in, iobs.dtype),
         )
+        scale, background = self._split_background(scale, raw_metadata, sigiobs, mc_samples)
 
         ll = None
         image_ll = None
@@ -231,7 +275,7 @@ class VariationalMergingModel(torch.nn.Module):
                 _ipred = torch.square(_ipred)
             if self.surrogate_posterior.trend is not None:
                 _ipred = _ipred * self.surrogate_posterior.trend(asu_id, _hkl)
-            _ipred = _ipred * scale
+            _ipred = _ipred * scale + background
 
             _ll = self.likelihood(_ipred, iobs, sigiobs)
 
@@ -271,6 +315,7 @@ class VariationalMergingModel(torch.nn.Module):
         if mc_samples is None:
             mc_samples = self.mc_samples
 
+        raw_metadata = inputs.metadata
         inputs = self.standardize_inputs(inputs, training=training)
 
         asu_id = inputs.asu_id
@@ -286,6 +331,7 @@ class VariationalMergingModel(torch.nn.Module):
             training=training,
             features=self._posterior_features(asu_id, hkl_in, iobs.dtype),
         )
+        scale, background = self._split_background(scale, raw_metadata, sigiobs, mc_samples)
 
         ll = None
         image_ll = None
@@ -308,7 +354,7 @@ class VariationalMergingModel(torch.nn.Module):
                 _ipred = torch.square(_ipred)
             if self.surrogate_posterior.trend is not None:
                 _ipred = _ipred * self.surrogate_posterior.trend(asu_id, _hkl)
-            _ipred = _ipred * scale
+            _ipred = _ipred * scale + background
 
             _ll = self.likelihood(_ipred, iobs, sigiobs)
 

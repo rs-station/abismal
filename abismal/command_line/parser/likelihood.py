@@ -109,4 +109,36 @@ args_and_kwargs=(
             "type": int,
         }
     ),
+    (
+        (
+            "--background",
+        ),{
+            "help": "An additive background term, I_pred = s*T*F^2 + B, from extra outputs of the scale network. "
+                    "'offset': B = sigma*beta, beta a point estimate with a N(0, --background-prior-width^2) penalty. "
+                    "'latent': B ~ N(sigbg*m, sigbg*s) with KL to N(0, sigbg^2), sigbg the integration program's "
+                    "background uncertainty from raw metadata column --background-sigma-column. 'none' (default).",
+            "default": "none",
+            "choices": ["none", "offset", "latent"],
+        }
+    ),
+    (
+        (
+            "--background-prior-width",
+        ),{
+            "help": "--background offset: the prior width of B/sigma, default 1.",
+            "default": 1.0,
+            "type": float,
+        }
+    ),
+    (
+        (
+            "--background-sigma-column",
+        ),{
+            "help": "--background latent: the metadata column (0-based, as the loader orders them) holding the "
+                    "background uncertainty in intensity units: 4 for DIALS (sqrt(background.sum.variance)), 1 for "
+                    "the default MTZ columns (SIGBG).",
+            "default": None,
+            "type": int,
+        }
+    ),
 )
