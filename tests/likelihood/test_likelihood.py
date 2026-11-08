@@ -196,3 +196,17 @@ def test_an_elbo_ev11_fit_can_hold_b_and_learn_a_alone():
     from abismal.likelihood import Ev11Likelihood
     likelihood = Ev11Likelihood(a=1., b=1e-6, fit_b=False)
     assert likelihood.log_a.requires_grad and not likelihood.log_b.requires_grad
+
+
+def test_ev11_can_learn_its_degrees_of_freedom():
+    from abismal.likelihood import Ev11Likelihood
+    likelihood = Ev11Likelihood(a=1., b=0.1, degrees_of_freedom=32., learn_dof=True)
+    assert likelihood.log_nu.requires_grad and float(likelihood.degrees_of_freedom) == pytest.approx(32.)
+    ipred = torch.rand(50, 4) + 0.5
+    iobs = ipred.mean(-1, keepdim=True) + torch.randn(50, 1) * 3.
+    likelihood(ipred, iobs, torch.ones(50, 1)).sum().backward()
+    assert likelihood.log_nu.grad is not None and likelihood.log_nu.grad.abs() > 0
+    held = Ev11Likelihood(a=1., b=0.1, degrees_of_freedom=8., learn_dof=True, fixed=True)
+    assert not any(p.requires_grad for p in held.parameters()) and float(held.degrees_of_freedom) == pytest.approx(8.)
+    with pytest.raises(ValueError):
+        Ev11Likelihood(degrees_of_freedom=None, learn_dof=True)

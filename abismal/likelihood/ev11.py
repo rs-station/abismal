@@ -32,7 +32,7 @@ class Ev11Likelihood(LocationScale):
     the estimate by about 1/t), or decay by 1 − 1/decay_steps per step if decay_steps > 0.
     """
     def __init__(self, a=1., b=0.01, degrees_of_freedom=None, detach=True, fixed=False, fit='elbo', burnin_steps=0,
-                 decay_steps=0, fit_b=True):
+                 decay_steps=0, fit_b=True, learn_dof=False):
         super().__init__()
         if fit not in ('elbo', 'online'):
             raise ValueError(f"fit must be 'elbo' or 'online', not {fit!r}")
@@ -43,7 +43,14 @@ class Ev11Likelihood(LocationScale):
         # fit_b=False: b stays at its starting value whichever way a is fitted.
         self.log_a = torch.nn.Parameter(torch.tensor(math.log(a)), requires_grad=trainable)
         self.log_b = torch.nn.Parameter(torch.tensor(math.log(b)), requires_grad=trainable and fit_b)
-        self.degrees_of_freedom = degrees_of_freedom
+        self._dof = degrees_of_freedom
+        # learn_dof: the Student t's degrees of freedom train on the ELBO with a and b (log scale, starting from
+        # degrees_of_freedom), and are held with them by fixed=True.
+        self.learn_dof = learn_dof
+        if learn_dof:
+            if degrees_of_freedom is None or fit != 'elbo':
+                raise ValueError("learn_dof needs a Student t (degrees_of_freedom) and fit='elbo'")
+            self.log_nu = torch.nn.Parameter(torch.tensor(math.log(degrees_of_freedom)), requires_grad=trainable)
         if fit == 'online':
             self.burnin_steps = int(burnin_steps)
             self.fit_b = fit_b
@@ -53,6 +60,12 @@ class Ev11Likelihood(LocationScale):
             self.register_buffer('xx', torch.zeros(2, 2, dtype=torch.float64))
             self.register_buffer('xy', torch.zeros(2, dtype=torch.float64))
             self.register_buffer('steps', torch.zeros((), dtype=torch.int64))
+
+    @property
+    def degrees_of_freedom(self):
+        if self.learn_dof:
+            return torch.exp(self.log_nu)
+        return self._dof
 
     @property
     def a(self):
@@ -82,7 +95,7 @@ class Ev11Likelihood(LocationScale):
         v = (x * self.theta).sum(-1).clamp_min(1e-30)
         w = valid.reshape(-1).to(torch.float64) / torch.square(v)
         if self.degrees_of_freedom is not None:
-            nu = float(self.degrees_of_freedom)
+            nu = float(self.degrees_of_freedom)  # a tensor if learned; the online fit doesn't learn it
             w = w * (nu + 1.) / (nu + y / v)
         # Each batch counts in proportion to its valid observations, whatever the scale of v̂: otherwise the first
         # batches, weighted at the starting a and b, can outweigh everything after them by orders of magnitude.
@@ -134,3 +147,5 @@ class Ev11Likelihood(LocationScale):
         super().register_metrics(ipred, iobs, sigiobs)
         tracking.add_metric(self.a, 'Ev11a')
         tracking.add_metric(self.b, 'Ev11b')
+        if self.learn_dof:
+            tracking.add_metric(self.degrees_of_freedom.detach(), 'Ev11nu')

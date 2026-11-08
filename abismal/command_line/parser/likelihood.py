@@ -92,6 +92,15 @@ args_and_kwargs=(
     ),
     (
         (
+            "--error-model-learn-dof",
+        ),{
+            "help": "--error-model ev11 with --error-model-fit elbo: also learn the Student t's degrees of freedom, "
+                    "starting from --studentt-dof (held with a and b by --fix-error-model).",
+            "action": "store_true",
+        }
+    ),
+    (
+        (
             "--error-model-decay",
         ),{
             "help": "--error-model-fit online: forget the running sums with this time constant in steps. The default, "
