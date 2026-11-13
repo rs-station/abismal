@@ -35,7 +35,9 @@ class Ev11Likelihood(LocationScale):
     posterior) with a and b held constant, and a normal likelihood trains a and b with the model held constant. The
     returned value is the t's log probability, so the reported NLL is the t's.
     """
-    FORMS = ('ev11', 'photon')
+    FORMS = ('ev11', 'photon', 'gscaled', 'aimless')
+    # Aimless's hard limits (sdctypes.cpp): SdFac >= MINSDFAC, |SdAdd| <= MAXSDADD and the bracket >= MINVARINFRAC*sigma^2.
+    MINSDFAC, MAXSDADD, MINVARINFRAC = 0.2, 1.0, 0.1
 
     def __init__(self, a=1., b=0.01, degrees_of_freedom=None, detach=True, fixed=False, fit='elbo', burnin_steps=0,
                  decay_steps=0, fit_b=True, learn_dof=False, form='ev11', c=0.01):
@@ -47,6 +49,8 @@ class Ev11Likelihood(LocationScale):
         if form != 'ev11' and fit == 'online':
             raise ValueError(f"form={form!r} is learned on the ELBO; fit='online' fits only the ev11 form")
         self.form = form
+        # The forms whose variance needs the scale on its own (s*p = s^2*I), passed to forward as `scale`.
+        self.needs_scale = form in ('gscaled', 'aimless')
         if fit == 'normal' and degrees_of_freedom is None:
             raise ValueError("fit='normal' splits a Student t from the normal that fits a and b: it needs degrees_of_freedom")
         self.detach = detach
@@ -56,9 +60,17 @@ class Ev11Likelihood(LocationScale):
         # fit_b=False: b stays at its starting value whichever way a is fitted.
         self.log_a = torch.nn.Parameter(torch.tensor(math.log(a)), requires_grad=trainable)
         self.log_b = torch.nn.Parameter(torch.tensor(math.log(b)), requires_grad=trainable and fit_b)
-        if form == 'photon':
+        if form in ('photon', 'gscaled'):
             # The linear term's c >= 0, on a log scale like a and b.
             self.log_c = torch.nn.Parameter(torch.tensor(math.log(c)), requires_grad=trainable)
+        if form == 'aimless':
+            # Aimless's own parameters, unconstrained apart from its limits: SdFac = sqrt(a), SdB starts at 0, SdAdd
+            # at b/SdFac (so the variance starts where the ev11 form's does). log a and log b go unused.
+            self.sdfac = torch.nn.Parameter(torch.tensor(math.sqrt(a)), requires_grad=trainable)
+            self.sdb = torch.nn.Parameter(torch.tensor(0.), requires_grad=trainable)
+            self.sdadd = torch.nn.Parameter(torch.tensor(b / math.sqrt(a)), requires_grad=trainable)
+            self.log_a.requires_grad_(False)
+            self.log_b.requires_grad_(False)
         self._dof = degrees_of_freedom
         # learn_dof: the Student t's degrees of freedom train on the ELBO with a and b (log scale, starting from
         # degrees_of_freedom), and are held with them by fixed=True.
@@ -148,24 +160,42 @@ class Ev11Likelihood(LocationScale):
     def c(self):
         return torch.exp(self.log_c)
 
-    def variance(self, ipred, sigiobs):
+    def aimless_parameters(self):
+        """SdFac, SdB and SdAdd as Aimless applies them: SdFac floored at 0.2, |SdAdd| capped at 1."""
+        return (self.sdfac.clamp_min(self.MINSDFAC), self.sdb,
+                self.sdadd.clamp(-self.MAXSDADD, self.MAXSDADD))
+
+    def variance(self, ipred, sigiobs, scale=None):
         # ipred is (reflections, mc samples) and sigiobs is (reflections, 1). The intensity terms use the sample
         # mean p of s·I. Detached (the default), the scales and posterior cannot move it to change their own variance.
         imean = (ipred.detach() if self.detach else ipred).mean(-1, keepdim=True)
-        var = self.a * torch.square(sigiobs) + torch.square(self.b * imean)
+        var = torch.square(sigiobs)
+        if self.needs_scale:
+            if scale is None:
+                raise ValueError(f"form={self.form!r} needs the scale")
+            # s·p = s²·I, Aimless's g·(g<I>): linear in the scaled intensity. The scale is always detached here.
+            gp = scale.detach().mean(-1, keepdim=True) * imean
+        if self.form == 'aimless':
+            # sdctypes.cpp SigmaPrime: SdFac·sqrt(max(0.1σ², σ² + SdB·g·(g<I>) + SdAdd·|SdAdd|·(g<I>)²)).
+            sdfac, sdb, sdadd = self.aimless_parameters()
+            bracket = var + sdb * gp + sdadd * sdadd.abs() * torch.square(imean)
+            return torch.square(sdfac) * torch.maximum(self.MINVARINFRAC * var, bracket)
+        var = self.a * var + torch.square(self.b * imean)
         if self.form == 'photon':
-            # A counting term linear in the predicted intensity.
             var = var + self.c * imean.clamp_min(0.)
+        elif self.form == 'gscaled':
+            var = var + self.c * gp.clamp_min(0.)
         return var
 
-    def forward(self, ipred, iobs, sigiobs):
+    def forward(self, ipred, iobs, sigiobs, scale=None):
+        """`scale` is the image scale s (reflections, mc samples or 1), needed only by the forms in `needs_scale`."""
         if self.fit == 'normal':
             # Only a and b see the normal term's gradient; subtracting its value leaves the t's as the log probability.
-            sd = torch.sqrt(self.variance(ipred.detach(), sigiobs))
+            sd = torch.sqrt(self.variance(ipred.detach(), sigiobs, scale))
             model = td.StudentT(self.degrees_of_freedom, iobs, sd.detach()).log_prob(ipred)
             error_model = td.Normal(iobs, sd).log_prob(ipred.detach())
             return model + error_model - error_model.detach()
-        sd = torch.sqrt(self.variance(ipred, sigiobs))
+        sd = torch.sqrt(self.variance(ipred, sigiobs, scale))
         if self.degrees_of_freedom is None:
             likelihood = td.Normal(iobs, sd)
         else:
@@ -175,9 +205,15 @@ class Ev11Likelihood(LocationScale):
     @torch.no_grad()
     def register_metrics(self, ipred, iobs, sigiobs):
         super().register_metrics(ipred, iobs, sigiobs)
-        tracking.add_metric(self.a, 'Ev11a')
-        tracking.add_metric(self.b, 'Ev11b')
-        if self.form == 'photon':
+        if self.form == 'aimless':
+            sdfac, sdb, sdadd = self.aimless_parameters()
+            tracking.add_metric(sdfac, 'SdFac')
+            tracking.add_metric(sdb, 'SdB')
+            tracking.add_metric(sdadd, 'SdAdd')
+        else:
+            tracking.add_metric(self.a, 'Ev11a')
+            tracking.add_metric(self.b, 'Ev11b')
+        if self.form in ('photon', 'gscaled'):
             tracking.add_metric(self.c, 'Ev11c')
         if self.learn_dof:
             tracking.add_metric(self.degrees_of_freedom.detach(), 'Ev11nu')

@@ -80,9 +80,12 @@ args_and_kwargs=(
         ),{
             "help": "--error-model ev11: the variance's form, with p = s*I_pred the predicted intensity and s the scale. "
                     "'ev11' (default): a*sigma^2 + b^2*p^2. 'photon': adds c*p, a counting term linear in the raw "
-                    "intensity, with c learned on the ELBO (--error-model-fit elbo or normal).",
+                    "intensity. 'gscaled': adds c*s*p, Aimless's SdB term (linear in the scaled intensity). "
+                    "'aimless': Aimless's SDcorrection as written, SdFac^2*max(0.1*sigma^2, sigma^2 + SdB*s*p + "
+                    "SdAdd*|SdAdd|*p^2), with SdFac >= 0.2, |SdAdd| <= 1 and SdB and SdAdd free in sign. "
+                    "c, SdFac, SdB and SdAdd are learned on the ELBO (--error-model-fit elbo or normal).",
             "default": "ev11",
-            "choices": ["ev11", "photon"],
+            "choices": ["ev11", "photon", "gscaled", "aimless"],
         }
     ),
     (

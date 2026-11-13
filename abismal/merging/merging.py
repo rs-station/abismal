@@ -164,6 +164,12 @@ class VariationalMergingModel(torch.nn.Module):
             valid = posterior.rac.valid(asu_id, hkl).reshape(-1, 1)
             return features.to(dtype) * valid.to(dtype)
 
+    def _log_likelihood(self, ipred, iobs, sigiobs, scale):
+        # A likelihood whose variance needs the image scale on its own (Ev11's 'gscaled' and 'aimless' forms) says so.
+        if getattr(self.likelihood, 'needs_scale', False):
+            return self.likelihood(ipred, iobs, sigiobs, scale=scale)
+        return self.likelihood(ipred, iobs, sigiobs)
+
     def _image_log_likelihood(self, ll, valid, image_id, num_images):
         """
         Average log likelihood of each image over the reflections a reindexing
@@ -277,7 +283,7 @@ class VariationalMergingModel(torch.nn.Module):
                 _ipred = _ipred * self.surrogate_posterior.trend(asu_id, _hkl)
             _ipred = _ipred * scale + background
 
-            _ll = self.likelihood(_ipred, iobs, sigiobs)
+            _ll = self._log_likelihood(_ipred, iobs, sigiobs, scale)
 
             _valid = self.surrogate_posterior.rac.valid(asu_id, _hkl)
             _image_ll = self._image_log_likelihood(_ll, _valid, image_id, num_images)
@@ -356,7 +362,7 @@ class VariationalMergingModel(torch.nn.Module):
                 _ipred = _ipred * self.surrogate_posterior.trend(asu_id, _hkl)
             _ipred = _ipred * scale + background
 
-            _ll = self.likelihood(_ipred, iobs, sigiobs)
+            _ll = self._log_likelihood(_ipred, iobs, sigiobs, scale)
 
             _valid = self.surrogate_posterior.rac.valid(asu_id, _hkl)
             _kl_div = _kl_div * _valid.to(_kl_div.dtype)
