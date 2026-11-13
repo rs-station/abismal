@@ -21,10 +21,10 @@ args_and_kwargs = (
         ),{
             "help": "Weight each observation's structure factor KL by its reflection's inverse observation count, "
                     "1/n_h, each image counted once. 'exact': 1/n_h, the ELBO itself, a reflection's prior counting "
-                    "once against its n_h likelihood terms. 'standardized': 1/n_h over its mean over the reflections, "
-                    "--kl-weight setting the overall strength. 'none' (default): no weight, the prior counting once "
-                    "per observation. Independent posteriors only.",
-            "default": "none",
+                    "once against its n_h likelihood terms (default). 'standardized': 1/n_h over its mean over the reflections, "
+                    "--kl-weight setting the overall strength. 'none': no weight, the prior counting once "
+                    "per observation. Independent posteriors only; others ignore it.",
+            "default": "exact",
             "choices": ["none", "standardized", "exact"],
         }
     ),
@@ -35,8 +35,8 @@ args_and_kwargs = (
         ),{
             "help": "Learn a falloff T(d) that multiplies the surrogate posterior's intensities in the likelihood and "
                     "the output, the posterior and its KL staying on a flat scale. 'wilson': log T = log k - b/d^2. "
-                    "'spline': log T piecewise linear in 1/d^2. 'none' (default): no trend.",
-            "default": "none",
+                    "'spline' (default): log T piecewise linear in 1/d^2. 'none': no trend.",
+            "default": "spline",
             "choices": ["none", "wilson", "spline"],
         }
     ),
@@ -79,8 +79,8 @@ args_and_kwargs = (
         (
             "--scale-kl-weight",
         ),{
-            "help": "The strength of the scale prior distribution with default 1.0.",
-            "default": 1.0,
+            "help": "The strength of the scale prior distribution with default 0.1.",
+            "default": 0.1,
             "type": float,
         }
     ),
