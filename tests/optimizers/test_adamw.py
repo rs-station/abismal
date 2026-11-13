@@ -197,6 +197,36 @@ def test_learning_rate_schedule():
     assert np.array_equal(_np(var), moved)
 
 
+def test_cosine_decay_runs_from_initial_to_final_and_holds():
+    from abismal.training import cosine_decay
+    lr = cosine_decay(100, 1e-3, 1e-5)
+    assert lr(0) == pytest.approx(1e-3)
+    assert lr(50) == pytest.approx(0.5 * (1e-3 + 1e-5))
+    assert lr(100) == pytest.approx(1e-5) and lr(250) == pytest.approx(1e-5)
+    assert all(lr(s) > lr(s + 1) for s in range(100))
+    with pytest.raises(ValueError):
+        cosine_decay(0, 1e-3, 1e-5)
+
+
+def test_build_optimizer_picks_the_schedule():
+    from types import SimpleNamespace
+    from abismal.build import build_optimizer
+    w = torch.nn.Parameter(torch.zeros(1))
+    model = SimpleNamespace(parameter_groups=lambda: {"q": [], "scale": [w]})
+    base = dict(learning_rate=1e-3, learning_rate_final=1e-4, burnin=10, epochs=2, steps_per_epoch=50,
+                lr_schedule='cosine', beta_1=0.9, beta_2=0.999, adam_epsilon=1e-8, clipnorm=None, clip=None,
+                global_clipnorm=None, optimizer='adam', weight_decay=None, per_reflection_bias_correction=False)
+    build = lambda **kw: build_optimizer(SimpleNamespace(**{**base, **kw}), model)
+    # cosine over epochs x steps per epoch = 100 steps, ignoring --burnin
+    assert build().learning_rate(0) == pytest.approx(1e-3)
+    assert build().learning_rate(50) == pytest.approx(0.5 * (1e-3 + 1e-4))
+    assert build().learning_rate(100) == pytest.approx(1e-4)
+    step = build(lr_schedule='step').learning_rate
+    assert step(10) == pytest.approx(1e-3) and step(11) == pytest.approx(1e-4)
+    with pytest.raises(ValueError):
+        build(learning_rate_final=None)
+
+
 @pytest.mark.parametrize('kwargs', [dict(clipvalue=0.1), dict(clipnorm=0.1), dict(global_clipnorm=0.1)])
 def test_clipping_bounds_the_first_step(kwargs):
     """Adam's first step is lr * sign(g) whatever the scale, so compare moments instead."""

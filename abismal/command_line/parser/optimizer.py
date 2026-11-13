@@ -37,6 +37,18 @@ args_and_kwargs=(
 
     (
         (
+            "--lr-schedule",
+        ),{
+            "help": "How the learning rate goes from --learning-rate to --learning-rate-final (which this needs): "
+                    "'step' (the default) drops it all at once after --burnin steps; 'cosine' lowers it along half "
+                    "a cosine over all of training (epochs x steps per epoch) and ignores --burnin.",
+            "default": "step",
+            "choices": ("step", "cosine"),
+        }
+    ),
+
+    (
+        (
             "--beta-1",
         ),{
             "help": "First moment momentum parameter for Adam with default 0.9.",

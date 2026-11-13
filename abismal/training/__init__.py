@@ -52,6 +52,16 @@ def piecewise_constant(boundary, before, after):
     return learning_rate
 
 
+def cosine_decay(total_steps, initial, final):
+    """Half a cosine from `initial` at step 0 to `final` at `total_steps`, then held at `final`, as a function of step."""
+    if total_steps <= 0:
+        raise ValueError(f"a cosine schedule needs a positive number of steps, not {total_steps}")
+    def learning_rate(step):
+        t = min(float(step), total_steps) / total_steps
+        return final + 0.5 * (initial - final) * (1. + math.cos(math.pi * t))
+    return learning_rate
+
+
 class EarlyStopping(Callback):
     """Stop training when `monitor` has not improved for `patience` epochs."""
     def __init__(self, monitor="val_loss", patience=0, mode="min", min_delta=0.):

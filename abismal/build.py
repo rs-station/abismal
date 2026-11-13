@@ -267,9 +267,17 @@ def build_model(args, facts, data=None, precision="float32"):
 
 def build_optimizer(args, model):
     """The optimizer `args` describe, over `model`'s trainable parameters."""
-    from abismal.training import parameter_groups, piecewise_constant
+    from abismal.training import cosine_decay, parameter_groups, piecewise_constant
 
-    if args.learning_rate_final is not None:
+    # getattr: checkpoints saved before --lr-schedule existed rebuild their optimizer with the step schedule.
+    schedule = getattr(args, "lr_schedule", "step")
+    if args.learning_rate_final is None and schedule != "step":
+        raise ValueError(f"--lr-schedule {schedule} needs --learning-rate-final")
+    if args.learning_rate_final is not None and schedule == "cosine":
+        learning_rate = cosine_decay(
+            args.epochs * args.steps_per_epoch, args.learning_rate, args.learning_rate_final
+        )
+    elif args.learning_rate_final is not None:
         # The TF version built this schedule and then handed the optimizer the
         # constant rate anyway, so --learning-rate-final did nothing.
         learning_rate = piecewise_constant(
