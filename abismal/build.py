@@ -286,6 +286,8 @@ def build_optimizer(args, model):
         "clipnorm": args.clipnorm,
         "clipvalue": args.clip,
         "global_clipnorm": args.global_clipnorm,
+        # getattr: checkpoints saved before the flag existed rebuild their optimizer without it.
+        "per_entry_bias_correction": getattr(args, "per_reflection_bias_correction", False),
     }
     from abismal.optimizers.optimizer_dict import optimizer_dict
 

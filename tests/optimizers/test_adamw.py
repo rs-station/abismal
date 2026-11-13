@@ -210,3 +210,45 @@ def test_clipping_bounds_the_first_step(kwargs):
         assert torch.allclose(clipped.abs(), torch.tensor(0.1))
     else:
         assert torch.isclose(torch.linalg.vector_norm(clipped), torch.tensor(0.1))
+
+
+@pytest.mark.parametrize("cls", [Adam, AdaBelief])
+def test_per_entry_bias_correction_leaves_dense_groups_and_the_default_alone(cls):
+    rng = np.random.default_rng(0)
+    grads = rng.normal(size=(20, 3)).astype('float32')
+    out = []
+    for kwargs in ({}, {'per_entry_bias_correction': True}):
+        var = _var([0., 0., 0.])
+        opt = _opt(cls, var, lazy=False, **kwargs)
+        for g in grads:
+            _step(opt, var, g)
+        out.append(_np(var))
+    np.testing.assert_array_equal(out[0], out[1])
+
+
+def test_per_entry_bias_correction_makes_each_lazy_entry_follow_its_own_adam():
+    """Each entry should move exactly as torch's Adam would on that entry's own nonzero gradients."""
+    rng = np.random.default_rng(1)
+    grads = rng.normal(size=(200, 3)).astype('float32')
+    grads[rng.random(grads.shape) > np.array([1., 0.3, 0.02])] = 0.   # entry 2 is updated on ~2% of steps
+    var = _var([0., 0., 0.])
+    opt = _opt(Adam, var, lazy=True, per_entry_bias_correction=True, beta_1=0.9, beta_2=0.999, epsilon=1e-12)
+    for g in grads:
+        _step(opt, var, g)
+    for i in range(3):
+        ref = torch.nn.Parameter(torch.zeros(1))
+        torch_adam = torch.optim.Adam([ref], lr=LR, betas=(0.9, 0.999), eps=1e-12)
+        for g in grads[:, i][grads[:, i] != 0.]:
+            ref.grad = torch.tensor([g])
+            torch_adam.step()
+        np.testing.assert_allclose(_np(var)[i], ref.item(), rtol=1e-4, atol=1e-6)
+
+
+def test_without_per_entry_bias_correction_a_rare_entry_overshoots_adam():
+    """The global count under-corrects a rarely updated entry: its early steps are larger than Adam's."""
+    var = _var([0., 0.])
+    opt = _opt(Adam, var, lazy=True, beta_1=0.9, beta_2=0.999, epsilon=1e-12)
+    for t in range(500):
+        _step(opt, var, [1., 1. if t >= 490 else 0.])  # entry 1 is updated on the last 10 steps only
+    # Adam's steps are ~LR each for a constant gradient, so 10 of them move it ~10 LR; the global count gives far more
+    assert abs(_np(var)[1]) > 3 * 10 * LR

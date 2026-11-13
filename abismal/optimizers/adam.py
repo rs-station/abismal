@@ -36,6 +36,13 @@ class AbismalOptimizer(torch.optim.Optimizer):
         Clip all gradients jointly to this global norm.
     clipvalue : float (optional)
         Clip every gradient element to [-clipvalue, clipvalue].
+    per_entry_bias_correction : bool (optional)
+        For lazy groups, bias-correct each entry by its own number of updates
+        instead of the global step count. With the global count, an entry that
+        has been updated only k << t times is barely corrected, and while its v
+        is still warming up (about 1/(1 - beta_2) of its own updates) it takes
+        steps several times larger than Adam's. With this on, every entry
+        follows Adam run on its own sequence of nonzero gradients.
     """
     default_weight_decay = None
 
@@ -50,8 +57,10 @@ class AbismalOptimizer(torch.optim.Optimizer):
         clipnorm=None,
         clipvalue=None,
         global_clipnorm=None,
+        per_entry_bias_correction=False,
     ):
         super().__init__(params, dict(lazy=False))
+        self.per_entry_bias_correction = per_entry_bias_correction
         if weight_decay == "default":
             weight_decay = self.default_weight_decay
         self.learning_rate = learning_rate
@@ -123,7 +132,15 @@ class AbismalOptimizer(torch.optim.Optimizer):
             if len(state) == 0:
                 state['m'] = torch.zeros_like(p)
                 state['v'] = torch.zeros_like(p)
-            self.update(p, g, state['m'], state['v'], alpha, lazy, lr, group)
+            a = alpha
+            if lazy and self.per_entry_bias_correction:
+                if 'k' not in state:
+                    state['k'] = torch.zeros_like(p)
+                # The same mask the lazy update uses: this step counts for an entry only if it is updated.
+                state['k'].add_((g != 0.).to(p.dtype))
+                k = state['k'].clamp_min(1.)
+                a = lr * torch.sqrt(1. - torch.pow(self.beta_2, k)) / (1. - torch.pow(self.beta_1, k))
+            self.update(p, g, state['m'], state['v'], a, lazy, lr, group)
 
         self.iterations += 1
         return loss

@@ -67,6 +67,18 @@ args_and_kwargs=(
 
     (
         (
+            "--per-reflection-bias-correction",
+        ),{
+            "help": "Bias-correct each surrogate posterior parameter by its own number of (lazy) updates rather than "
+                    "the global step count, so a rarely observed reflection takes Adam-sized steps from its first "
+                    "observation instead of steps several times larger while its second moment warms up.",
+            "action": "store_true",
+            "default": False,
+        }
+    ),
+
+    (
+        (
             "--global-clipnorm",
         ),{
             "help": "Optionally apply gradient clipping with a global norm.",
