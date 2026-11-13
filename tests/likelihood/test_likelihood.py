@@ -141,6 +141,36 @@ def test_the_online_ev11_fit_recovers_a_and_b(a, b):
     assert likelihood.b.item() == pytest.approx(b, rel=0.05)
 
 
+def test_the_normal_ev11_fit_trains_a_and_b_on_a_normal_and_the_model_on_a_t():
+    from abismal.likelihood import Ev11Likelihood
+    torch.manual_seed(0)
+    iobs, sigiobs = 10. + 5. * torch.randn(50, 1), 1. + torch.rand(50, 1)
+    values = 10. + 5. * torch.randn(50, 4)
+
+    def grads(**kwargs):
+        likelihood = Ev11Likelihood(a=2., b=0.1, **kwargs)
+        ipred = values.clone().requires_grad_()
+        ll = likelihood(ipred, iobs, sigiobs)
+        ll.sum().backward()
+        return ll.detach(), ipred.grad, likelihood.log_a.grad, likelihood.log_b.grad
+
+    split, split_ipred, split_a, split_b = grads(degrees_of_freedom=32., fit='normal')
+    t, t_ipred, t_a, _ = grads(degrees_of_freedom=32.)
+    _, normal_ipred, normal_a, normal_b = grads()
+    assert torch.allclose(split, t)              # reported as the t
+    assert torch.allclose(split_ipred, t_ipred)  # the model trains on the t
+    assert not torch.allclose(split_ipred, normal_ipred)
+    assert split_a.item() == pytest.approx(normal_a.item())  # a and b train on the normal
+    assert split_b.item() == pytest.approx(normal_b.item())
+    assert split_a.item() != pytest.approx(t_a.item())
+
+
+def test_the_normal_ev11_fit_needs_a_t():
+    from abismal.likelihood import Ev11Likelihood
+    with pytest.raises(ValueError):
+        Ev11Likelihood(fit='normal')
+
+
 def test_the_online_ev11_fit_with_a_t_shrugs_off_outliers():
     from abismal.likelihood import Ev11Likelihood
     fits = {}

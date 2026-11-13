@@ -240,7 +240,8 @@ def build_model(args, facts, data=None, precision="float32"):
                                     detach=args.error_model_detach, fixed=args.fix_error_model,
                                     fit=args.error_model_fit, burnin_steps=args.error_model_burnin * args.steps_per_epoch,
                                     decay_steps=args.error_model_decay, fit_b=not args.error_model_fit_a_only,
-                                    learn_dof=args.error_model_learn_dof)
+                                    learn_dof=args.error_model_learn_dof,
+                                    form=getattr(args, 'error_model_form', 'ev11'))
     elif args.studentt_dof is not None:
         likelihood = StudentTLikelihood(args.studentt_dof)
     else:

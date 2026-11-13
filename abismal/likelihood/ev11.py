@@ -30,19 +30,35 @@ class Ev11Likelihood(LocationScale):
     unfitted model; a and b hold their starting values until then. The sums restart after 10 and 100 accumulating
     steps, so the remembered fit is weighted at a good estimate. After that they are cumulative (each new batch moves
     the estimate by about 1/t), or decay by 1 − 1/decay_steps per step if decay_steps > 0.
+
+    fit='normal' needs a Student t and splits the likelihood by what it trains: the t trains the model (scales, surrogate
+    posterior) with a and b held constant, and a normal likelihood trains a and b with the model held constant. The
+    returned value is the t's log probability, so the reported NLL is the t's.
     """
+    FORMS = ('ev11', 'photon')
+
     def __init__(self, a=1., b=0.01, degrees_of_freedom=None, detach=True, fixed=False, fit='elbo', burnin_steps=0,
-                 decay_steps=0, fit_b=True, learn_dof=False):
+                 decay_steps=0, fit_b=True, learn_dof=False, form='ev11', c=0.01):
         super().__init__()
-        if fit not in ('elbo', 'online'):
-            raise ValueError(f"fit must be 'elbo' or 'online', not {fit!r}")
+        if fit not in ('elbo', 'online', 'normal'):
+            raise ValueError(f"fit must be 'elbo', 'online' or 'normal', not {fit!r}")
+        if form not in self.FORMS:
+            raise ValueError(f"form must be one of {self.FORMS}, not {form!r}")
+        if form != 'ev11' and fit == 'online':
+            raise ValueError(f"form={form!r} is learned on the ELBO; fit='online' fits only the ev11 form")
+        self.form = form
+        if fit == 'normal' and degrees_of_freedom is None:
+            raise ValueError("fit='normal' splits a Student t from the normal that fits a and b: it needs degrees_of_freedom")
         self.detach = detach
         self.fit = fit
         # fixed: a and b stay at their given values (not trained, so the optimizer never sees them).
-        trainable = fit == 'elbo' and not fixed
+        trainable = fit in ('elbo', 'normal') and not fixed
         # fit_b=False: b stays at its starting value whichever way a is fitted.
         self.log_a = torch.nn.Parameter(torch.tensor(math.log(a)), requires_grad=trainable)
         self.log_b = torch.nn.Parameter(torch.tensor(math.log(b)), requires_grad=trainable and fit_b)
+        if form == 'photon':
+            # The linear term's c >= 0, on a log scale like a and b.
+            self.log_c = torch.nn.Parameter(torch.tensor(math.log(c)), requires_grad=trainable)
         self._dof = degrees_of_freedom
         # learn_dof: the Student t's degrees of freedom train on the ELBO with a and b (log scale, starting from
         # degrees_of_freedom), and are held with them by fixed=True.
@@ -128,18 +144,32 @@ class Ev11Likelihood(LocationScale):
         ready = (s11 > 0) & torch.isfinite(theta).all() & (theta[0] > 0)
         self.theta.copy_(torch.where(ready, theta, self.theta))
 
+    @property
+    def c(self):
+        return torch.exp(self.log_c)
+
     def variance(self, ipred, sigiobs):
-        # ipred is (reflections, mc samples) and sigiobs is (reflections, 1). The proportional term uses the sample
-        # mean of s·I. Detached (the default), the scales and posterior cannot move it to change their own variance.
+        # ipred is (reflections, mc samples) and sigiobs is (reflections, 1). The intensity terms use the sample
+        # mean p of s·I. Detached (the default), the scales and posterior cannot move it to change their own variance.
         imean = (ipred.detach() if self.detach else ipred).mean(-1, keepdim=True)
-        return self.a * torch.square(sigiobs) + torch.square(self.b * imean)
+        var = self.a * torch.square(sigiobs) + torch.square(self.b * imean)
+        if self.form == 'photon':
+            # A counting term linear in the predicted intensity.
+            var = var + self.c * imean.clamp_min(0.)
+        return var
 
     def forward(self, ipred, iobs, sigiobs):
-        scale = torch.sqrt(self.variance(ipred, sigiobs))
+        if self.fit == 'normal':
+            # Only a and b see the normal term's gradient; subtracting its value leaves the t's as the log probability.
+            sd = torch.sqrt(self.variance(ipred.detach(), sigiobs))
+            model = td.StudentT(self.degrees_of_freedom, iobs, sd.detach()).log_prob(ipred)
+            error_model = td.Normal(iobs, sd).log_prob(ipred.detach())
+            return model + error_model - error_model.detach()
+        sd = torch.sqrt(self.variance(ipred, sigiobs))
         if self.degrees_of_freedom is None:
-            likelihood = td.Normal(iobs, scale)
+            likelihood = td.Normal(iobs, sd)
         else:
-            likelihood = td.StudentT(self.degrees_of_freedom, iobs, scale)
+            likelihood = td.StudentT(self.degrees_of_freedom, iobs, sd)
         return likelihood.log_prob(ipred)
 
     @torch.no_grad()
@@ -147,5 +177,7 @@ class Ev11Likelihood(LocationScale):
         super().register_metrics(ipred, iobs, sigiobs)
         tracking.add_metric(self.a, 'Ev11a')
         tracking.add_metric(self.b, 'Ev11b')
+        if self.form == 'photon':
+            tracking.add_metric(self.c, 'Ev11c')
         if self.learn_dof:
             tracking.add_metric(self.degrees_of_freedom.detach(), 'Ev11nu')

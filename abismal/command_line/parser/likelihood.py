@@ -67,9 +67,22 @@ args_and_kwargs=(
         ),{
             "help": "--error-model ev11: how to learn a and b. 'elbo' (default): with the rest of the model, on the ELBO. "
                     "'online': outside the ELBO, in closed form, from running sums of a weighted least-squares fit of "
-                    "the squared residuals against the mean prediction, updated every training step.",
+                    "the squared residuals against the mean prediction, updated every training step. "
+                    "'normal': on the ELBO but with a normal likelihood, while the Student t trains the rest of the "
+                    "model (needs a Student t).",
             "default": "elbo",
-            "choices": ["elbo", "online"],
+            "choices": ["elbo", "online", "normal"],
+        }
+    ),
+    (
+        (
+            "--error-model-form",
+        ),{
+            "help": "--error-model ev11: the variance's form, with p = s*I_pred the predicted intensity and s the scale. "
+                    "'ev11' (default): a*sigma^2 + b^2*p^2. 'photon': adds c*p, a counting term linear in the raw "
+                    "intensity, with c learned on the ELBO (--error-model-fit elbo or normal).",
+            "default": "ev11",
+            "choices": ["ev11", "photon"],
         }
     ),
     (
