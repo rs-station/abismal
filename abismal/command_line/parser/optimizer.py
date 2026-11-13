@@ -19,8 +19,10 @@ args_and_kwargs=(
         (
             "--burnin",
         ),{
-            "help": "Boundary for learning rate decay.",
-            "default": 10_000,
+            "help": "The number of steps after which the step schedule drops the learning rate to "
+                    "--learning-rate-final. The default drops it two thirds of the way through training "
+                    "(epochs x steps per epoch), at step 20000 with the default 30 epochs of 1000 steps.",
+            "default": None,
             "type": int,
         }
     ),
@@ -29,8 +31,9 @@ args_and_kwargs=(
         (
             "--learning-rate-final",
         ),{
-            "help": "Optionally anneal the learning rate to this value throughout training.",
-            "default": None,
+            "help": "The learning rate after the drop (see --burnin and --lr-schedule), with default 1e-4. "
+                    "Pass the same value as --learning-rate to keep the rate constant.",
+            "default": 1e-4,
             "type": float,
         }
     ),

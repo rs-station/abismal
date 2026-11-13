@@ -225,6 +225,23 @@ def test_build_optimizer_picks_the_schedule():
     assert step(10) == pytest.approx(1e-3) and step(11) == pytest.approx(1e-4)
     with pytest.raises(ValueError):
         build(learning_rate_final=None)
+    # Without --burnin the step drops two thirds of the way through training
+    third = build(lr_schedule='step', burnin=None).learning_rate
+    assert third(66) == pytest.approx(1e-3) and third(67) == pytest.approx(1e-4)
+    # ... unless the training length is unknown (one pass per epoch), when it holds
+    assert build(lr_schedule='step', burnin=None, steps_per_epoch=0).learning_rate == pytest.approx(1e-3)
+
+
+def test_the_default_drops_to_1e4_at_step_20000():
+    from abismal.command_line.parser import parser
+    from abismal.build import build_optimizer
+    from types import SimpleNamespace
+    args = SimpleNamespace(**{a.dest: a.default for a in parser._actions if a.dest != "help"})
+    assert args.learning_rate_final == 1e-4 and args.burnin is None and args.lr_schedule == 'step'
+    w = torch.nn.Parameter(torch.zeros(1))
+    model = SimpleNamespace(parameter_groups=lambda: {"q": [], "scale": [w]})
+    lr = build_optimizer(args, model).learning_rate
+    assert lr(20000) == pytest.approx(1e-3) and lr(20001) == pytest.approx(1e-4)
 
 
 @pytest.mark.parametrize('kwargs', [dict(clipvalue=0.1), dict(clipnorm=0.1), dict(global_clipnorm=0.1)])

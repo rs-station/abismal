@@ -281,9 +281,20 @@ def build_optimizer(args, model):
     elif args.learning_rate_final is not None:
         # The TF version built this schedule and then handed the optimizer the
         # constant rate anyway, so --learning-rate-final did nothing.
-        learning_rate = piecewise_constant(
-            args.burnin, args.learning_rate, args.learning_rate_final
-        )
+        burnin = args.burnin
+        if burnin is None:
+            # Two thirds of training. With --steps-per-epoch 0 an epoch is one pass over
+            # the data, whose length isn't known here, so the rate stays constant.
+            total = args.epochs * args.steps_per_epoch
+            burnin = 2 * total // 3 if total > 0 else None
+        if burnin is None:
+            logger.warning("--steps-per-epoch 0 leaves the training length unknown; pass --burnin "
+                           "to drop the learning rate. Keeping it constant at --learning-rate.")
+            learning_rate = args.learning_rate
+        else:
+            learning_rate = piecewise_constant(
+                burnin, args.learning_rate, args.learning_rate_final
+            )
     else:
         learning_rate = args.learning_rate
 
