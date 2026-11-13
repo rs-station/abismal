@@ -40,7 +40,7 @@ class Ev11Likelihood(LocationScale):
     MINSDFAC, MAXSDADD, MINVARINFRAC = 0.2, 1.0, 0.1
 
     def __init__(self, a=1., b=0.01, degrees_of_freedom=None, detach=True, fixed=False, fit='elbo', burnin_steps=0,
-                 decay_steps=0, fit_b=True, learn_dof=False, form='ev11', c=0.01):
+                 decay_steps=0, fit_b=True, learn_dof=False, form='ev11', c=0.01, barron=None):
         super().__init__()
         if fit not in ('elbo', 'online', 'normal'):
             raise ValueError(f"fit must be 'elbo', 'online' or 'normal', not {fit!r}")
@@ -49,6 +49,10 @@ class Ev11Likelihood(LocationScale):
         if form != 'ev11' and fit == 'online':
             raise ValueError(f"form={form!r} is learned on the ELBO; fit='online' fits only the ev11 form")
         self.form = form
+        # barron: a BarronShape that replaces the normal or Student t as the likelihood's shape (ELBO fit only).
+        if barron is not None and fit != 'elbo':
+            raise ValueError("a Barron shape needs fit='elbo'")
+        self.barron = barron
         # The forms whose variance needs the scale on its own (s*p = s^2*I), passed to forward as `scale`.
         self.needs_scale = form in ('gscaled', 'aimless')
         if fit == 'normal' and degrees_of_freedom is None:
@@ -196,6 +200,8 @@ class Ev11Likelihood(LocationScale):
             error_model = td.Normal(iobs, sd).log_prob(ipred.detach())
             return model + error_model - error_model.detach()
         sd = torch.sqrt(self.variance(ipred, sigiobs, scale))
+        if self.barron is not None:
+            return self.barron.log_prob(ipred, iobs, sd)
         if self.degrees_of_freedom is None:
             likelihood = td.Normal(iobs, sd)
         else:
@@ -217,3 +223,5 @@ class Ev11Likelihood(LocationScale):
             tracking.add_metric(self.c, 'Ev11c')
         if self.learn_dof:
             tracking.add_metric(self.degrees_of_freedom.detach(), 'Ev11nu')
+        if self.barron is not None:
+            self.barron.register_metrics()

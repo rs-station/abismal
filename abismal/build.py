@@ -235,13 +235,21 @@ def build_model(args, facts, data=None, precision="float32"):
         background_outputs={'none': 0, 'offset': 1, 'latent': 2}[args.background],
     )
 
+    # getattr: checkpoints saved before these flags existed rebuild without them.
+    barron = None
+    if getattr(args, 'barron_alpha', None) is not None:
+        from abismal.likelihood import BarronShape, BarronLikelihood
+        barron = BarronShape(args.barron_alpha, learn_alpha=args.learn_barron_alpha, alpha_min=args.barron_alpha_min)
+
     if args.error_model == 'ev11':
         likelihood = Ev11Likelihood(a=args.error_model_a, b=args.error_model_b, degrees_of_freedom=args.studentt_dof,
                                     detach=args.error_model_detach, fixed=args.fix_error_model,
                                     fit=args.error_model_fit, burnin_steps=args.error_model_burnin * args.steps_per_epoch,
                                     decay_steps=args.error_model_decay, fit_b=not args.error_model_fit_a_only,
                                     learn_dof=args.error_model_learn_dof,
-                                    form=getattr(args, 'error_model_form', 'ev11'))
+                                    form=getattr(args, 'error_model_form', 'ev11'), barron=barron)
+    elif barron is not None:
+        likelihood = BarronLikelihood(barron)
     elif args.studentt_dof is not None:
         likelihood = StudentTLikelihood(args.studentt_dof)
     else:

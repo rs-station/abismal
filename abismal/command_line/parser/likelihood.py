@@ -76,6 +76,35 @@ args_and_kwargs=(
     ),
     (
         (
+            "--barron-alpha",
+        ),{
+            "help": "Use Barron's general robust distribution, with shape alpha in [0, 2], in place of the Student t "
+                    "(and with --error-model ev11, as the shape around its variance). 2 is the normal, 1 the "
+                    "pseudo-Huber, 0 the Cauchy. With --learn-barron-alpha, alpha's starting value. Default: none "
+                    "(the Student t of --studentt-dof).",
+            "default": None,
+            "type": float,
+        }
+    ),
+    (
+        (
+            "--learn-barron-alpha",
+        ),{
+            "help": "--barron-alpha: learn alpha on the ELBO, within [--barron-alpha-min, 2).",
+            "action": "store_true",
+        }
+    ),
+    (
+        (
+            "--barron-alpha-min",
+        ),{
+            "help": "--learn-barron-alpha: the smallest alpha allowed. Default 0 (the Cauchy).",
+            "default": 0.,
+            "type": float,
+        }
+    ),
+    (
+        (
             "--error-model-form",
         ),{
             "help": "--error-model ev11: the variance's form, with p = s*I_pred the predicted intensity and s the scale. "
