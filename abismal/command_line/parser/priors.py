@@ -162,11 +162,12 @@ args_and_kwargs = (
         (
             "--scale-prior-mode",
         ),{
-            "help": "'fixed' (the default): every observation's scale prior is --scale-prior-distribution. "
-                    "'decoded': each observation's prior is LogNormal(mu, sigma^2) with mu and sigma decoded from "
+            "help": "'decoded' (the default): each observation's prior is LogNormal(mu, sigma^2) with mu and sigma decoded from "
                     "the leave-one-out pooled image representation (the rest of its image), under a LogNormal(0, 1) "
-                    "hyperprior counted once per observation. It ignores --scale-prior-distribution.",
-            "default": 'fixed',
+                    "hyperprior counted once per observation. It ignores --scale-prior-distribution and needs "
+                    "--scale-posterior-distribution lognormal (the default). 'fixed': every observation's scale prior "
+                    "is --scale-prior-distribution.",
+            "default": 'decoded',
             "choices": ['fixed', 'decoded'],
         }
     ),

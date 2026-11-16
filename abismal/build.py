@@ -233,7 +233,7 @@ def build_model(args, facts, data=None, precision="float32"):
         share_weights=True,
         posterior_features=2 if args.posterior_features else 0,
         background_outputs={'none': 0, 'offset': 1, 'latent': 2}[args.background],
-        prior_mode=getattr(args, 'scale_prior_mode', 'fixed'),
+        prior_mode=getattr(args, 'scale_prior_mode', 'decoded'),
         prior_detach=getattr(args, 'scale_prior_detach', True),
     )
 

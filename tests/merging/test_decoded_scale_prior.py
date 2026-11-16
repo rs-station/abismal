@@ -22,8 +22,8 @@ def _q(n, seed=0):
 
 
 def test_flags():
-    fixed, _ = build_cli_model()
-    decoded, _ = build_cli_model("--scale-prior-mode", "decoded")
+    fixed, _ = build_cli_model("--scale-prior-mode", "fixed")
+    decoded, _ = build_cli_model()
     attached, _ = build_cli_model("--scale-prior-mode", "decoded", "--no-scale-prior-detach")
     assert fixed.scale_model.prior_mode == 'fixed' and not hasattr(fixed.scale_model, 'prior_dense')
     assert decoded.scale_model.prior_mode == 'decoded' and decoded.scale_model.prior_detach
@@ -31,7 +31,7 @@ def test_flags():
 
 
 def test_other_weights_initialize_as_without_it():
-    fixed, _ = build_cli_model()
+    fixed, _ = build_cli_model("--scale-prior-mode", "fixed")
     decoded, _ = build_cli_model("--scale-prior-mode", "decoded")
     d = decoded.scale_model.state_dict()
     for k, v in fixed.scale_model.state_dict().items():
