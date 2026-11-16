@@ -157,4 +157,28 @@ args_and_kwargs = (
             "choices" : ImageScaler.prior_dict.keys(),
         }
     ),
+
+    (
+        (
+            "--scale-prior-mode",
+        ),{
+            "help": "'fixed' (the default): every observation's scale prior is --scale-prior-distribution. "
+                    "'decoded': each observation's prior is LogNormal(mu, sigma^2) with mu and sigma decoded from "
+                    "the leave-one-out pooled image representation (the rest of its image), under a LogNormal(0, 1) "
+                    "hyperprior counted once per observation. It ignores --scale-prior-distribution.",
+            "default": 'fixed',
+            "choices": ['fixed', 'decoded'],
+        }
+    ),
+
+    (
+        (
+            "--no-scale-prior-detach",
+        ),{
+            "help": "With --scale-prior-mode decoded, let the scale KL's gradient reach the shared image "
+                    "representation through the prior decoder. By default it is stopped there.",
+            "action": "store_false",
+            "dest": "scale_prior_detach",
+        }
+    ),
 )

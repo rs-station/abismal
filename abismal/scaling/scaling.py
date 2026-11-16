@@ -192,6 +192,8 @@ class ImageScaler(torch.nn.Module):
             metadata_noise_factor=0.1,
             precision="float32",
             background_outputs=0,
+            prior_mode='fixed',
+            prior_detach=True,
         ):
         """
         This function has a lot of overrides, but comes with sensible defaults built in.
@@ -248,6 +250,16 @@ class ImageScaler(torch.nn.Module):
         background_outputs : int (optional)
             Extra outputs of the scale network for a background model (see VariationalMergingModel's `background`).
             When nonzero, `forward` returns (scales, background parameters). The default, 0, adds none.
+        prior_mode : str (optional)
+            'fixed' (the default): the prior named by `prior_name`, the same for every observation.
+            'decoded': each observation's prior is LogNormal(μ, σ²), with μ and log σ decoded from the
+            leave-one-out pooled image representation (so from the rest of its image, never from itself), and a
+            LogNormal(0, 1) hyperprior on the decoded prior: KL(LogNormal(μ, σ²) || LogNormal(0, 1)), counted once
+            per observation, as the fixed prior counts. The decoder starts at μ = 0, σ = 1, where this is the fixed LogNormal(0, 1) prior.
+        prior_detach : bool (optional)
+            With prior_mode 'decoded', stop the gradient of the pooled representation before the prior decoder
+            (the default), so the KL fits the decoder to the posteriors but cannot shape the shared image
+            representation to make the prior agree with the posterior.
         precision : str (optional)
             'float32' (the default) or 'bfloat16'. With 'bfloat16' the networks
             run under autocast, which roughly halves their time and activation
@@ -278,6 +290,10 @@ class ImageScaler(torch.nn.Module):
         self.batch_normalize = batch_normalize
         self.metadata_noise_factor = metadata_noise_factor
         self.background_outputs = background_outputs
+        if prior_mode not in ('fixed', 'decoded'):
+            raise ValueError(f"prior_mode must be 'fixed' or 'decoded', not {prior_mode!r}")
+        self.prior_mode = prior_mode
+        self.prior_detach = prior_detach
         if precision not in ("float32", "bfloat16"):
             raise ValueError(f"precision must be 'float32' or 'bfloat16', not {precision!r}")
         self.precision = precision
@@ -327,6 +343,20 @@ class ImageScaler(torch.nn.Module):
             self.scale_outputs = 1 if self.posterior_name == 'delta' else 2
             self.output_dense = linear(mlp_width, self.scale_outputs + background_outputs, output_bias, kernel_initializer)
 
+            if prior_mode == 'decoded':
+                # Built after everything else, so the other weights initialize as they do without it.
+                self.prior_network = FF(
+                    mlp_width,
+                    hidden_units=self.hidden_units,
+                    activation=self.activation,
+                    kernel_initializer=kernel_initializer,
+                    use_bias=False,
+                    pre_activation=pre_activation,
+                    epsilon=ffepsilon,
+                )
+                # (μ, log σ), zero at the start: LogNormal(0, 1), the fixed prior.
+                self.prior_dense = linear(mlp_width, 2, True, "zeros")
+
     def _autocast(self, like):
         return torch.autocast(
             device_type=like.device.type,
@@ -360,6 +390,41 @@ class ImageScaler(torch.nn.Module):
         num = sums[image_id] - image
         den = (counts[image_id] - 1.).clamp_min(1.)
         return num / den[:, None]
+
+    def decoded_prior(self, pooled):
+        """
+        The (μ, σ) of each observation's LogNormal prior, decoded from its leave-one-out pooled image
+        representation `pooled`, shape (reflections, d_model); each has shape (reflections,).
+        """
+        if self.prior_detach:
+            pooled = pooled.detach()
+        with self._autocast(pooled):
+            out = self.prior_dense(self.prior_network(pooled))
+        mu, log_sigma = out.float().unbind(-1)
+        return mu, torch.exp(log_sigma)
+
+    def _decoded_prior_kl(self, q, z, pooled):
+        """
+        The scale KL with a decoded prior, per observation like the fixed one's: the Monte Carlo
+        KL(q || LogNormal(μ, σ²)) plus the hyperprior's KL(LogNormal(μ, σ²) || LogNormal(0, 1)) =
+        (μ² + σ² - 1 - ln σ²) / 2, both averaged over observations. Counting the hyperprior per observation
+        rather than per image keeps the decoded σ from shrinking to the posteriors' leftover spread, which
+        over-tightened the prior and cost anomalous signal (HEWL), and shrinks μ toward 0.
+        """
+        mu, sigma = self.decoded_prior(pooled)
+        shape = q.batch_shape
+        p = td.LogNormal(mu.reshape(shape), sigma.reshape(shape))
+        kl_obs = kl_divergence(q, p, z, self.epsilon).mean()
+
+        kl_hyper = (0.5 * (mu.square() + sigma.square() - 1.) - torch.log(sigma)).mean()
+        kl = kl_obs + kl_hyper
+
+        tracking.add_metric(kl_obs.detach(), name='KL_Σobs')
+        tracking.add_metric(kl_hyper.detach(), name='KL_Σhyper')
+        tracking.add_metric(mu.detach().mean(), name='Σprior_μ')
+        tracking.add_metric(mu.detach().std(correction=0), name='Σprior_μsd')
+        tracking.add_metric(sigma.detach().mean(), name='Σprior_σ')
+        return kl
 
     def forward(self, inputs, mc_samples=32, training=None, features=None):
         """
@@ -424,10 +489,12 @@ class ImageScaler(torch.nn.Module):
         z = q.rsample((mc_samples,))
 
         if not self.posterior_name.lower() == 'delta' and self.kl_weight > 0.:
-            p = self.prior_dict[self.prior_name]()
-
-            kl_div = kl_divergence(q, p, z, self.epsilon)
-            kl_div = kl_div.mean()
+            if self.prior_mode == 'decoded':
+                kl_div = self._decoded_prior_kl(q, z, image)
+            else:
+                p = self.prior_dict[self.prior_name]()
+                kl_div = kl_divergence(q, p, z, self.epsilon)
+                kl_div = kl_div.mean()
             tracking.add_loss(self.kl_weight * kl_div)
             tracking.add_metric(kl_div, name='KL_Σ')
 
